@@ -146,7 +146,9 @@ class Authenticator:
     # ---------------- imza anahtarları (JWKS) ----------------
 
     async def _key(self, kid: Optional[str]) -> jwt.PyJWK:
-        stale = time.monotonic() - self._fetched_at > self.jwks_ttl
+        # Hiç anahtar yoksa saatten bağımsız bayattır: monotonic() makinenin açık kalma süresi,
+        # yeni açılmış makinede (CI, yeni node) TTL'den küçük olabilir
+        stale = not self._keys or time.monotonic() - self._fetched_at > self.jwks_ttl
         if stale or (kid not in self._keys and self._may_refresh()):
             await self._refresh()
         if kid is None and len(self._keys) == 1:  # tek anahtarlı IdP'ler kid koymayabilir

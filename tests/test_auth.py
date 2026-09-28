@@ -256,3 +256,22 @@ def test_simulator_uses_explicit_headers_with_multiple_teams(client, monkeypatch
     r = client.post("/v1/policy/simulate", headers={"Authorization": "Bearer t", "x-telveguard-team": "analitik, stajyer"},
                     json={"model": "gpt-4o", "messages": [{"role": "user", "content": f"TC {make_tckn()}"}]})
     assert r.json()["teams"] == ["analitik", "stajyer"] and r.json()["decision"]["action"] == "block"
+
+
+async def test_idp_down_on_freshly_booted_host(idp, monkeypatch):
+    """time.monotonic() makinenin açık kalma süresidir; yeni açılmış makinede (CI, yeni node)
+    küçüktür. "Hiç anahtar çekilmedi" durumu yine de bayat sayılmalı: IdP kapalıysa her
+    istek 503 almalı (401 "anahtar tanınmıyor" yanıltıcı olur)."""
+    import app.auth as auth_mod
+    clock = {"t": 5.0}
+    monkeypatch.setattr(auth_mod.time, "monotonic", lambda: clock["t"])
+    idp.down = True
+    auth = make_auth(idp)
+    for _ in range(3):
+        with pytest.raises(AuthError) as e:
+            await auth.authenticate(bearer(idp.token()))
+        assert e.value.status == 503 and e.value.reason == "jwks_unavailable"
+        clock["t"] += 1
+    idp.down = False
+    clock["t"] += 60                       # yeniden deneme aralığı geçti, IdP geri geldi
+    assert (await auth.authenticate(bearer(idp.token()))).user == "ayse"
