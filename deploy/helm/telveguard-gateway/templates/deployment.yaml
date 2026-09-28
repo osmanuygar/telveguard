@@ -31,13 +31,33 @@ spec:
         - name: gateway
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080",
-                    "--workers", {{ .Values.workers | quote }}, "--no-server-header"]
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
           env:
+            - name: WORKERS
+              value: {{ .Values.workers | quote }}
+            - name: PROMETHEUS_MULTIPROC_DIR
+              value: /tmp/prometheus
+            - name: AUTH_MODE
+              value: {{ .Values.auth.mode | quote }}
+            {{- if eq .Values.auth.mode "jwt" }}
+            - name: OIDC_ISSUER
+              value: {{ .Values.auth.oidc.issuer | quote }}
+            - name: OIDC_AUDIENCE
+              value: {{ .Values.auth.oidc.audience | quote }}
+            {{- with .Values.auth.oidc.jwksUrl }}
+            - name: OIDC_JWKS_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: OIDC_USER_CLAIM
+              value: {{ .Values.auth.oidc.userClaim | quote }}
+            - name: OIDC_TEAM_CLAIM
+              value: {{ .Values.auth.oidc.teamClaim | quote }}
+            - name: OIDC_TEAM_PREFIX
+              value: {{ .Values.auth.oidc.teamPrefix | quote }}
+            {{- end }}
             - name: POLICY_PATH
               value: /policies/policy.yaml
             - name: UPSTREAM_INTERNAL_URL

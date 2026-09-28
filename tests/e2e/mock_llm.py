@@ -3,6 +3,8 @@ Uçtan uca test için sahte OpenAI uyumlu LLM (sadece stdlib).
 
 Son kullanıcı mesajını olduğu gibi geri döndürür; böylece modelin ne gördüğü
 (maskeli mi değil mi) cevaptan okunabilir. Model adı "fail-*" ise 502 HTML döner.
+Mesaj "SIZINTI_TESTI" ile başlarsa girdide olmayan sahte bir AWS anahtarı "üretir"
+(çıktı koruması testi; anahtar kaynakta parça parça durur).
 """
 import json
 import time
@@ -17,10 +19,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(502, b"<html>Bad Gateway</html>", "text/html")
 
         seen = [m.get("content") for m in body.get("messages", [])]
+        answer = f"MODEL GÖRDÜ: {seen[-1]}"
+        if str(seen[-1]).startswith("SIZINTI_TESTI"):
+            answer = "Örnek yapılandırma: key=" + "AKIA" + "Q3EXAMPLE7ABCDEF"
         completion = {
             "id": "mock-1", "object": "chat.completion", "created": int(time.time()), "model": model,
             "choices": [{"index": 0, "finish_reason": "stop",
-                         "message": {"role": "assistant", "content": f"MODEL GÖRDÜ: {seen[-1]}"}}],
+                         "message": {"role": "assistant", "content": answer}}],
             # Kaba token sayımı (kelime); Röntgen maliyet hesabı test edilebilsin
             "usage": {"prompt_tokens": sum(len(str(c).split()) for c in seen),
                       "completion_tokens": len(str(seen[-1]).split()) + 2},

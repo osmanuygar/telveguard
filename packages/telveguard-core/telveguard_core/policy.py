@@ -6,11 +6,17 @@ Gözlem modu: `mode: monitor` olan kural (ya da en üstte `mode: monitor` ile t�
 isteği etkilemez; yalnızca "uygulansaydı ne olurdu" (would_action) kayda geçer.
 Yeni kuralı önce gözlemde açıp yanlış pozitifleri ölçmek için.
 
+`rules` isteğe (girdi), `output_rules` model cevabına uygulanır. Çıktı kurallarında
+entity_in, cevapta olup GİRDİDE OLMAYAN değerlere (sızıntı) bakar.
+
+Ekip eşleşmesi: kullanıcı birden fazla ekipteyse (OIDC grupları) kural, ekiplerden
+HERHANGİ biri eşleşirse uygulanır; kısıtlayıcı kuraldan grup sırasıyla kaçılamaz.
+
 İleride OPA/Rego'ya geçilebilir; YAML formatı güvenlik ekiplerinin
 kod yazmadan kural eklemesi için tercih edildi.
 """
 from dataclasses import dataclass, field
-from typing import List, Optional, Set
+from typing import FrozenSet, List, Optional, Set
 
 import yaml
 
@@ -27,6 +33,11 @@ class Context:
     destination: str            # "internal" (on-prem vLLM vb.) | "external" (yurt dışı API)
     entities: Set[str]
     injection_score: float
+    teams: FrozenSet[str] = frozenset()   # boşsa yalnızca `team`
+
+    @property
+    def all_teams(self) -> Set[str]:
+        return set(self.teams) | {self.team}
 
 
 @dataclass
@@ -47,9 +58,10 @@ class PolicyEngine:
         self.default_action = cfg.get("default_action", "allow")
         self.mode = cfg.get("mode", "enforce")
         self.rules = cfg.get("rules", [])
+        self.output_rules = cfg.get("output_rules", [])
         self.destinations = cfg.get("destinations", {})
         self.pricing = cfg.get("pricing", {})
-        for rule in self.rules:
+        for rule in self.rules + self.output_rules:
             mode = rule.get("mode", self.mode)
             if mode not in MODES:
                 raise ValueError(f"Kural '{rule.get('name')}': geçersiz mode '{mode}' ({', '.join(sorted(MODES))})")
@@ -71,8 +83,16 @@ class PolicyEngine:
         return None
 
     def evaluate(self, ctx: Context) -> Decision:
-        decision = Decision(action=self.default_action, would_action=self.default_action)
-        for rule in self.rules:
+        return self._evaluate(self.rules, ctx, self.default_action)
+
+    def evaluate_output(self, ctx: Context, leaked: Set[str]) -> Decision:
+        """Model cevabındaki sızıntılar (girdide olmayan PII / sır) için karar."""
+        out_ctx = Context(ctx.team, ctx.model, ctx.destination, set(leaked), 0.0, ctx.teams)
+        return self._evaluate(self.output_rules, out_ctx, "allow")
+
+    def _evaluate(self, rules: List[dict], ctx: Context, default_action: str) -> Decision:
+        decision = Decision(action=default_action, would_action=default_action)
+        for rule in rules:
             when = rule.get("when", {})
             if not self._matches(when, ctx):
                 continue
@@ -92,7 +112,7 @@ class PolicyEngine:
 
     @staticmethod
     def _matches(when: dict, ctx: Context) -> bool:
-        if "teams" in when and ctx.team not in when["teams"]:
+        if "teams" in when and not (set(when["teams"]) & ctx.all_teams):
             return False
         if "destination" in when and ctx.destination != when["destination"]:
             return False

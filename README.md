@@ -29,11 +29,16 @@ Uygulamalar kod değiştirmez: OpenAI uyumlu olduğu için yalnızca `base_url` 
   Türkçe yazımlar da yakalanır.
 - **YAML politika:** ekip, model ve veri türüne göre izin ver / uyar / maskele / engelle.
   Yeni kural önce **gözlem modunda** denenebilir; **simülatör** bir isteğin ne olacağını gösterir.
+- **Çıktı koruması:** model cevabında **girdide olmayan** bir kişisel veri veya sır üretirse
+  (eğitim verisinden / RAG belgesinden sızıntı) gizlenir ya da cevap engellenir.
+- **Kimlik doğrulama:** Keycloak / Entra ID gibi OIDC sağlayıcılarının JWT'si; kullanıcı ve
+  ekipler token'dan gelir, header ile taklit edilemez.
 - **Denetim kaydı:** ham prompt hiç saklanmaz; özet, bulunan veri türleri, karar, token ve
   tahmini maliyet Kafka üzerinden ClickHouse'a yazılır (KVKK saklama süresi ayarlı).
 - **AI Kullanım Röntgeni:** kim, hangi modeli, ne kadar kullanıyor; yurt dışına ne gidiyor,
   ne engellendi, ne kadar tuttu (tarayıcıda açılan dashboard).
 - **KVKK yurt dışı aktarım raporu:** aylık, Excel'de açılan CSV.
+- **Prometheus metrikleri:** `/metrics` (istek, maskeleme / engelleme, sızıntı, gecikme, hatalar).
 - **MCP / agent koruması:** IBM ContextForge eklentisi; araç çıktısındaki kişisel veriyi
   maskeler, kişisel veri veya sırrın dış araçlara (Slack, e-posta, web) gönderilmesini engeller.
 
@@ -71,12 +76,22 @@ Kapatmak için: `docker compose -f docker-compose.yml -f docker-compose.test.yml
 
 ## Uygulamanızı bağlamak
 
+Üretimde (`AUTH_MODE=jwt`) uygulama, kimlik sağlayıcınızdan aldığı JWT'yi `api_key` olarak verir;
+OpenAI SDK'sı bunu zaten `Authorization: Bearer` olarak gönderir:
+
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://telveguard:8080/v1", api_key="kullanılmıyor",
-                default_headers={"x-telveguard-user": "ayse", "x-telveguard-team": "analitik"})
+client = OpenAI(base_url="https://telveguard.sirket.local/v1", api_key=oidc_access_token)
 ```
+
+Kullanıcı `preferred_username`, ekipler `groups` claim'inden okunur (değiştirilebilir).
+`OIDC_TEAM_PREFIX=telveguard-` ile yalnızca `telveguard-analitik` gibi gruplar ekip sayılır.
+Kullanıcı birden fazla ekipteyse ekip kuralları **herhangi bir** ekibi eşleşince uygulanır;
+"stajyer" kısıtından başka bir gruba da üye olarak kaçılamaz.
+
+Geliştirme ortamında (`AUTH_MODE=header`, doğrulama yok) kimlik header'la verilir:
+`default_headers={"x-telveguard-user": "ayse", "x-telveguard-team": "analitik"}`.
 
 Model adı hedefi belirler (`policies/default.yaml` → `destinations`): `vllm/`, `local/`, `qwen`,
 `llama` kurum içi; `gpt-`, `claude-`, `gemini-` ve tanınmayan her model yurt dışı sayılır.
@@ -102,6 +117,18 @@ rules:
     mode: monitor                        # önce gözlemle: engellemez, "engellerdi" diye kaydeder
 ```
 
+Model cevabı için ayrı `output_rules` bölümü vardır; burada `entity_in`, cevapta olup
+**girdide olmayan** değerlere bakar (kullanıcının kendi TCKN'sinin geri gelmesi sızıntı sayılmaz):
+
+```yaml
+output_rules:
+  - name: cikti-sir-gizle              # cevaptaki yeni sır "[GİZLENDİ:SECRET_AWS_KEY]" olur
+    when: { entity_in: ["SECRET_*"] }
+    action: mask                       # ya da block: cevap hiç dönmez
+```
+
+Çıktı kuralı varsa streaming istekleri de tamponlanıp taranır.
+
 Bir isteğin politikadan nasıl geçeceğini görmek için (upstream'e gitmez):
 
 ```bash
@@ -122,6 +149,9 @@ oc create secret generic telveguard-sirlar -n ai-guvenlik \
 
 helm upgrade --install telveguard deploy/helm/telveguard-gateway -n ai-guvenlik \
   --set image.repository=harbor.sirket.local/telveguard/gateway \
+  --set auth.oidc.issuer=https://sso.sirket.local/realms/ai \
+  --set auth.oidc.audience=telveguard \
+  --set auth.oidc.teamPrefix=telveguard- \
   --set existingSecret=telveguard-sirlar \
   --set upstream.internalUrl=http://vllm.llm.svc:8000/v1 \
   --set audit.kafkaBootstrap=kafka-bootstrap.kafka.svc:9092 \
@@ -129,7 +159,9 @@ helm upgrade --install telveguard deploy/helm/telveguard-gateway -n ai-guvenlik 
 ```
 
 Chart `restricted-v2` SCC ile uyumludur (root yok, salt okunur dosya sistemi) ve Route ile
-gelir; düz Kubernetes'te `route.enabled=false,ingress.enabled=true`. Tüm seçenekler:
+gelir; düz Kubernetes'te `route.enabled=false,ingress.enabled=true`. Kimlik doğrulama varsayılan
+olarak **açıktır** (`auth.mode=jwt`); issuer ve audience verilmeden kurulum yapılmaz.
+Prometheus için `metrics.serviceMonitor.enabled=true`. Tüm seçenekler:
 `deploy/helm/telveguard-gateway/values.yaml`.
 
 Air-gapped ortamda Türkçe NER ve LLM Guard modelleri için `scripts/mirror_models.sh`
@@ -139,6 +171,10 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 
 | Değişken | Açıklama |
 |---|---|
+| `AUTH_MODE` | `jwt` (üretim: OIDC token zorunlu) ya da `header` (geliştirme, doğrulama yok) |
+| `OIDC_ISSUER`, `OIDC_AUDIENCE` | JWT modunda zorunlu; imza anahtarları issuer'ın JWKS'inden alınır (`OIDC_JWKS_URL` ile değiştirilebilir) |
+| `OIDC_USER_CLAIM`, `OIDC_TEAM_CLAIM`, `OIDC_TEAM_PREFIX` | Kullanıcı ve ekip claim'leri (varsayılan `preferred_username`, `groups`); ekip grubu öneki |
+| `WORKERS` | Pod başına uvicorn worker sayısı (metrikler worker'lar arasında birleştirilir) |
 | `UPSTREAM_INTERNAL_URL` / `UPSTREAM_EXTERNAL_URL` | Kurum içi ve yurt dışı LLM adresleri (OpenAI uyumlu) |
 | `UPSTREAM_INTERNAL_KEY` / `UPSTREAM_EXTERNAL_KEY` | Upstream API anahtarları |
 | `POLICY_PATH` | Politika dosyası |
@@ -151,6 +187,21 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 
 Tahmini maliyet `policies/default.yaml` içindeki `pricing` tablosundan hesaplanır; fiyatı
 girilmemiş modeller Röntgen'de "fiyat tanımsız" görünür.
+
+## Metrikler
+
+`GET /metrics` (Prometheus). Etiketler yalnızca sınırlı kümelerdendir (karar, hedef, veri türü);
+model ve ekip adı istemci kontrolünde olduğu için etiket yapılmaz, bu kırılım Röntgen'dedir.
+
+| Metrik | Ne ölçer |
+|---|---|
+| `telveguard_requests_total{action,destination}` | Politika kararına göre istekler |
+| `telveguard_entities_detected_total{entity,stage}` | Girdide / çıktı sızıntısında bulunan veri türleri |
+| `telveguard_output_actions_total{action}` | Cevaptaki sızıntıya uygulanan karar |
+| `telveguard_injection_detected_total` | Injection skoru ≥ 0,5 olan istekler |
+| `telveguard_scan_duration_seconds` | Tarama + politika süresi (gateway'in eklediği gecikme) |
+| `telveguard_request_duration_seconds`, `telveguard_upstream_duration_seconds` | Uçtan uca ve LLM süresi |
+| `telveguard_upstream_errors_total`, `telveguard_audit_failures_total`, `telveguard_auth_failures_total{reason}` | Hatalar |
 
 ## Yönetim uçları
 
@@ -190,7 +241,8 @@ Uçtan uca testler gerçek Kafka, ClickHouse ve ContextForge'a karşı koşar (o
 docker build -f contextforge/Containerfile -t telveguard/contextforge:dev .
 docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build
 docker compose -f docker-compose.contextforge.yml up -d
-TELVEGUARD_E2E_URL=http://localhost:8080 TELVEGUARD_CF_URL=http://localhost:4444 pytest -q
+TELVEGUARD_E2E_URL=http://localhost:8080 TELVEGUARD_E2E_JWT_URL=http://localhost:8081 \
+  TELVEGUARD_CF_URL=http://localhost:4444 pytest -q
 ```
 
 ```
@@ -218,9 +270,9 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 
 ## Bilinen sınırlar
 
-- Kullanıcı ve ekip bilgisi şimdilik header'dan geliyor; üretimde OIDC / JWT (Keycloak, Entra ID) gerekli.
-- Maskeleme gereken streaming istekleri tamponlanıp tek parça döner; maskesiz streaming'de
-  model çıktısı taranmaz ve token / maliyet bilgisi gelmez.
+- Maskeleme veya çıktı kuralı olan streaming istekleri tamponlanıp tek parça döner. Hiçbiri
+  yoksa gerçek streaming yapılır; bu durumda cevap taranmaz ve token / maliyet bilgisi gelmez.
+- Yönetim uçları (Röntgen, simülatör, rapor) OIDC rolüyle değil, ayrı bir yönetici token'ıyla korunur.
 - Injection kuralları sezgisel bir başlangıç setidir; Türkçe saldırı veri setiyle eğitilmiş
   bir sınıflandırıcı hedefleniyor. LLM Guard için lokal model yolu henüz bağlanmadı.
 - ContextForge'da yer tutucu numaraları (`[TCKN_1]`) tek araç çağrısı içinde tutarlıdır,
@@ -228,9 +280,10 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 
 ## Yol haritası
 
-1. **Faz 1 (tamamlandı):** LLM gateway, Türkçe PII ve sır tespiti, denetim kaydı, Röntgen,
-   KVKK aktarım raporu, politika gözlem modu ve simülatörü, OKD Helm chart'ı.
-2. **Faz 2:** MCP gateway'de araç izin listesi ve agent kimliği; gölge AI tespiti için tarayıcı eklentisi.
+1. **Faz 1 (tamamlandı):** LLM gateway, Türkçe PII ve sır tespiti, çıktı koruması, OIDC kimlik
+   doğrulama, denetim kaydı, Röntgen, KVKK aktarım raporu, politika gözlem modu ve simülatörü,
+   Prometheus metrikleri, OKD Helm chart'ı.
+2. **Faz 2:** ekip kota / hız sınırı, Anthropic API (`/v1/messages`) uyumu, MCP gateway'de araç izin listesi ve agent kimliği; gölge AI tespiti için tarayıcı eklentisi.
 3. **Faz 3:** AI envanteri, EU AI Act risk sınıflandırması, VERBİS raporları.
 
 ## Lisans

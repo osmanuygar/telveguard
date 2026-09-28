@@ -47,6 +47,8 @@ services:
       CLICKHOUSE_USER: telveguard
       CLICKHOUSE_PASSWORD: telveguard
       CLICKHOUSE_DB: telveguard
+      # header: geliştirme (kimlik doğrulanmaz); üretimde jwt + OIDC_ISSUER / OIDC_AUDIENCE
+      AUTH_MODE: ${AUTH_MODE:-header}
       # Boşsa yönetim uçları (/v1/xray, /v1/policy/simulate, raporlar) kapalıdır
       TELVEGUARD_ADMIN_TOKEN: ${TELVEGUARD_ADMIN_TOKEN:-}
     volumes:

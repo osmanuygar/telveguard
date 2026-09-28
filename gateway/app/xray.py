@@ -69,6 +69,8 @@ XRAY_QUERIES = {
                countIf(destination = 'external' AND action != 'block' AND {_UNMASKED_PII}) AS external_unmasked_pii,
                countIf(would_action != '' AND would_action != action) AS monitor_diffs,
                countIf(would_action = 'block' AND action != 'block') AS would_block,
+               countIf(notEmpty(output_leaked)) AS output_leaks,
+               countIf(output_action IN ('mask', 'block')) AS output_protected,
                sum(prompt_tokens) AS prompt_tokens, sum(completion_tokens) AS completion_tokens,
                round(sum(est_cost_usd), 6) AS est_cost_usd,
                countIf(est_cost_usd IS NULL) AS cost_unknown_requests,

@@ -1,6 +1,6 @@
 # Uçtan uca test ortamı: gerçek LLM yerine sahte upstream.
 #   docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build
-#   TELVEGUARD_E2E_URL=http://localhost:8080 pytest tests/e2e/test_e2e.py -v
+#   TELVEGUARD_E2E_URL=http://localhost:8080 TELVEGUARD_E2E_JWT_URL=http://localhost:8081 pytest tests/e2e -v
 services:
   mock-llm:
     image: python:3.12-slim
@@ -17,3 +17,33 @@ services:
       TELVEGUARD_ADMIN_TOKEN: e2e-admin-token   # yalnızca lokal test
     depends_on:
       mock-llm: { condition: service_started }
+
+  # Sahte OIDC kimlik sağlayıcı (Keycloak / Entra ID yerine); gateway imajında PyJWT hazır
+  mock-oidc:
+    build: { context: ., dockerfile: gateway/Dockerfile }
+    command: ["python", "/mock/mock_oidc.py"]
+    environment:
+      OIDC_ISSUER: http://mock-oidc:9200
+    volumes:
+      - ./tests/e2e/mock_oidc.py:/mock/mock_oidc.py:ro
+    ports: ["9200:9200"]
+
+  # Aynı gateway, AUTH_MODE=jwt (üretim kimlik modu)
+  gateway-jwt:
+    build: { context: ., dockerfile: gateway/Dockerfile }
+    environment:
+      POLICY_PATH: /policies/default.yaml
+      KAFKA_BOOTSTRAP: kafka:9092
+      UPSTREAM_INTERNAL_URL: http://mock-llm:9000/v1
+      UPSTREAM_EXTERNAL_URL: http://mock-llm:9000/v1
+      AUTH_MODE: jwt
+      OIDC_ISSUER: http://mock-oidc:9200
+      OIDC_AUDIENCE: telveguard
+      OIDC_TEAM_PREFIX: telveguard-
+    volumes:
+      - ./policies:/policies:ro
+    ports: ["8081:8080"]
+    depends_on:
+      kafka: { condition: service_healthy }
+      mock-llm: { condition: service_started }
+      mock-oidc: { condition: service_started }

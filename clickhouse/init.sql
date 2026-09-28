@@ -12,7 +12,10 @@ CREATE TABLE IF NOT EXISTS telveguard.audit_queue
     -- gözlem modu, KVKK raporu ve Röntgen alanları
     monitored_rules Array(String), would_action String, masked_entities Array(String),
     prompt_tokens UInt32, completion_tokens UInt32, usage_known UInt8,
-    est_cost_usd Nullable(Float64)
+    est_cost_usd Nullable(Float64),
+    -- kimlik (OIDC) ve çıktı koruması
+    teams Array(String), auth_source String,
+    output_leaked Array(String), output_action String, output_rules Array(String)
 )
 ENGINE = Kafka
 SETTINGS kafka_broker_list = 'kafka:9092',
@@ -37,7 +40,11 @@ CREATE TABLE IF NOT EXISTS telveguard.audit
     masked_entities Array(LowCardinality(String)),
     prompt_tokens UInt32, completion_tokens UInt32, usage_known UInt8,
     -- NULL = fiyatı bilinmiyor (0 = gerçekten ücretsiz / engellendi)
-    est_cost_usd Nullable(Float64)
+    est_cost_usd Nullable(Float64),
+    teams Array(LowCardinality(String)), auth_source LowCardinality(String),
+    -- model cevabında üretilen (girdide olmayan) PII / sır türleri ve uygulanan karar
+    output_leaked Array(LowCardinality(String)), output_action LowCardinality(String),
+    output_rules Array(LowCardinality(String))
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
@@ -52,7 +59,8 @@ SELECT toUUID(event_id) AS event_id,
        injection_score, injection_engine, prompt_sha256, prompt_chars, masked_prompt,
        latency_ms, upstream_status, output_entities, masked_count, output_scan,
        monitored_rules, would_action, masked_entities,
-       prompt_tokens, completion_tokens, usage_known, est_cost_usd
+       prompt_tokens, completion_tokens, usage_known, est_cost_usd,
+       teams, auth_source, output_leaked, output_action, output_rules
 FROM telveguard.audit_queue;
 
 -- Örnek rapor: ekip bazında yurt dışına giden kişisel veri denemeleri (son 30 gün)

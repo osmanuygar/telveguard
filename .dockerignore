@@ -1,0 +1,14 @@
+# Build bağlamını küçük tut (.venv yüzlerce MB) ve yerel sırları imaja sokma
+.git
+.venv
+venv
+.idea
+.vscode
+.pytest_cache
+**/__pycache__
+**/*.egg-info
+models
+.env
+.env.*
+*.pem
+*.key

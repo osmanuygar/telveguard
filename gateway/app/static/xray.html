@@ -373,6 +373,7 @@ function render(d) {
     tile("Sır içeren istek", compact.format(s.secret_requests), "API anahtarı, token, parola"),
     tile("Tahmini maliyet", costText(s.est_cost_usd, s.cost_unknown_requests), costNote),
     tile("Gözlemde engellenirdi", compact.format(s.would_block), "mode: monitor kuralları"),
+    tile("Çıktıda sızıntı", compact.format(s.output_leaks), `${n(s.output_protected)} gizlendi / engellendi`),
   );
 
   dailyChart(d.daily);

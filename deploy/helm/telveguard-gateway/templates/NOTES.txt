@@ -7,6 +7,11 @@ Telveguard Gateway kuruldu: {{ include "tg.fullname" . }}
 {{- else }}
   http://{{ include "tg.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}/v1
 {{- end }}
+{{- if eq .Values.auth.mode "header" }}
+
+!!! UYARI: auth.mode=header - istemci kimliği DOĞRULANMIYOR; herkes başka kullanıcı / ekip
+    gibi davranabilir, ekip kuralları ve raporlar güvenilmez. Yalnızca test ortamı için.
+{{- end }}
 {{- if not .Values.audit.kafkaBootstrap }}
 
 UYARI: audit.kafkaBootstrap boş; denetim olayları yalnızca pod loglarına (stdout) yazılıyor.

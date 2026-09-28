@@ -8,6 +8,12 @@
 {{- if and .Values.policy.existingConfigMap .Values.policy.content }}
 {{- fail "policy.existingConfigMap ve policy.content birlikte verilemez" }}
 {{- end }}
+{{- if not (has .Values.auth.mode (list "jwt" "header")) }}
+{{- fail (printf "auth.mode '%s' geçersiz: jwt ya da header" .Values.auth.mode) }}
+{{- end }}
+{{- if and (eq .Values.auth.mode "jwt") (not (and .Values.auth.oidc.issuer .Values.auth.oidc.audience)) }}
+{{- fail "auth.mode=jwt için auth.oidc.issuer ve auth.oidc.audience zorunlu (yalnızca test için: auth.mode=header)" }}
+{{- end }}
 {{- if lt (int .Values.workers) 1 }}
 {{- fail "workers en az 1 olmalı" }}
 {{- end }}

@@ -13,6 +13,19 @@ replicaCount: 2
 # Pod başına uvicorn worker sayısı; ölçekleme için önce replica artırın
 workers: 2
 
+# ---------------- istemci kimliği ----------------
+auth:
+  # jwt: OIDC (Keycloak / Entra ID) token'ı zorunlu; kullanıcı ve ekipler token'dan gelir.
+  # header: x-telveguard-user / x-telveguard-team header'ları, DOĞRULAMA YOK (yalnızca test).
+  mode: jwt
+  oidc:
+    issuer: ""            # ör. https://sso.sirket.local/realms/ai  (zorunlu)
+    audience: ""          # token'ın "aud" değeri, ör. telveguard     (zorunlu)
+    jwksUrl: ""           # boşsa issuer/.well-known/openid-configuration'dan bulunur
+    userClaim: preferred_username   # Entra ID: preferred_username / upn
+    teamClaim: groups               # Keycloak rolleri için: realm_access.roles
+    teamPrefix: ""                  # ör. "telveguard-": yalnızca bu önekli gruplar ekip sayılır
+
 # ---------------- upstream LLM'ler ----------------
 upstream:
   internalUrl: http://vllm:8000/v1          # kurum içi (vLLM / Ollama)
@@ -116,6 +129,13 @@ autoscaling:
   minReplicas: 2
   maxReplicas: 6
   targetCPUUtilizationPercentage: 70
+
+# Prometheus: /metrics (OKD user workload monitoring için ServiceMonitor)
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
 
 podAnnotations: {}
 nodeSelector: {}

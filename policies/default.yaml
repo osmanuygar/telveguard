@@ -41,6 +41,25 @@ rules:
     action: block
     message: "Bu ekip dış modellere kimlik numarası gönderemez."
 
+# Model cevabı: entity_in, cevapta olup GİRDİDE OLMAYAN değerlere (sızıntı) bakar.
+# Kullanıcının kendi TCKN'sinin cevapta geri gelmesi sızıntı sayılmaz.
+# mask: değer "[GİZLENDİ:TCKN]" olur (geri çevrilmez); block: cevap hiç dönmez.
+output_rules:
+  # Eğitim verisinden / RAG belgesinden sızan API anahtarı, parola, private key
+  - name: cikti-sir-gizle
+    when: { entity_in: ["SECRET_*"] }
+    action: mask
+
+  - name: cikti-kimlik-finans-gizle
+    when: { entity_in: [TCKN, VKN, IBAN_TR, CREDIT_CARD] }
+    action: mask
+
+  # Telefon / e-posta: önce gözlemle (modelin ürettiği örnek adresler yanlış pozitif olabilir)
+  - name: cikti-iletisim-gizle
+    when: { entity_in: [PHONE_TR, EMAIL_ADDRESS] }
+    action: mask
+    mode: monitor
+
 # Röntgen maliyet tahmini: USD / 1M token. Liste sırayla denenir, İLK eşleşen önek kazanır
 # (claude-opus-5-5, claude-opus-5'ten önce gelmeli). Eşleşmeyen modelin maliyeti "bilinmiyor".
 # Claude: Anthropic birinci taraf API liste fiyatları (2026-06). Bedrock/Vertex fiyatları farklıdır.

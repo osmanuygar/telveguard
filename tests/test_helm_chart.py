@@ -12,8 +12,12 @@ CHART = "deploy/helm/telveguard-gateway"
 pytestmark = pytest.mark.skipif(not shutil.which("helm"), reason="helm kurulu değil")
 
 
-def render(*args):
-    out = subprocess.run(["helm", "template", "tg", CHART, "--namespace", "ai", *args],
+# Chart varsayılanı auth.mode=jwt: issuer + audience olmadan kurulum reddedilir
+OIDC = ["--set", "auth.oidc.issuer=https://sso.sirket.local/realms/ai", "--set", "auth.oidc.audience=telveguard"]
+
+
+def render(*args, oidc=True):
+    out = subprocess.run(["helm", "template", "tg", CHART, "--namespace", "ai", *(OIDC if oidc else []), *args],
                          capture_output=True, text=True)
     if out.returncode != 0:
         raise RuntimeError(out.stderr)
@@ -30,7 +34,7 @@ def env(docs):
 
 
 def test_lint_passes():
-    out = subprocess.run(["helm", "lint", CHART, "--strict"], capture_output=True, text=True)
+    out = subprocess.run(["helm", "lint", CHART, "--strict", *OIDC], capture_output=True, text=True)
     assert out.returncode == 0, out.stdout + out.stderr
 
 
@@ -96,7 +100,7 @@ def test_full_config_renders_env():
     assert e["KAFKA_BOOTSTRAP"]["value"] == "kafka:9092" and e["CLICKHOUSE_URL"]["value"] == "http://ch:8123"
     assert e["AUDIT_STORE_MASKED"]["value"] == "1" and e["ENABLE_TR_NER"]["value"] == "1"
     c = container(docs)
-    assert c["command"][c["command"].index("--workers") + 1] == "4"
+    assert e["WORKERS"]["value"] == "4"
     assert "startupProbe" in c and any(m["mountPath"] == "/models" for m in c["volumeMounts"])
 
 
@@ -117,3 +121,32 @@ def test_kubernetes_mode_with_ingress_hpa_networkpolicy():
 def test_invalid_config_fails_fast(args, msg):
     with pytest.raises(RuntimeError, match=msg):
         render(*args)
+
+
+def test_jwt_is_default_and_requires_issuer():
+    with pytest.raises(RuntimeError, match="auth.oidc.issuer"):
+        render(oidc=False)
+    e = env(render("--set", "auth.oidc.teamPrefix=telveguard-"))
+    assert e["AUTH_MODE"]["value"] == "jwt"
+    assert e["OIDC_ISSUER"]["value"] == "https://sso.sirket.local/realms/ai"
+    assert e["OIDC_AUDIENCE"]["value"] == "telveguard" and e["OIDC_TEAM_PREFIX"]["value"] == "telveguard-"
+
+
+def test_header_mode_must_be_explicit_and_has_no_oidc_env():
+    e = env(render("--set", "auth.mode=header", oidc=False))
+    assert e["AUTH_MODE"]["value"] == "header" and "OIDC_ISSUER" not in e
+    with pytest.raises(RuntimeError, match="geçersiz"):
+        render("--set", "auth.mode=ldap")
+
+
+def test_image_entrypoint_used_with_workers_and_multiproc_metrics():
+    c = container(render("--set", "workers=3"))
+    assert "command" not in c                      # imajın entrypoint.sh'ı kullanılır
+    e = {x["name"]: x.get("value") for x in c["env"]}
+    assert e["WORKERS"] == "3" and e["PROMETHEUS_MULTIPROC_DIR"].startswith("/tmp/")  # /tmp emptyDir
+
+
+def test_service_monitor_optional():
+    assert not any(k == "ServiceMonitor" for k, _ in render())
+    sm = render("--set", "metrics.serviceMonitor.enabled=true")[("ServiceMonitor", "tg-telveguard-gateway")]
+    assert sm["spec"]["endpoints"][0]["path"] == "/metrics"

@@ -17,6 +17,8 @@ import time
 import uuid
 from typing import Optional
 
+from .metrics import AUDIT_FAILURES
+
 log = logging.getLogger("telveguard.audit")
 
 
@@ -80,6 +82,7 @@ class AuditSink:
                 await self._producer.send_and_wait(self.topic, event, key=event["team"].encode())
                 return
             except Exception as e:  # Kafka hatası kullanıcı isteğini 500'e çevirmesin
+                AUDIT_FAILURES.inc()
                 log.error("audit_kafka_failed event_id=%s error=%s", event["event_id"], type(e).__name__)
         # Yedek yol: olay kaybolmasın (ham prompt zaten olayda yok)
         log.info(json.dumps(event, ensure_ascii=False))

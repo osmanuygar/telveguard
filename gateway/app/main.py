@@ -22,8 +22,10 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
+from . import metrics
 from . import xray as xray_mod
 from .audit import AuditSink
+from .auth import AuthError, Authenticator, Identity
 from telveguard_core.detectors.injection import InjectionDetector
 from telveguard_core.pii.engine import TrPiiEngine
 from telveguard_core.detectors.injection import InjectionResult
@@ -56,6 +58,7 @@ async def lifespan(app: FastAPI):
         app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5))
     if not hasattr(app.state, "ch"):  # testlerde sahte ClickHouse enjekte edilebilir
         app.state.ch = xray_mod.ClickHouse.from_env(app.state.http)
+    app.state.auth = Authenticator.from_env(app.state.http)
     yield
     await app.state.audit.stop()
     await app.state.http.aclose()
@@ -136,26 +139,32 @@ def _require_admin(request: Request) -> Optional[JSONResponse]:
 
 @dataclass
 class Analysis:
-    user: str
-    team: str
+    identity: Identity
     model: str
     destination: str
     messages: List[Dict[str, Any]]
     full_text: str                  # injection için taranan roller
+    all_text: str                   # maskelemeden ÖNCEKİ tüm metin (çıktı sızıntısı karşılaştırması)
     entity_counts: Counter          # tüm rollerdeki PII/sır türleri ve adetleri
     injection: InjectionResult
+    ctx: Context
     decision: Decision
+
+    @property
+    def user(self) -> str:
+        return self.identity.user
+
+    @property
+    def team(self) -> str:
+        return self.identity.team
 
     @property
     def entities(self) -> Set[str]:
         return set(self.entity_counts)
 
 
-def _analyze(st, body: Dict[str, Any], headers) -> Analysis:
+def _analyze(st, body: Dict[str, Any], identity: Identity) -> Analysis:
     """Tarama + politika. Gerçek istek ve simülatör aynı yolu kullanır."""
-    # Prod'da kimlik OIDC/JWT'den (Keycloak, Entra ID) gelmeli; header geçici.
-    user = headers.get("x-telveguard-user", "anonymous")
-    team = headers.get("x-telveguard-team", "default")
     model = body.get("model", "")
     destination = st.policy.destination_of(model)
     messages = body.get("messages", [])
@@ -165,8 +174,36 @@ def _analyze(st, body: Dict[str, Any], headers) -> Analysis:
     all_text = "\n".join(t for _, _, t in _iter_text_parts(messages))
     entity_counts = Counter(f.entity for f in st.pii.analyze(all_text))
     injection = st.injection.scan(full_text)
-    decision = st.policy.evaluate(Context(team, model, destination, set(entity_counts), injection.score))
-    return Analysis(user, team, model, destination, messages, full_text, entity_counts, injection, decision)
+    ctx = Context(identity.team, model, destination, set(entity_counts), injection.score,
+                  frozenset(identity.teams))
+    decision = st.policy.evaluate(ctx)
+    return Analysis(identity, model, destination, messages, full_text, all_text, entity_counts,
+                    injection, ctx, decision)
+
+
+def _auth_error(e: AuthError) -> JSONResponse:
+    metrics.AUTH_FAILURES.labels(e.reason).inc()
+    resp = _openai_error(e.status, f"Telveguard: {e.message}", e.reason, "authentication_error")
+    if e.status == 401:
+        resp.headers["WWW-Authenticate"] = f'Bearer error="invalid_token", error_description="{e.reason}"'
+    return resp
+
+
+def _find_output_leaks(st, text: str, known: str, vault: Dict[str, str]):
+    """Cevaptaki PII / sırlardan GİRDİDE OLMAYANLAR. Kullanıcının kendi verisinin cevapta
+    geri gelmesi (iç model, maskesiz) sızıntı değildir; modelin ürettiği yeni değer sızıntıdır."""
+    findings = st.pii.analyze(text)
+    known_values = set(vault.values())
+    leaks = [f for f in findings
+             if text[f.start:f.end] not in known and text[f.start:f.end] not in known_values]
+    return findings, leaks
+
+
+def _redact(text: str, leaks, entities: Set[str]) -> str:
+    """Sızıntıyı geri çevrilemez biçimde gizle (kullanıcı da görmemeli)."""
+    for f in sorted((f for f in leaks if f.entity in entities), key=lambda f: f.start, reverse=True):
+        text = text[:f.start] + f"[GİZLENDİ:{f.entity}]" + text[f.end:]
+    return text
 
 
 def _usage_fields(st, model: str, completion: Optional[dict]) -> Dict[str, Any]:
@@ -196,10 +233,29 @@ async def healthz():
     return {"status": "ok"}
 
 
+@app.get("/metrics", include_in_schema=False)
+async def metrics_endpoint():
+    body, content_type = metrics.render()
+    return Response(body, media_type=content_type)
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     t0 = time.perf_counter()
+    request.state.destination = "none"  # kimlik / gövde hatasında (sınırlı etiket)
+    try:
+        return await _chat_completions(request, t0)
+    finally:
+        metrics.REQUEST_SECONDS.labels(request.state.destination).observe(time.perf_counter() - t0)
+
+
+async def _chat_completions(request: Request, t0: float):
     st = request.app.state
+    # Kimlik gövdeden ÖNCE: doğrulanmamış isteğin gövdesi işlenmez
+    try:
+        identity = await st.auth.authenticate(request.headers)
+    except AuthError as e:
+        return _auth_error(e)
     try:
         body = await request.json()
     except ValueError:
@@ -209,8 +265,16 @@ async def chat_completions(request: Request):
                              "invalid_request", "invalid_request_error")
 
     # 1-2) Tarama + politika
-    a = _analyze(st, body, request.headers)
+    t_scan = time.perf_counter()
+    a = _analyze(st, body, identity)
+    metrics.SCAN_SECONDS.observe(time.perf_counter() - t_scan)
     model, destination, decision, messages = a.model, a.destination, a.decision, a.messages
+    request.state.destination = destination
+    metrics.REQUESTS.labels(decision.action, destination).inc()
+    for entity in a.entities:
+        metrics.ENTITIES.labels(entity, "input").inc()
+    if a.injection.score >= 0.5:
+        metrics.INJECTIONS.inc()
 
     async def audit(masked_prompt=None, upstream_status=None, **extra):
         ev = st.audit.build_event(
@@ -219,6 +283,7 @@ async def chat_completions(request: Request):
             masked_prompt=masked_prompt, latency_ms=(time.perf_counter() - t0) * 1000,
             upstream_status=upstream_status,
         )
+        ev.update(teams=a.identity.teams, auth_source=a.identity.source)
         ev.update(extra)
         await st.audit.emit(ev)
 
@@ -238,13 +303,17 @@ async def chat_completions(request: Request):
         headers["Authorization"] = f"Bearer {UPSTREAM_KEYS[destination]}"
 
     wants_stream = bool(body.get("stream"))
+    # Maskeleme ya da çıktı kuralı varsa stream tamponlanır: yer tutucular parça sınırında
+    # bölünmesin ve cevap müşteriye gitmeden taransın
+    must_buffer = bool(vault) or bool(st.policy.output_rules)
 
-    if wants_stream and not vault:
-        # Maskeleme yoksa gerçek pass-through streaming
+    if wants_stream and not must_buffer:
+        # Maskeleme ve çıktı kuralı yoksa gerçek pass-through streaming
         req = st.http.build_request("POST", url, json=body, headers=headers)
         try:
             resp = await st.http.send(req, stream=True)
         except httpx.HTTPError:
+            metrics.UPSTREAM_ERRORS.labels(destination, "unreachable").inc()
             await audit(masked_prompt, 502, output_scan="skipped_stream", **_usage_fields(st, model, None))
             return _openai_error(502, "Upstream'e ulaşılamadı.", "upstream_unreachable", "upstream_error")
         await audit(masked_prompt, resp.status_code, output_scan="skipped_stream", **_usage_fields(st, model, None))
@@ -257,27 +326,53 @@ async def chat_completions(request: Request):
                                  media_type="text/event-stream")
 
     body["stream"] = False
+    t_up = time.perf_counter()
     try:
         resp = await st.http.post(url, json=body, headers=headers)
     except httpx.HTTPError:
+        metrics.UPSTREAM_ERRORS.labels(destination, "unreachable").inc()
         await audit(masked_prompt, 502, **_usage_fields(st, model, None))
         return _openai_error(502, "Upstream'e ulaşılamadı.", "upstream_unreachable", "upstream_error")
+    metrics.UPSTREAM_SECONDS.labels(destination).observe(time.perf_counter() - t_up)
     if resp.status_code >= 400:
+        metrics.UPSTREAM_ERRORS.labels(destination, metrics.upstream_error_kind(resp.status_code)).inc()
         await audit(masked_prompt, resp.status_code, **_usage_fields(st, model, None))
         return _upstream_error(resp)
 
     completion = resp.json()
 
-    # 5) Çıktı: maskeyi geri aç + çıktıda yeni PII sızıntısı var mı?
-    output_entities = set()
+    # 5) Çıktı: sızıntı taraması (maske geri açılmadan ÖNCE) -> çıktı politikası -> maskeyi geri aç
+    output_entities: Set[str] = set()
+    scanned_outputs = []
     for choice in completion.get("choices", []):
         msg = choice.get("message", {})
         if isinstance(msg.get("content"), str):
-            output_entities |= {f.entity for f in st.pii.analyze(msg["content"])}
-            msg["content"] = st.pii.unmask(msg["content"], vault)
+            findings, leaks = _find_output_leaks(st, msg["content"], a.all_text, vault)
+            output_entities |= {f.entity for f in findings}
+            scanned_outputs.append((msg, leaks))
+    leaked = {f.entity for _, leaks in scanned_outputs for f in leaks}
+    out = st.policy.evaluate_output(a.ctx, leaked)
+    for entity in leaked:
+        metrics.ENTITIES.labels(entity, "output_leak").inc()
+    if leaked:
+        metrics.OUTPUT_ACTIONS.labels(out.action).inc()
+    output_audit = dict(output_entities=sorted(output_entities), output_leaked=sorted(leaked),
+                        output_action=out.action if leaked else "",
+                        output_rules=out.rules,
+                        monitored_rules=decision.monitored_rules + out.monitored_rules)
 
-    await audit(masked_prompt, resp.status_code, output_entities=sorted(output_entities),
-                masked_count=len(vault), **_usage_fields(st, model, completion))
+    if out.action == "block":
+        await audit(masked_prompt, resp.status_code, masked_count=len(vault), **output_audit,
+                    **_usage_fields(st, model, completion))
+        return _openai_error(403, f"Telveguard: model cevabı engellendi ({out.reason}).", "output_blocked")
+
+    for msg, leaks in scanned_outputs:
+        if out.action == "mask":
+            msg["content"] = _redact(msg["content"], leaks, out.mask_entities)
+        msg["content"] = st.pii.unmask(msg["content"], vault)
+
+    await audit(masked_prompt, resp.status_code, masked_count=len(vault), **output_audit,
+                **_usage_fields(st, model, completion))
 
     if wants_stream:
         return StreamingResponse(_as_sse(completion), media_type="text/event-stream")
@@ -299,12 +394,18 @@ async def policy_simulate(request: Request):
                              "invalid_request", "invalid_request_error")
 
     body = copy.deepcopy(body)
-    a = _analyze(request.app.state, body, request.headers)
+    # Yönetici aracı: Authorization yönetici token'ını taşır; simüle edilecek kimlik
+    # açıkça header'dan verilir (AUTH_MODE'dan bağımsız)
+    h = request.headers
+    teams = [t.strip() for t in h.get("x-telveguard-team", "default").split(",") if t.strip()]
+    identity = Identity(h.get("x-telveguard-user", "simulate"), teams or ["default"], "simulate")
+    a = _analyze(request.app.state, body, identity)
     d = a.decision
     vault: Dict[str, str] = {}
     _mask_messages(request.app.state, a.messages, d, vault)
     return {
         "team": a.team,
+        "teams": a.identity.teams,
         "model": a.model,
         "destination": a.destination,
         "entities": dict(sorted(a.entity_counts.items())),
