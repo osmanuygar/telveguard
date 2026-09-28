@@ -232,3 +232,7 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
    KVKK aktarım raporu, politika gözlem modu ve simülatörü, OKD Helm chart'ı.
 2. **Faz 2:** MCP gateway'de araç izin listesi ve agent kimliği; gölge AI tespiti için tarayıcı eklentisi.
 3. **Faz 3:** AI envanteri, EU AI Act risk sınıflandırması, VERBİS raporları.
+
+## Lisans
+
+[Apache License 2.0](LICENSE)
