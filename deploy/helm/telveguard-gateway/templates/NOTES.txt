@@ -1,0 +1,25 @@
+Telveguard Gateway kuruldu: {{ include "tg.fullname" . }}
+
+İstemciler yalnızca base_url'i değiştirir:
+{{- if .Values.route.enabled }}
+  oc get route {{ include "tg.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}'
+  -> https://<host>/v1
+{{- else }}
+  http://{{ include "tg.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}/v1
+{{- end }}
+{{- if not .Values.audit.kafkaBootstrap }}
+
+UYARI: audit.kafkaBootstrap boş; denetim olayları yalnızca pod loglarına (stdout) yazılıyor.
+{{- end }}
+{{- if not .Values.clickhouse.url }}
+
+Not: clickhouse.url boş; Röntgen (/xray) ve KVKK raporu devre dışı (503).
+{{- end }}
+{{- if and (not .Values.existingSecret) (not .Values.secrets.adminToken) }}
+
+Not: yönetici token'ı yok; yönetim uçları kapalı (existingSecret'a admin-token ekleyin).
+{{- end }}
+{{- if and (not .Values.existingSecret) (or .Values.secrets.adminToken .Values.secrets.upstreamExternalKey) }}
+
+UYARI: Sırlar values üzerinden verildi (Helm release geçmişinde saklanır). Prod'da existingSecret kullanın.
+{{- end }}

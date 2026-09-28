@@ -1,0 +1,124 @@
+# Telveguard Gateway - Helm değerleri (OKD / OpenShift öncelikli).
+# Kafka ve ClickHouse bu chart'ın parçası değildir; kurumdaki mevcut kümelere bağlanır.
+# ClickHouse şeması: clickhouse/init.sql (bir kez çalıştırın).
+
+image:
+  # Air-gapped: Harbor yolu, ör. harbor.sirket.local/telveguard/gateway
+  repository: telveguard/gateway
+  tag: ""                 # boşsa Chart appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+replicaCount: 2
+# Pod başına uvicorn worker sayısı; ölçekleme için önce replica artırın
+workers: 2
+
+# ---------------- upstream LLM'ler ----------------
+upstream:
+  internalUrl: http://vllm:8000/v1          # kurum içi (vLLM / Ollama)
+  externalUrl: https://api.openai.com/v1    # yurt dışı sağlayıcı (maskeli gider)
+
+# ---------------- denetim (Kafka) ----------------
+audit:
+  kafkaBootstrap: ""      # ör. kafka-bootstrap.kafka.svc:9092 ; boşsa olaylar stdout'a JSON yazılır
+  topic: telveguard.audit.v1
+  # 1: maskelenmiş prompt da saklanır (PII yer tutucu hâlinde). Ham prompt hiçbir zaman saklanmaz.
+  storeMasked: false
+
+# ---------------- Röntgen + KVKK raporu (ClickHouse) ----------------
+clickhouse:
+  url: ""                 # ör. http://clickhouse.telveguard.svc:8123 ; boşsa Röntgen uçları 503 döner
+  user: telveguard_reader # yalnızca SELECT yetkili kullanıcı önerilir
+  database: telveguard
+
+# ---------------- politika ----------------
+policy:
+  # Doluysa bu ConfigMap kullanılır (anahtar: policy.yaml); boşsa chart'taki files/policy.yaml
+  existingConfigMap: ""
+  # Chart'taki varsayılan politikayı tamamen değiştirmek için YAML metni (opsiyonel)
+  content: ""
+
+# ---------------- sırlar ----------------
+# Önerilen: Secret'ı chart dışında (Vault / sealed-secrets / oc create secret) oluşturup adını verin.
+# Beklenen anahtarlar (hepsi opsiyonel): admin-token, upstream-external-key,
+# upstream-internal-key, clickhouse-password
+existingSecret: ""
+# existingSecret boşsa chart bu değerlerden Secret üretir (geliştirme / test için).
+# adminToken boşsa yönetim uçları (Röntgen, simülatör, raporlar) KAPALIDIR.
+secrets:
+  adminToken: ""
+  upstreamExternalKey: ""
+  upstreamInternalKey: ""
+  clickhousePassword: ""
+
+# ---------------- opsiyonel modeller (air-gapped) ----------------
+# scripts/mirror_models.sh ile indirilen modeller bir PVC'de: /models/tr-ner, /models/prompt-injection
+models:
+  existingClaim: ""
+  enableTrNer: false
+  enableLlmGuard: false
+
+extraEnv: []              # [{name: X, value: Y}]
+
+# ---------------- ağ ----------------
+service:
+  type: ClusterIP
+  port: 8080
+
+# OpenShift Route (OKD). Kubernetes'te ingress.enabled kullanın.
+route:
+  enabled: true
+  host: ""                # boşsa küme varsayılanı
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: telveguard.local
+  tls: []                 # [{secretName: ..., hosts: [...]}]
+
+# Gateway'e yalnızca izin verilen kaynaklardan erişilsin (istemci namespace'leri + router)
+networkPolicy:
+  enabled: false
+  # Boş liste: aynı namespace. OKD router için: {kubernetes.io/metadata.name: openshift-ingress}
+  allowFromNamespaces: []
+
+# ---------------- çalışma ----------------
+serviceAccount:
+  create: true
+  name: ""
+
+# OKD rastgele UID atar: runAsUser VERMEYİN (restricted-v2 SCC ile uyumlu)
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { memory: 512Mi }   # NER/LLM Guard açıksa ~2-3Gi gerekir
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

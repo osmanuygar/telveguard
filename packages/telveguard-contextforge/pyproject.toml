@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telveguard-contextforge"
+version = "0.1.0"
+description = "Telveguard eklentisi: IBM ContextForge için Türkçe PII ve prompt injection koruması"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = ["telveguard-core>=0.1.0", "cpex>=0.1.4"]
+
+[tool.setuptools.packages.find]
+include = ["telveguard_contextforge*"]
+
+[tool.setuptools.package-data]
+telveguard_contextforge = ["plugin-manifest.yaml"]

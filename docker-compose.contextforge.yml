@@ -1,0 +1,38 @@
+# ContextForge + Telveguard eklentisi uçtan uca test ortamı (yalnızca lokal test için;
+# sırlar sabit ve zayıf, prod'da KULLANMAYIN).
+#   docker build -f contextforge/Containerfile -t telveguard/contextforge:dev .
+#   docker compose -f docker-compose.contextforge.yml up -d
+#   TELVEGUARD_CF_URL=http://localhost:4444 pytest tests/e2e/test_contextforge_e2e.py -v
+name: telveguard-cf
+
+services:
+  mock-mcp:
+    image: telveguard/contextforge:dev   # MCP SDK imajda hazır
+    entrypoint: ["python", "/mock/mock_mcp.py"]
+    healthcheck: { disable: true }   # imajın healthcheck'i 4444'ü yoklar, burada geçersiz
+    volumes:
+      - ./tests/e2e/mock_mcp.py:/mock/mock_mcp.py:ro
+
+  contextforge:
+    image: telveguard/contextforge:dev
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4444"
+      DATABASE_URL: sqlite:////tmp/mcp.db
+      CACHE_TYPE: memory
+      JWT_SECRET_KEY: telveguard-e2e-only-secret-key-change-me-0123456789
+      AUTH_ENCRYPTION_SECRET: telveguard-e2e-only-encryption-secret-0123456789
+      # Tek worker: test deterministik olsun (eklenti örneği worker başına ayrı)
+      GUNICORN_WORKERS: "1"
+      PLATFORM_ADMIN_EMAIL: admin@example.com
+      PLATFORM_ADMIN_PASSWORD: Telveguard-e2e-Passw0rd!
+      BASIC_AUTH_PASSWORD: Telveguard-e2e-Passw0rd!
+      DEFAULT_USER_PASSWORD: Telveguard-e2e-Default-Passw0rd!
+      ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: "false"   # test girişi için
+      MCPGATEWAY_ADMIN_API_ENABLED: "true"
+      MCPGATEWAY_UI_ENABLED: "false"
+      # mock-mcp aynı docker ağında (özel IP): SSRF korumasına izin
+      SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+      LOG_LEVEL: INFO
+    ports: ["4444:4444"]
+    depends_on: [mock-mcp]

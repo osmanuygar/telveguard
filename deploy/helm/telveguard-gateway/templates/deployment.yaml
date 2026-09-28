@@ -1,0 +1,134 @@
+{{- $secret := include "tg.secretName" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tg.fullname" . }}
+  labels: {{- include "tg.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "tg.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "tg.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Politika / sır değişince pod'lar yeniden başlasın (politika açılışta okunur)
+        checksum/policy: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "tg.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080",
+                    "--workers", {{ .Values.workers | quote }}, "--no-server-header"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: POLICY_PATH
+              value: /policies/policy.yaml
+            - name: UPSTREAM_INTERNAL_URL
+              value: {{ .Values.upstream.internalUrl | quote }}
+            - name: UPSTREAM_EXTERNAL_URL
+              value: {{ .Values.upstream.externalUrl | quote }}
+            {{- with .Values.audit.kafkaBootstrap }}
+            - name: KAFKA_BOOTSTRAP
+              value: {{ . | quote }}
+            {{- end }}
+            - name: KAFKA_AUDIT_TOPIC
+              value: {{ .Values.audit.topic | quote }}
+            - name: AUDIT_STORE_MASKED
+              value: {{ ternary "1" "0" .Values.audit.storeMasked | quote }}
+            {{- with .Values.clickhouse.url }}
+            - name: CLICKHOUSE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: CLICKHOUSE_USER
+              value: {{ .Values.clickhouse.user | quote }}
+            - name: CLICKHOUSE_DB
+              value: {{ .Values.clickhouse.database | quote }}
+            - name: ENABLE_TR_NER
+              value: {{ ternary "1" "0" .Values.models.enableTrNer | quote }}
+            - name: ENABLE_LLM_GUARD
+              value: {{ ternary "1" "0" .Values.models.enableLlmGuard | quote }}
+            - name: TR_NER_MODEL_PATH
+              value: /models/tr-ner
+            # Salt okunur kök dosya sistemi: HF/Python önbellekleri /tmp'ye
+            - name: HOME
+              value: /tmp
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            {{- include "tg.secretEnv" (dict "env" "TELVEGUARD_ADMIN_TOKEN" "secret" $secret "key" "admin-token") | nindent 12 }}
+            {{- include "tg.secretEnv" (dict "env" "UPSTREAM_EXTERNAL_KEY" "secret" $secret "key" "upstream-external-key") | nindent 12 }}
+            {{- include "tg.secretEnv" (dict "env" "UPSTREAM_INTERNAL_KEY" "secret" $secret "key" "upstream-internal-key") | nindent 12 }}
+            {{- include "tg.secretEnv" (dict "env" "CLICKHOUSE_PASSWORD" "secret" $secret "key" "clickhouse-password") | nindent 12 }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          {{- if or .Values.models.enableTrNer .Values.models.enableLlmGuard }}
+          # Modeller açılışta yüklenir; ilk hazır olma uzun sürebilir
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 30
+          {{- end }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: policy
+              mountPath: /policies
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.models.existingClaim }}
+            - name: models
+              mountPath: /models
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: policy
+          configMap:
+            name: {{ include "tg.policyConfigMap" . }}
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.models.existingClaim }}
+        - name: models
+          persistentVolumeClaim:
+            claimName: {{ .Values.models.existingClaim }}
+            readOnly: true
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints: {{- toYaml . | nindent 8 }}
+      {{- end }}

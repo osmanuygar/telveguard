@@ -1,0 +1,23 @@
+# ContextForge plugins/config.yaml'a eklenecek Telveguard bloğu.
+# PIIFilterPlugin (priority 50) ÖNCESİNDE çalışsın diye priority 10.
+plugins:
+  - name: "TelveguardPlugin"
+    kind: "telveguard_contextforge.TelveguardPlugin"
+    description: "Türkçe PII + prompt injection koruması"
+    version: "0.1.0"
+    author: "Telveguard"
+    hooks: ["prompt_pre_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    tags: ["security", "pii", "kvkk", "turkish", "prompt-injection"]
+    mode: "enforce"          # önce "permissive" ile gözlem modunda açıp yanlış pozitifleri ölçün
+    priority: 10
+    config:
+      mask_entities: [TCKN, VKN, IBAN_TR, CREDIT_CARD, PHONE_TR, EMAIL_ADDRESS, PLATE_TR, "SECRET_*"]
+      external_tools: ["slack*", "email*", "web_*", "http_*", "github*"]
+      exfil_block_entities: [TCKN, VKN, IBAN_TR, CREDIT_CARD, "SECRET_*"]
+      injection_block_threshold: 0.85
+
+plugin_dirs: []
+plugin_settings:
+  parallel_execution_within_band: false
+  plugin_timeout: 30
+  fail_on_plugin_error: false

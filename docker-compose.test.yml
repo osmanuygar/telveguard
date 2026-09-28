@@ -1,0 +1,19 @@
+# Uçtan uca test ortamı: gerçek LLM yerine sahte upstream.
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build
+#   TELVEGUARD_E2E_URL=http://localhost:8080 pytest tests/e2e/test_e2e.py -v
+services:
+  mock-llm:
+    image: python:3.12-slim
+    command: ["python", "/mock/mock_llm.py"]
+    volumes:
+      - ./tests/e2e/mock_llm.py:/mock/mock_llm.py:ro
+
+  gateway:
+    environment:
+      UPSTREAM_INTERNAL_URL: http://mock-llm:9000/v1
+      UPSTREAM_EXTERNAL_URL: http://mock-llm:9000/v1
+      UPSTREAM_EXTERNAL_KEY: ""
+      AUDIT_STORE_MASKED: "1"
+      TELVEGUARD_ADMIN_TOKEN: e2e-admin-token   # yalnızca lokal test
+    depends_on:
+      mock-llm: { condition: service_started }

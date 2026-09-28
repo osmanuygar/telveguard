@@ -1,0 +1,21 @@
+# Telveguard dağıtımı = resmi ContextForge imajı + Telveguard eklentisi.
+# Çekirdek koda dokunulmaz; upstream güncellemesi = CF_VERSION'ı artırmak.
+#
+#   podman build -f contextforge/Containerfile -t harbor.sirket.local/telveguard/contextforge:0.1.0 .
+#
+# Air-gapped: ghcr.io yerine Harbor proxy-cache yolunu CF_IMAGE ile verin.
+ARG CF_IMAGE=ghcr.io/ibm/mcp-context-forge
+# ghcr etiketleri "v" önekli (v1.0.10); Dockerfile satır sonu yorumu desteklemez
+ARG CF_VERSION=v1.0.10
+
+FROM python:3.12-slim AS build
+COPY packages /src
+# telveguard-core ve eklenti saf Python; bağımlılıkları (pyyaml, cpex) CF imajında zaten var
+RUN pip install --no-cache-dir --no-deps --target /opt/telveguard /src/telveguard-core /src/telveguard-contextforge
+
+FROM ${CF_IMAGE}:${CF_VERSION}
+COPY --from=build --chown=10001:0 /opt/telveguard /opt/telveguard
+COPY --chown=10001:0 contextforge/plugins-telveguard.yaml /app/plugins/telveguard.yaml
+ENV PYTHONPATH=/opt/telveguard \
+    PLUGINS_ENABLED=true \
+    PLUGINS_CONFIG_FILE=plugins/telveguard.yaml

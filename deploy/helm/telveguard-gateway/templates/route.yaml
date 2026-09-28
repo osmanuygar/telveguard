@@ -1,0 +1,24 @@
+{{- if .Values.route.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "tg.fullname" . }}
+  labels: {{- include "tg.labels" . | nindent 4 }}
+  annotations:
+    # LLM cevapları uzun sürebilir (varsayılan 30 sn yetmez)
+    haproxy.router.openshift.io/timeout: 180s
+spec:
+  {{- with .Values.route.host }}
+  host: {{ . }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "tg.fullname" . }}
+    weight: 100
+  port:
+    targetPort: http
+  {{- with .Values.route.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  wildcardPolicy: None
+{{- end }}

@@ -1,0 +1,58 @@
+name: telveguard
+
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports: ["9092:9092"]
+    # Gateway açılışta Kafka'ya bağlanır; broker hazır olmadan başlarsa çöker
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_DB: telveguard
+      CLICKHOUSE_USER: telveguard
+      CLICKHOUSE_PASSWORD: telveguard
+    volumes:
+      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports: ["8123:8123"]
+    depends_on: [kafka]
+
+  gateway:
+    build: { context: ., dockerfile: gateway/Dockerfile }
+    environment:
+      POLICY_PATH: /policies/default.yaml
+      KAFKA_BOOTSTRAP: kafka:9092
+      UPSTREAM_INTERNAL_URL: ${UPSTREAM_INTERNAL_URL:-http://host.docker.internal:11434/v1}
+      UPSTREAM_EXTERNAL_URL: ${UPSTREAM_EXTERNAL_URL:-https://api.openai.com/v1}
+      UPSTREAM_EXTERNAL_KEY: ${UPSTREAM_EXTERNAL_KEY:-}
+      ENABLE_TR_NER: ${ENABLE_TR_NER:-0}
+      ENABLE_LLM_GUARD: ${ENABLE_LLM_GUARD:-0}
+      # Röntgen + KVKK raporu (prod'da yalnızca SELECT yetkili ayrı kullanıcı önerilir)
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: telveguard
+      CLICKHOUSE_PASSWORD: telveguard
+      CLICKHOUSE_DB: telveguard
+      # Boşsa yönetim uçları (/v1/xray, /v1/policy/simulate, raporlar) kapalıdır
+      TELVEGUARD_ADMIN_TOKEN: ${TELVEGUARD_ADMIN_TOKEN:-}
+    volumes:
+      - ./policies:/policies:ro
+      - ./models:/models:ro
+    ports: ["8080:8080"]
+    depends_on:
+      kafka: { condition: service_healthy }
+    restart: unless-stopped

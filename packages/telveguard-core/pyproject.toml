@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telveguard-core"
+version = "0.1.0"
+description = "Türkçe PII, prompt injection ve politika motoru"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = ["pyyaml>=6.0"]
+
+[project.optional-dependencies]
+presidio = ["presidio-analyzer>=2.2"]
+ner = ["transformers>=4.44", "torch"]
+llmguard = ["llm-guard>=0.3.16"]
+
+[tool.setuptools.packages.find]
+include = ["telveguard_core*"]

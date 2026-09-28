@@ -1,0 +1,13 @@
+{{- /* Tutarsız yapılandırmayı kurulumda yakala (sessizce yanlış çalışmasın) */ -}}
+{{- if and (or .Values.models.enableTrNer .Values.models.enableLlmGuard) (not .Values.models.existingClaim) }}
+{{- fail "models.enableTrNer / models.enableLlmGuard için models.existingClaim (modellerin olduğu PVC) gerekli" }}
+{{- end }}
+{{- if and .Values.route.enabled .Values.ingress.enabled }}
+{{- fail "route.enabled ve ingress.enabled aynı anda açık: OKD'de route, Kubernetes'te ingress kullanın" }}
+{{- end }}
+{{- if and .Values.policy.existingConfigMap .Values.policy.content }}
+{{- fail "policy.existingConfigMap ve policy.content birlikte verilemez" }}
+{{- end }}
+{{- if lt (int .Values.workers) 1 }}
+{{- fail "workers en az 1 olmalı" }}
+{{- end }}

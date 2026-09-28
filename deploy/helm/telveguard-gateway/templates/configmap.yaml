@@ -1,0 +1,14 @@
+{{- if not .Values.policy.existingConfigMap }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tg.policyConfigMap" . }}
+  labels: {{- include "tg.labels" . | nindent 4 }}
+data:
+  policy.yaml: |
+{{- if .Values.policy.content }}
+{{ .Values.policy.content | indent 4 }}
+{{- else }}
+{{ .Files.Get "files/policy.yaml" | indent 4 }}
+{{- end }}
+{{- end }}

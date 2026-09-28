@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Kullanım Röntgeni</title>
+<!-- Air-gapped: harici CDN/font yok. Veri yönetici token'ıyla /v1/xray'den çekilir. -->
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface-1: #fcfcfb; --border: rgba(11,11,11,0.10);
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+  --status-good: #0ca30c; --status-critical: #d03b3b; --status-warning: #fab219;
+  --hover-wash: rgba(11,11,11,0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface-1: #1a1a19; --border: rgba(255,255,255,0.10);
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #898781;
+    --grid: #2c2c2a; --axis: #383835;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+    --hover-wash: rgba(255,255,255,0.05);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface-1: #1a1a19; --border: rgba(255,255,255,0.10);
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #898781;
+  --grid: #2c2c2a; --axis: #383835;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+  --hover-wash: rgba(255,255,255,0.05);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 20px; margin: 0; font-weight: 600; }
+h1 small { color: var(--text-secondary); font-weight: 400; font-size: 14px; margin-left: 6px; }
+h2 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+.sub { color: var(--text-secondary); margin: 0 0 12px; font-size: 13px; }
+button, input, select { font: inherit; color: var(--text-primary); background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+button { cursor: pointer; }
+button:hover { background: var(--hover-wash); }
+button.primary { background: var(--text-primary); color: var(--surface-1); border-color: transparent; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin: 16px 0 12px; }
+.filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.filters .spacer { flex: 1; }
+#status { min-height: 20px; color: var(--text-secondary); font-size: 13px; margin-bottom: 8px; }
+#status.error { color: var(--status-critical); }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+.grid { display: grid; gap: 12px; }
+.hero-row { grid-template-columns: minmax(260px, 1.2fr) 3fr; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.tile .label { color: var(--text-secondary); font-size: 13px; }
+.tile .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
+.tile .note { color: var(--text-muted); font-size: 12px; }
+.hero .value { font-size: 52px; font-weight: 600; line-height: 1.1; margin: 6px 0; }
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.badge .dot { width: 10px; height: 10px; border-radius: 50%; }
+.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 900px) { .hero-row, .cols-3, .cols-2 { grid-template-columns: 1fr; } }
+.section { margin-top: 12px; }
+/* Yatay çubuk listesi: tek seri, lejant yok (başlık adlandırır) */
+.bars { display: grid; gap: 6px; }
+.bar-row { display: grid; grid-template-columns: minmax(96px, 46%) 1fr auto; gap: 8px; align-items: center;
+  padding: 2px 4px; border-radius: 6px; outline: none; }
+.bar-row:hover, .bar-row:focus-visible { background: var(--hover-wash); }
+.bar-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-row .meta { color: var(--text-muted); font-size: 12px; }
+.bar-track { height: 12px; }
+.bar-fill { height: 12px; min-width: 2px; background: var(--series-1); border-radius: 0 4px 4px 0; }
+.bar-row .val { font-variant-numeric: tabular-nums; color: var(--text-secondary); min-width: 3ch; text-align: right; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
+th { color: var(--text-secondary); font-weight: 500; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+details { margin-top: 10px; }
+summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 4px 0 8px; font-size: 13px; color: var(--text-secondary); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.chart { width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .col:focus { outline: none; }
+.chart .col:focus .hit, .chart .col:hover .hit { fill: var(--hover-wash); }
+.mode { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); }
+.empty { color: var(--text-muted); padding: 12px 0; }
+#tooltip { position: fixed; pointer-events: none; z-index: 10; background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); font-size: 13px; display: none; min-width: 140px; }
+#tooltip .t { color: var(--text-secondary); margin-bottom: 4px; }
+#tooltip .r { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+#tooltip .r b { font-variant-numeric: tabular-nums; }
+#tooltip .k { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+#tooltip .k i { width: 12px; height: 2px; display: inline-block; }
+.loading { opacity: 0.5; transition: opacity .15s; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>AI Kullanım Röntgeni <small>Telveguard</small></h1>
+    <button id="theme" type="button" aria-label="Tema değiştir">Tema</button>
+  </header>
+
+  <!-- Filtreler: tek satır, tüm görünümü kapsar -->
+  <form class="filters" id="filters">
+    <label>Dönem
+      <select id="days">
+        <option value="1">Son 24 saat</option>
+        <option value="7">Son 7 gün</option>
+        <option value="30" selected>Son 30 gün</option>
+        <option value="90">Son 90 gün</option>
+      </select>
+    </label>
+    <label>Ekip
+      <select id="team"><option value="">Tüm ekipler</option></select>
+    </label>
+    <label>Yönetici token'ı
+      <input id="token" type="password" autocomplete="off" placeholder="TELVEGUARD_ADMIN_TOKEN" size="22">
+    </label>
+    <button class="primary" type="submit">Göster</button>
+    <span class="spacer"></span>
+    <label>KVKK aktarım raporu
+      <input id="month" type="month">
+    </label>
+    <button id="kvkk" type="button">CSV indir</button>
+  </form>
+  <div id="status" role="status"></div>
+
+  <div id="content" hidden>
+    <div class="grid hero-row">
+      <div class="card hero">
+        <div class="label">Maskelenmeden yurt dışına giden kişisel veri</div>
+        <div class="value" id="hero-value">–</div>
+        <div id="hero-badge"></div>
+        <p class="sub" style="margin:8px 0 0">KVKK md. 9: dış modele kişisel veri içeren ve maskelenmeden iletilen istek sayısı.</p>
+      </div>
+      <div class="card"><div class="tiles" id="tiles"></div></div>
+    </div>
+
+    <div class="card section">
+      <h2>Günlük işlem dağılımı</h2>
+      <p class="sub">Politikanın her isteğe verdiği karar, gün bazında.</p>
+      <div class="legend" id="daily-legend"></div>
+      <div class="chart" id="daily-chart"></div>
+      <details><summary>Tablo görünümü</summary><div id="daily-table"></div></details>
+    </div>
+
+    <div class="grid cols-3 section">
+      <div class="card"><h2>Ekipler</h2><p class="sub">İstek sayısı; alt satırda yurt dışı ve riskli istekler.</p><div class="bars" id="teams"></div></div>
+      <div class="card"><h2>Modeller</h2><p class="sub">İstek sayısı; hedef ve tahmini maliyet.</p><div class="bars" id="models"></div></div>
+      <div class="card"><h2>Tespit edilen veri türleri</h2><p class="sub">İçeren istek sayısı; yurt dışına açık gidenler ayrıca.</p><div class="bars" id="entities"></div></div>
+    </div>
+
+    <div class="grid cols-2 section">
+      <div class="card"><h2>Kural isabetleri</h2><p class="sub">Gözlem modundaki kurallar isteği etkilemez; yalnızca sayılır.</p><div id="rules"></div></div>
+      <div class="card"><h2>Dikkat gerektiren kullanıcılar</h2><p class="sub">Engellenen, injection denemesi veya yurt dışına kişisel veri gönderen.</p><div id="users"></div></div>
+    </div>
+    <p class="sub section" id="footnote"></p>
+  </div>
+</main>
+<div id="tooltip" role="tooltip"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const store = {  // Yalnızca bu sekme için; erişilemezse sessizce yok say
+  get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { sessionStorage.setItem(k, v); } catch {} },
+};
+const nf = new Intl.NumberFormat("tr-TR");
+const compact = new Intl.NumberFormat("tr-TR", { notation: "compact", maximumFractionDigits: 1 });
+const usd = (v) => v == null ? "–" : "$" + Number(v).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: v < 1 ? 4 : 2 });
+const pct = (a, b) => b ? "%" + Math.round(100 * a / b) : "–";  // Türkçe: işaret başta
+const n = (v) => nf.format(Number(v || 0));
+// Fiyatı bilinmeyen istek varsa toplam alt sınırdır; hiç fiyat yoksa "tanımsız" (0 değil)
+function costText(total, unknown) {
+  if (!Number(unknown)) return usd(total);
+  return Number(total) > 0 ? "≥ " + usd(total) : "fiyat tanımsız";
+}
+
+const ENTITY_LABELS = { TCKN: "T.C. kimlik no", VKN: "Vergi kimlik no", IBAN_TR: "IBAN", CREDIT_CARD: "Kredi kartı",
+  PHONE_TR: "Telefon", EMAIL_ADDRESS: "E-posta", PLATE_TR: "Araç plakası", PERSON: "Kişi adı",
+  LOCATION: "Konum", ORGANIZATION: "Kurum" };
+const entityLabel = (e) => ENTITY_LABELS[e] || (e.startsWith("SECRET_") ? "Sır: " + e.slice(7).toLowerCase().replace(/_/g, " ") : e);
+
+// İşlem serileri: sabit kategorik sıra (renk varlığa bağlı, sıralamaya değil)
+const ACTIONS = [
+  { key: "allow", label: "İzin verildi", color: "var(--series-1)" },
+  { key: "alert", label: "Uyarı", color: "var(--series-2)" },
+  { key: "mask", label: "Maskelendi", color: "var(--series-3)" },
+  { key: "block", label: "Engellendi", color: "var(--series-4)" },
+];
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v; else if (k === "style") node.style.cssText = v; else node.setAttribute(k, v);
+  }
+  for (const c of children) if (c != null) node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return node;
+}
+
+// ---------- tooltip (değer önde, etiket arkada; textContent ile) ----------
+const tip = $("tooltip");
+function showTip(evt, title, rows) {
+  tip.replaceChildren(el("div", { class: "t" }, title),
+    ...rows.map(([label, value, color]) => el("div", { class: "r" },
+      el("span", { class: "k" }, color ? el("i", { style: `background:${color}` }) : null, label), el("b", {}, value))));
+  tip.style.display = "block";
+  const r = evt.target.getBoundingClientRect ? evt.target.getBoundingClientRect() : { left: 0, top: 0 };
+  const x = evt.clientX ?? (r.left + r.width / 2), y = evt.clientY ?? r.top;
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(Math.max(8, x + 12), innerWidth - w - 8) + "px";
+  tip.style.top = Math.max(8, y - h - 12) + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+function hoverable(node, title, rows) {
+  node.setAttribute("tabindex", "0");
+  const show = (e) => showTip(e, title, rows);
+  node.addEventListener("pointerenter", show); node.addEventListener("pointermove", show);
+  node.addEventListener("focus", show); node.addEventListener("pointerleave", hideTip); node.addEventListener("blur", hideTip);
+}
+
+// ---------- bileşenler ----------
+function tile(label, value, note) {
+  return el("div", { class: "tile" }, el("div", { class: "label" }, label), el("div", { class: "value" }, value),
+    note ? el("div", { class: "note" }, note) : null);
+}
+
+function barList(target, rows, { name, value, meta, fmt = n, tipRows }) {
+  const box = $(target);
+  if (!rows.length) { box.replaceChildren(el("div", { class: "empty" }, "Bu dönemde veri yok.")); return; }
+  const max = Math.max(...rows.map(value), 1);
+  box.replaceChildren(...rows.map((r) => {
+    const row = el("div", { class: "bar-row" },
+      el("div", {}, el("div", { class: "name" }, name(r)), meta ? el("div", { class: "meta" }, meta(r)) : null),
+      el("div", { class: "bar-track" }, el("div", { class: "bar-fill", style: `width:${(100 * value(r) / max).toFixed(1)}%` })),
+      el("div", { class: "val" }, fmt(value(r))));
+    hoverable(row, name(r), tipRows(r));
+    return row;
+  }));
+}
+
+function table(target, columns, rows) {
+  const box = $(target);
+  if (!rows.length) { box.replaceChildren(el("div", { class: "empty" }, "Bu dönemde kayıt yok.")); return; }
+  box.replaceChildren(el("table", {},
+    el("thead", {}, el("tr", {}, ...columns.map((c) => el("th", { class: c.num ? "num" : "" }, c.label)))),
+    el("tbody", {}, ...rows.map((r) => el("tr", {}, ...columns.map((c) => {
+      const v = c.render ? c.render(r) : r[c.key];
+      return el("td", { class: c.num ? "num" : "" }, v);
+    }))))));
+}
+
+function niceMax(v) {
+  if (v <= 4) return 4;
+  const p = Math.pow(10, Math.floor(Math.log10(v))), m = v / p;
+  return (m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+}
+
+// Yığılmış sütunlar: tek taban çizgisi, <=24px kalınlık, segmentler arası 2px yüzey boşluğu,
+// yalnızca üst segmentte 4px yuvarlak veri ucu.
+const SVGNS = "http://www.w3.org/2000/svg";
+function svg(tag, attrs = {}) { const node = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v); return node; }
+function roundedTop(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h);
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+}
+function dailyChart(rows) {
+  const box = $("daily-chart");
+  $("daily-legend").replaceChildren(...ACTIONS.map((a) => el("span", {}, el("i", { style: `background:${a.color}` }), a.label)));
+  if (!rows.length) { box.replaceChildren(el("div", { class: "empty" }, "Bu dönemde veri yok.")); return; }
+  const W = Math.max(box.clientWidth, 320), H = 220, L = 44, R = 8, T = 10, B = 26;
+  const pw = W - L - R, ph = H - T - B, band = pw / rows.length;
+  const colW = Math.max(2, Math.min(24, band * 0.6));
+  const max = niceMax(Math.max(...rows.map((r) => r.requests)));
+  const y = (v) => T + ph - (v / max) * ph;
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Günlük işlem dağılımı" });
+  for (let i = 0; i <= 4; i++) {  // yatay kılavuz: saç teli, düz
+    const v = (max / 4) * i;
+    root.append(svg("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: i ? "var(--grid)" : "var(--axis)", "stroke-width": 1 }));
+    const t = svg("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end", fill: "var(--text-muted)", "font-size": 11 });
+    t.textContent = compact.format(v); root.append(t);
+  }
+  const labelEvery = Math.ceil(rows.length / Math.max(1, Math.floor(pw / 56)));
+  rows.forEach((r, i) => {
+    const cx = L + band * i + band / 2, x = cx - colW / 2;
+    const g = svg("g", { class: "col" });
+    g.append(svg("rect", { class: "hit", x: L + band * i, y: T, width: band, height: ph, fill: "transparent" }));
+    const segs = ACTIONS.map((a) => ({ a, v: Number(r[a.key] || 0) })).filter((s) => s.v > 0);
+    let acc = 0;
+    segs.forEach((s, j) => {
+      const y0 = y(acc), y1 = y(acc + s.v);
+      const gap = j > 0 ? 2 : 0;  // alttaki segmentle arasında 2px yüzey boşluğu
+      const h = Math.max(0, y0 - y1 - gap);
+      if (h > 0) {
+        g.append(j === segs.length - 1
+          ? svg("path", { d: roundedTop(x, y1, colW, h, 4), fill: s.a.color })
+          : svg("rect", { x, y: y1, width: colW, height: h, fill: s.a.color }));
+      }
+      acc += s.v;
+    });
+    if (i % labelEvery === 0) {
+      const t = svg("text", { x: cx, y: H - 8, "text-anchor": "middle", fill: "var(--text-muted)", "font-size": 11 });
+      t.textContent = r.day.slice(5).split("-").reverse().join("."); root.append(t);
+    }
+    hoverable(g, r.day.split("-").reverse().join("."),
+      [["Toplam", n(r.requests)], ...ACTIONS.map((a) => [a.label, n(r[a.key]), a.color]), ["Yurt dışı", n(r.external)]]);
+    root.append(g);
+  });
+  box.replaceChildren(root);
+  table("daily-table",
+    [{ key: "day", label: "Gün" }, { key: "requests", label: "Toplam", num: true },
+     ...ACTIONS.map((a) => ({ key: a.key, label: a.label, num: true })),
+     { key: "external", label: "Yurt dışı", num: true }, { label: "Tahmini maliyet", num: true, render: (r) => usd(r.est_cost_usd) }],
+    rows);
+}
+
+// ---------- veri ----------
+let last = null;
+async function load() {
+  const token = $("token").value.trim();
+  if (!token) { setStatus("Yönetici token'ını girin.", true); return; }
+  store.set("tg-admin-token", token);
+  const qs = new URLSearchParams({ days: $("days").value, team: $("team").value });
+  $("content").classList.add("loading");  // yeniden yüklemede çerçeve korunur, iskelet yok
+  setStatus("Yükleniyor…");
+  try {
+    const r = await fetch("/v1/xray?" + qs, { headers: { Authorization: "Bearer " + token } });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error?.message || `HTTP ${r.status}`);
+    last = body; render(body);
+    setStatus(`Güncellendi: ${new Date().toLocaleTimeString("tr-TR")}`);
+  } catch (e) {
+    setStatus("Veri alınamadı: " + e.message, true);
+  } finally {
+    $("content").classList.remove("loading");
+  }
+}
+function setStatus(msg, isError = false) { $("status").textContent = msg; $("status").className = isError ? "error" : ""; }
+
+function render(d) {
+  hideTip();  // eski satırlar DOM'dan kalkınca pointerleave gelmez
+  $("content").hidden = false;
+  const s = d.summary;
+  // Ekip filtresi: seçim korunur, liste yalnızca "tüm ekipler" görünümünden beslenir
+  if (!d.window.team) {
+    const sel = $("team"), cur = sel.value;
+    sel.replaceChildren(el("option", { value: "" }, "Tüm ekipler"), ...d.by_team.map((t) => el("option", { value: t.team }, t.team)));
+    sel.value = cur;
+  }
+
+  const risky = Number(s.external_unmasked_pii || 0);
+  $("hero-value").textContent = n(risky);
+  $("hero-badge").replaceChildren(risky > 0
+    ? el("span", { class: "badge" }, el("span", { class: "dot", style: "background:var(--status-critical)" }), "⚠ Kritik: politika boşluğu var")
+    : el("span", { class: "badge" }, el("span", { class: "dot", style: "background:var(--status-good)" }), "✓ Temiz"));
+
+  const costNote = Number(s.cost_unknown_requests) ? `${n(s.cost_unknown_requests)} istekte fiyat bilinmiyor` : null;
+  $("tiles").replaceChildren(
+    tile("Toplam istek", compact.format(s.requests), `${n(s.users)} kullanıcı · ${n(s.teams)} ekip`),
+    tile("Yurt dışı oranı", pct(s.external_requests, s.requests), `${n(s.external_requests)} istek`),
+    tile("Maskelenen", compact.format(s.masked), pct(s.masked, s.requests) + " istek"),
+    tile("Engellenen", compact.format(s.blocked), pct(s.blocked, s.requests) + " istek"),
+    tile("Injection denemesi", compact.format(s.injection_attempts), "skor ≥ 0,5"),
+    tile("Sır içeren istek", compact.format(s.secret_requests), "API anahtarı, token, parola"),
+    tile("Tahmini maliyet", costText(s.est_cost_usd, s.cost_unknown_requests), costNote),
+    tile("Gözlemde engellenirdi", compact.format(s.would_block), "mode: monitor kuralları"),
+  );
+
+  dailyChart(d.daily);
+
+  barList("teams", d.by_team, {
+    name: (r) => r.team, value: (r) => r.requests,
+    meta: (r) => `yurt dışı ${pct(r.external, r.requests)}` +
+      (Number(r.external_unmasked_pii) ? ` · açık PII ${n(r.external_unmasked_pii)}` : ""),
+    tipRows: (r) => [["İstek", n(r.requests)], ["Yurt dışı", n(r.external)], ["Maskelenen", n(r.masked)],
+      ["Engellenen", n(r.blocked)], ["Injection", n(r.injection_attempts)], ["Açık giden PII", n(r.external_unmasked_pii)],
+      ["Token", n(r.tokens)], ["Maliyet", costText(r.est_cost_usd, r.cost_unknown_requests)]],
+  });
+  barList("models", d.by_model, {
+    name: (r) => r.model, value: (r) => r.requests,
+    meta: (r) => `${r.destination === "internal" ? "kurum içi" : "yurt dışı"} · ${costText(r.est_cost_usd, r.cost_unknown_requests)}`,
+    tipRows: (r) => [["İstek", n(r.requests)], ["Hedef", r.destination === "internal" ? "Kurum içi" : "Yurt dışı"],
+      ["Token", n(r.tokens)], ["Maliyet", costText(r.est_cost_usd, r.cost_unknown_requests)],
+      ["Fiyatı bilinmeyen", n(r.cost_unknown_requests)],
+      ["Ort. gecikme", n(r.avg_latency_ms) + " ms"]],
+  });
+  barList("entities", d.entities, {
+    name: (r) => entityLabel(r.entity), value: (r) => r.requests,
+    meta: (r) => `yurt dışına açık: ${n(r.external_unmasked)}`,
+    tipRows: (r) => [["İçeren istek", n(r.requests)], ["Yurt dışı", n(r.external)], ["Maskelenen", n(r.masked)],
+      ["Engellenen", n(r.blocked)], ["Yurt dışına açık", n(r.external_unmasked)]],
+  });
+
+  table("rules", [
+    { key: "rule", label: "Kural" },
+    { label: "Mod", render: (r) => el("span", { class: "mode" }, r.mode === "monitor" ? "gözlem" : "uygula") },
+    { key: "hits", label: "İsabet", num: true, render: (r) => n(r.hits) }], d.rules);
+  table("users", [
+    { key: "user", label: "Kullanıcı" }, { key: "team", label: "Ekip" },
+    { label: "Engellenen", num: true, render: (r) => n(r.blocked) },
+    { label: "Injection", num: true, render: (r) => n(r.injection_attempts) },
+    { label: "Yurt dışı + PII", num: true, render: (r) => n(r.external_with_pii) }], d.top_users);
+
+  $("footnote").textContent = "Maliyet, politika dosyasındaki fiyat tablosundan tahmini hesaplanır; fiyatı tanımlı olmayan modeller ve " +
+    "maskesiz streaming istekleri (token bilgisi gelmez) toplama katılmaz.";
+}
+
+async function downloadKvkk() {
+  const token = $("token").value.trim(), month = $("month").value;
+  if (!token || !month) { setStatus("KVKK raporu için token ve ay seçin.", true); return; }
+  try {
+    const r = await fetch(`/v1/reports/kvkk-transfer?month=${encodeURIComponent(month)}&format=csv`,
+      { headers: { Authorization: "Bearer " + token } });
+    if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.error?.message || `HTTP ${r.status}`); }
+    const url = URL.createObjectURL(await r.blob());
+    const a = el("a", { href: url, download: `kvkk-yurtdisi-aktarim-${month}.csv` });
+    document.body.append(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    setStatus(`KVKK raporu indirildi (${month}).`);
+  } catch (e) { setStatus("Rapor alınamadı: " + e.message, true); }
+}
+
+// ---------- başlangıç ----------
+$("filters").addEventListener("submit", (e) => { e.preventDefault(); load(); });
+$("days").addEventListener("change", load);
+$("team").addEventListener("change", load);
+$("kvkk").addEventListener("click", downloadKvkk);
+$("theme").addEventListener("click", () => {
+  const dark = document.documentElement.dataset.theme
+    ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.dataset.theme = dark ? "light" : "dark";
+  store.set("tg-theme", document.documentElement.dataset.theme);
+});
+let resizeTimer;
+addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => last && dailyChart(last.daily), 150); });
+
+const savedTheme = store.get("tg-theme"); if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+const now = new Date(); $("month").value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+const saved = store.get("tg-admin-token"); if (saved) { $("token").value = saved; load(); }
+</script>
+</body>
+</html>

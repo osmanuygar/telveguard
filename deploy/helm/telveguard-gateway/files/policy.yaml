@@ -1,0 +1,62 @@
+# Telveguard varsayılan politika - KVKK odaklı örnek
+default_action: allow
+
+# Model adı önekine göre verinin nereye gittiği.
+# internal = kurum içi (on-prem vLLM / Ollama), external = yurt dışına aktarım (KVKK md. 9)
+destinations:
+  internal: ["local/", "vllm/", "qwen", "llama"]
+  external: ["gpt-", "claude-", "gemini-"]
+
+rules:
+  - name: prompt-injection-block
+    when: { injection_score_gte: 0.85 }
+    action: block
+    message: "Olası prompt injection tespit edildi."
+
+  - name: prompt-injection-alert
+    when: { injection_score_gte: 0.5 }
+    action: alert
+
+  # Kimlik/finans verisi yurt dışı modele maskelenmeden gitmesin
+  - name: kvkk-yurtdisi-maskele
+    when:
+      destination: external
+      entity_in: [TCKN, VKN, IBAN_TR, CREDIT_CARD, PHONE_TR, EMAIL_ADDRESS, PLATE_TR, PERSON]
+    action: mask
+
+  # API anahtarı, token, private key, parolalı bağlantı dizesi: iç modelde bile maskele
+  # (model/log tarafında saklanan sır, sızmış sırdır). Joker: tüm SECRET_* türleri.
+  - name: sirlar-her-yerde-maskele
+    when: { entity_in: ["SECRET_*"] }
+    action: mask
+
+  # Kurum içi modelde bile kart numarası istemiyoruz
+  - name: kart-numarasi-her-yerde-maskele
+    when: { entity_in: [CREDIT_CARD] }
+    action: mask
+
+  # Örnek ekip kuralı: stajyer ekibi dış modele hiç TCKN gönderemez
+  - name: stajyer-tckn-engel
+    when: { teams: [stajyer], destination: external, entity_in: [TCKN] }
+    action: block
+    message: "Bu ekip dış modellere kimlik numarası gönderemez."
+
+# Röntgen maliyet tahmini: USD / 1M token. Liste sırayla denenir, İLK eşleşen önek kazanır
+# (claude-opus-5-5, claude-opus-5'ten önce gelmeli). Eşleşmeyen modelin maliyeti "bilinmiyor".
+# Claude: Anthropic birinci taraf API liste fiyatları (2026-06). Bedrock/Vertex fiyatları farklıdır.
+pricing:
+  - { match: "claude-opus-5-5",   input: 4.0,  output: 20.0 }
+  - { match: "claude-opus-5",     input: 5.0,  output: 25.0 }
+  - { match: "claude-opus-4",     input: 5.0,  output: 25.0 }   # 4.6 / 4.7 / 4.8
+  - { match: "claude-fable-5",    input: 10.0, output: 50.0 }   # 5 ve 5.1
+  - { match: "claude-sonnet-5",   input: 2.0,  output: 10.0 }
+  - { match: "claude-sonnet-4-6", input: 3.0,  output: 15.0 }
+  - { match: "claude-haiku-4-5",  input: 1.0,  output: 5.0 }
+  # Kurum içi modeller: token ücreti yok (donanım maliyetini isterseniz buraya yansıtın)
+  - { match: "local/", input: 0, output: 0 }
+  - { match: "vllm/",  input: 0, output: 0 }
+  - { match: "qwen",   input: 0, output: 0 }
+  - { match: "llama",  input: 0, output: 0 }
+  # Diğer sağlayıcılar: kendi sözleşme fiyatlarınızla doldurun
+  # - { match: "gpt-4o", input: ..., output: ... }
+  # - { match: "gemini-", input: ..., output: ... }
