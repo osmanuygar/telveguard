@@ -1,0 +1,99 @@
+# PyPI yayını: Trusted Publishing (OIDC) - repoda / GitHub secret'larında PyPI token'ı YOK.
+#
+# Yayın:  paketlerin sürümünü güncelleyin (pyproject.toml, __init__.py, plugin-manifest.yaml),
+#         commit'leyin, sonra:  git tag v0.1.0 && git push origin v0.1.0
+#
+# Tek seferlik kurulum:
+#   1) PyPI -> her proje (telveguard-core, telveguard-contextforge) -> Publishing -> Add trusted publisher:
+#        owner: osmanuygar  repository: telveguard  workflow: release.yml  environment: pypi
+#   2) GitHub -> Settings -> Environments -> "pypi" oluşturun; "Required reviewers" ile yayını
+#      onaya bağlayın ve "Deployment branches and tags" ile yalnızca v* tag'lerine izin verin.
+#
+# Action'lar commit SHA'sı ile sabitlenmiştir (tag'ler taşınabilir); yorumdaki sürüm bilgi amaçlıdır.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
+      - name: Bağımlılıklar
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r gateway/requirements.txt pytest pytest-asyncio cpex build twine \
+              -e packages/telveguard-core -e packages/telveguard-contextforge
+      - name: Testler (birim + Helm + paketleme; uçtan uca testler ortam olmadığı için atlanır)
+        run: pytest -q -rs
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Tag sürümü paket sürümleriyle aynı mı?
+        run: |
+          python - <<'EOF'
+          import os, pathlib, tomllib
+          tag = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          bad = []
+          for pkg in ("telveguard-core", "telveguard-contextforge"):
+              v = tomllib.loads(pathlib.Path("packages", pkg, "pyproject.toml").read_text())["project"]["version"]
+              if v != tag:
+                  bad.append(f"{pkg}={v}")
+          if bad:
+              raise SystemExit(f"::error::Tag v{tag} ile paket sürümleri uyuşmuyor: {', '.join(bad)}")
+          print(f"Sürüm {tag} doğrulandı")
+          EOF
+      - name: Build
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build packages/telveguard-core -o dist/
+          python -m build packages/telveguard-contextforge -o dist/
+          python -m twine check --strict dist/*
+          ls -l dist/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/telveguard-core/
+    permissions:
+      id-token: write   # yalnızca bu adım: PyPI'a OIDC ile kimlik kanıtı (token yok)
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: dist
+          path: dist/
+      # Trusted Publishing ile yayın + otomatik PEP 740 kaynak doğrulaması (attestation)
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          packages-dir: dist/

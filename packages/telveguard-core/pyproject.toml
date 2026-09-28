@@ -1,19 +1,34 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # SPDX license + license-files
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "telveguard-core"
 version = "0.1.0"
-description = "Türkçe PII, prompt injection ve politika motoru"
+description = "Türkçe PII ve sır tespiti/maskeleme, prompt injection tespiti ve YAML politika motoru"
+readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["pii", "kvkk", "tckn", "llm", "prompt-injection", "ai-security"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Information Technology",
+    "Natural Language :: Turkish",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
 dependencies = ["pyyaml>=6.0"]
 
 [project.optional-dependencies]
 presidio = ["presidio-analyzer>=2.2"]
 ner = ["transformers>=4.44", "torch"]
 llmguard = ["llm-guard>=0.3.16"]
+
+[project.urls]
+Homepage = "https://github.com/osmanuygar/telveguard"
+Source = "https://github.com/osmanuygar/telveguard"
+Issues = "https://github.com/osmanuygar/telveguard/issues"
 
 [tool.setuptools.packages.find]
 include = ["telveguard_core*"]
