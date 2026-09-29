@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Telveguard yapıştırma testi</title>
+<title>Telveguard yapıştırma ve gönderim testi</title>
 <style>
   body { font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 24px; background: #fcfcfb; color: #0b0b0b; }
   textarea, [contenteditable] { display: block; width: 100%; min-height: 60px; margin: 8px 0 16px; padding: 8px;
@@ -23,10 +23,42 @@
 <h1>Yapıştırma testi (mod: <span id="m"></span>)</h1>
 <label>Textarea <textarea id="ta"></textarea></label>
 <label>Contenteditable</label><div id="ce" contenteditable="true"></div>
+
+<h2>Gönderim: sohbet sitesi taklidi</h2>
+<!-- Site gibi davranır: Enter ya da düğme mesajı window.__messages'a "gönderir" ve kutuyu boşaltır -->
+<div class="chat"><div id="chat-ce" contenteditable="true"></div>
+  <button id="chat-send" type="button" aria-label="Send message">Gönder</button></div>
+<form id="chat-form"><textarea id="chat-ta"></textarea><button id="chat-submit" type="submit">➤</button></form>
 <script>document.getElementById("m").textContent = mode;</script>
 <script src="../src/detectors.js"></script>
 <script src="../src/content.js"></script>
 <script>
+  window.__messages = [];
+  const ce = document.getElementById("chat-ce"), ta = document.getElementById("chat-ta");
+  const post = (text, clear) => { if (text.trim()) window.__messages.push(text); clear(); };
+  const postCe = () => post(ce.innerText, () => { ce.textContent = ""; });
+  const postTa = () => post(ta.value, () => { ta.value = ""; });
+  ce.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postCe(); } });
+  document.getElementById("chat-send").addEventListener("click", postCe);
+  ta.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postTa(); } });
+  document.getElementById("chat-form").addEventListener("submit", (e) => { e.preventDefault(); postTa(); });
+
+  // Elle yazma taklidi (yapıştırma olayı yok) ve Enter
+  window.typeInto = (el, text) => { el.focus(); if ("value" in el) el.value = text; else el.textContent = text; };
+  window.pressEnter = (el, init = {}) => {
+    const ev = new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true, ...init });
+    el.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  };
+  // Telveguard penceresindeki düğmeye bas (Shadow DOM kapalı; test kancası)
+  window.dialogButton = (label) => {
+    const d = window.__telveguardDialog;
+    const b = d && document.contains(d.host) && d.buttons.find((x) => x.textContent === label);
+    if (!b) throw new Error("düğme yok: " + label);
+    b.click();
+  };
+  window.dialogOpen = () => !!(window.__telveguardDialog && document.contains(window.__telveguardDialog.host));
+
   // Test yardımcısı: gerçek ClipboardEvent + DataTransfer ile yapıştır
   window.pasteInto = (el, text) => {
     el.focus();

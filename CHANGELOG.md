@@ -1,5 +1,12 @@
 # Değişiklik günlüğü
 
+## Yayımlanmamış
+
+- Yönetim konsolu: Olaylar (denetim kaydı gezgini, Röntgen'den tıklayarak geçiş) ve Politika deneme ekranı.
+- Sağlayıcı yönlendirmesi (`providers`): Azure OpenAI, Gemini, Mistral, Anthropic, birden fazla
+  kurum içi sunucu; KVKK / VERBİS raporunda sağlayıcı adı ve ülkesi.
+- Tarayıcı eklentisi: gönderim anında kontrol (Enter / gönder düğmesi; elle yazılan metin de).
+
 ## 0.2.0 — 2026-09-29
 
 ### Paketler (PyPI)

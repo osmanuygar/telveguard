@@ -34,9 +34,14 @@ ACTIONS = {
 }
 
 
+TRIGGERS = {"paste": "Tarayıcı: yapıştırma sırasında", "send": "Tarayıcı: gönderim sırasında"}
+
+
 class ShadowEvent(BaseModel):
     site: str
     action: Literal["blocked", "masked", "cancelled", "allowed_override", "visit"]
+    # Nerede yakalandı: yapıştırma ya da gönderim (Enter / gönder düğmesi). Eski eklentiler göndermez.
+    trigger: Optional[Literal["paste", "send"]] = None
     entities: Dict[str, int] = Field(default_factory=dict)   # tür -> adet (değer YOK)
     chars: int = Field(0, ge=0, le=10_000_000)
     user: str = "unknown"
@@ -87,7 +92,7 @@ def to_audit_event(e: ShadowEvent) -> Dict[str, Any]:
     return {
         "event_id": str(uuid.uuid4()), "ts": int(time.time() * 1000),
         "user": e.user, "team": e.team, "model": e.site, "destination": "external",
-        "action": action, "rules": [f"golge-ai:{e.action}"], "reason": "",
+        "action": action, "rules": [f"golge-ai:{e.action}"], "reason": TRIGGERS.get(e.trigger, ""),
         "entities": entities, "injection_score": 0.0, "injection_engine": "browser",
         "prompt_sha256": "0" * 64, "prompt_chars": e.chars, "masked_prompt": "",
         "latency_ms": 0.0, "upstream_status": 0,

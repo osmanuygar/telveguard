@@ -37,6 +37,15 @@ def test_events_written_to_audit_without_content(client, events):  # noqa: F811
     assert all(ev["masked_prompt"] == "" for ev in events)                 # içerik yok
 
 
+def test_trigger_recorded_as_reason(client, events):  # noqa: F811
+    r = post(client, [{"site": "claude.ai", "action": "masked", "entities": {"TCKN": 1}, "trigger": "send"},
+                      {"site": "claude.ai", "action": "blocked", "entities": {"TCKN": 1}, "trigger": "paste"},
+                      {"site": "claude.ai", "action": "blocked", "entities": {"TCKN": 1}}])   # eski eklenti
+    assert r.status_code == 200
+    assert [e["reason"] for e in events] == ["Tarayıcı: gönderim sırasında", "Tarayıcı: yapıştırma sırasında", ""]
+    assert post(client, [{"site": "claude.ai", "action": "blocked", "trigger": "drop"}]).status_code == 400
+
+
 def test_disabled_without_token(client, monkeypatch):  # noqa: F811
     monkeypatch.delenv("SHADOW_AI_TOKEN", raising=False)
     assert post(client, []).status_code == 404

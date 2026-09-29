@@ -1,8 +1,11 @@
 /*
- * AI sohbet sitelerinde yapıştırma koruması.
- * Yapıştırılan metin YEREL olarak taranır (detectors.js); kişisel veri ya da sır varsa:
- *   warn  -> "Maskeleyerek yapıştır" (önerilen) / "Vazgeç" / "Yine de yapıştır"
- *   block -> yapıştırma engellenir
+ * AI sohbet sitelerinde yapıştırma ve gönderim koruması.
+ * Metin YEREL olarak taranır (detectors.js); kişisel veri ya da sır varsa:
+ *   yapıştırma: warn  -> "Maskeleyerek yapıştır" (önerilen) / "Vazgeç" / "Yine de yapıştır"
+ *               block -> yapıştırma engellenir
+ *   gönderim (Enter ya da gönder düğmesi; elle yazılan metin de):
+ *               warn  -> "Maskele ve gönder" (önerilen) / "Düzenle" / "Yine de gönder"
+ *               block -> gönderilmez; "Metni maskele" ile düzeltilip tekrar gönderilebilir
  * Telveguard'a yalnızca site, veri türü adetleri ve karar gider; metin asla gönderilmez.
  * Pencere Shadow DOM'da: sitenin CSS'i bozamaz, sitenin betikleri içeriğini okuyamaz.
  */
@@ -32,6 +35,11 @@
       });
     } catch { /* varsayılan yapılandırma */ }
   }
+
+  // Kullanıcının "yine de" dediği değerler (yalnızca bu sayfanın belleğinde; saklanmaz / gönderilmez):
+  // aynı değer için gönderimde ikinci kez sorulmaz
+  const allowedValues = new Set();
+  const allow = (text, findings) => findings.forEach((f) => allowedValues.add(text.slice(f.start, f.end)));
 
   function counts(findings) {
     const c = {};
@@ -73,6 +81,7 @@
 
   function dialog({ title, message, items, buttons }) {
     const host = document.createElement("div");
+    host.setAttribute("data-telveguard", "");
     const root = host.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
     style.textContent = STYLE;
@@ -135,7 +144,7 @@
     const target = ev.target;
     const c = counts(findings);
     const items = Object.entries(c).map(([e, n]) => `${D.label(e)}${n > 1 ? ` (${n})` : ""}`);
-    const base = { entities: c, chars: text.length };
+    const base = { entities: c, chars: text.length, trigger: "paste" };
 
     if (config.mode === "block") {
       send({ ...base, action: "blocked" });
@@ -149,7 +158,8 @@
       items,
       buttons: [
         { label: "Vazgeç", cancel: true, onClick: () => send({ ...base, action: "cancelled" }) },
-        { label: "Yine de yapıştır", onClick: () => { insert(target, text); send({ ...base, action: "allowed_override" }); } },
+        { label: "Yine de yapıştır", onClick: () => {
+          allow(text, findings); insert(target, text); send({ ...base, action: "allowed_override" }); } },
         { label: "Maskeleyerek yapıştır", primary: true,
           onClick: () => { insert(target, D.mask(text).text); send({ ...base, action: "masked" }); } },
       ],
@@ -157,4 +167,125 @@
   }
 
   document.addEventListener("paste", onPaste, true);
+
+  // ---------- gönderim ----------
+  // Sohbet kutusu: textarea ya da contenteditable (ChatGPT / Claude / Gemini: ProseMirror, Quill)
+  function composerOf(node) {
+    if (!node || node.nodeType !== 1) return null;
+    if (node.tagName === "TEXTAREA") return node;
+    if (!node.isContentEditable) return null;
+    let root = node;
+    while (root.parentElement && root.parentElement.isContentEditable) root = root.parentElement;
+    return root;
+  }
+  const composerText = (el) => el.tagName === "TEXTAREA" ? el.value : el.innerText;
+  let lastComposer = null;
+  // Düğmenin kabındaki (form ya da en yakın ortak ata) sohbet kutusu; yoksa son odaklanılan
+  function composerNear(button) {
+    for (let box = button.parentElement; box && box !== document.documentElement; box = box.parentElement) {
+      const c = [...box.querySelectorAll("textarea, [contenteditable='true'], [contenteditable='']")]
+        .map(composerOf).find((x) => x && composerText(x).trim());
+      if (c) return c;
+    }
+    const active = composerOf(document.activeElement);
+    return active || (lastComposer && document.contains(lastComposer) ? lastComposer : null);
+  }
+  document.addEventListener("focusin", (e) => { const c = composerOf(e.target); if (c) lastComposer = c; }, true);
+
+  // Gönder düğmesi: sitelerin ortak işaretleri (aria-label / data-testid / type=submit)
+  const SEND_RX = /\b(send|submit|gönder|ilet)/i;
+  function sendButtonOf(node) {
+    const b = node && node.closest && node.closest("button, [role='button']");
+    if (!b || b.closest("[data-telveguard]")) return null;
+    const hint = [b.getAttribute("aria-label"), b.getAttribute("data-testid"), b.getAttribute("title"), b.className]
+      .filter((x) => typeof x === "string").join(" ");
+    return b.getAttribute("type") === "submit" || SEND_RX.test(hint) ? b : null;
+  }
+  function findSendButton(composer) {
+    // Kutunun en yakın ortak kabında görünür bir gönder düğmesi
+    for (let box = composer.parentElement; box && box !== document.body; box = box.parentElement) {
+      const b = [...box.querySelectorAll("button, [role='button']")].find((x) => sendButtonOf(x) && !x.disabled);
+      if (b) return b;
+    }
+    return null;
+  }
+
+  // "Yine de gönder" / maskeleme sonrası yeniden gönderim: yalnızca BİR sonraki gönderim geçer
+  // (kısa süreli; kullanıcının hemen ardından yazdığı başka mesaj yine taranır)
+  let bypassUntil = 0;
+  let dialogOpen = false;
+
+  function resend(composer, via) {
+    bypassUntil = Date.now() + 1500;
+    const b = via || findSendButton(composer);
+    if (b) { b.click(); return; }
+    composer.focus();
+    composer.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+  }
+
+  function replaceComposer(composer, text) {
+    composer.focus();
+    if (composer.tagName === "TEXTAREA") composer.select();
+    else { const sel = getSelection(); sel.removeAllRanges(); const r = document.createRange(); r.selectNodeContents(composer); sel.addRange(r); }
+    insert(composer, text);
+  }
+
+  /** true: gönderim durduruldu (pencere açıldı). */
+  function guardSend(ev, composer, button) {
+    if (dialogOpen) { ev.preventDefault(); ev.stopImmediatePropagation(); return true; }
+    if (Date.now() < bypassUntil) { bypassUntil = 0; return false; }
+    if (!composer) return false;
+    const text = composerText(composer);
+    if (!text || !text.trim()) return false;
+    const findings = D.analyze(text).filter((f) => !allowedValues.has(text.slice(f.start, f.end)));
+    if (!findings.length) return false;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    const c = counts(findings);
+    const items = Object.entries(c).map(([e, n]) => `${D.label(e)}${n > 1 ? ` (${n})` : ""}`);
+    const base = { entities: c, chars: text.length, trigger: "send" };
+    const masked = () => D.mask(text, { continueNumbering: true }).text;
+    const done = () => { dialogOpen = false; };
+    dialogOpen = true;
+
+    if (config.mode === "block") {
+      send({ ...base, action: "blocked" });
+      dialog({ title: "Gönderim engellendi", items, message: "Kurum politikası gereği kişisel veri ya da sır içeren mesaj " +
+                 "AI sitelerine gönderilemez. Metni maskeleyip kontrol ettikten sonra tekrar gönderebilirsiniz.",
+               buttons: [
+                 { label: "Düzenle", cancel: true, onClick: () => { done(); composer.focus(); } },
+                 { label: "Metni maskele", primary: true, onClick: () => { done(); replaceComposer(composer, masked()); } },
+               ] });
+      return true;
+    }
+    dialog({
+      title: "Göndermeden önce",
+      message: "Mesajınız şunları içeriyor. Maskeleyerek gönderirseniz değerlerin yerine [TCKN_1] gibi yer tutucular gider.",
+      items,
+      buttons: [
+        { label: "Düzenle", cancel: true, onClick: () => { done(); send({ ...base, action: "cancelled" }); composer.focus(); } },
+        { label: "Yine de gönder", onClick: () => {
+          done(); allow(text, findings); send({ ...base, action: "allowed_override" }); resend(composer, button); } },
+        { label: "Maskele ve gönder", primary: true, onClick: () => {
+          done(); replaceComposer(composer, masked()); send({ ...base, action: "masked" });
+          // Editör (React / ProseMirror) yeni metni işlesin, sonra gönder
+          setTimeout(() => resend(composer, button), 50); } },
+      ],
+    });
+    return true;
+  }
+
+  // Enter (Shift+Enter yeni satırdır) ve Ctrl/Cmd+Enter; IME ile yazarken (Türkçe dışı klavyeler) dokunma
+  window.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" || ev.shiftKey || ev.isComposing || ev.keyCode === 229) return;
+    const composer = composerOf(ev.target);
+    if (composer) guardSend(ev, composer, null);
+  }, true);
+
+  // Gönder düğmesi (fare / dokunma / klavye ile tıklama)
+  window.addEventListener("click", (ev) => {
+    const button = sendButtonOf(ev.target);
+    if (!button) return;
+    guardSend(ev, composerNear(button), button);
+  }, true);
 })();

@@ -120,10 +120,17 @@
     return kept.sort((a, b) => a.start - b.start).map(({ i, ...r }) => r);
   }
 
-  /** Geri çevrilemez yerel maskeleme: yapıştırılan metin [TCKN_1] gibi yer tutucularla gider. */
-  function mask(text) {
+  /** Geri çevrilemez yerel maskeleme: yapıştırılan metin [TCKN_1] gibi yer tutucularla gider.
+   *  continueNumbering: metinde zaten [TCKN_1] varsa (önceden maskeli yapıştırılmış) yeni değer
+   *  [TCKN_2] olur; aynı yer tutucu iki farklı değeri göstermesin. */
+  function mask(text, { continueNumbering = false } = {}) {
     const findings = analyze(text);
     const counters = {};
+    if (continueNumbering) {
+      for (const m of text.matchAll(/\[([A-Z][A-Z0-9_]*)_(\d+)\]/g)) {
+        counters[m[1]] = Math.max(counters[m[1]] || 0, Number(m[2]));
+      }
+    }
     const seen = new Map();
     let out = "";
     let cursor = 0;

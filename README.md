@@ -365,13 +365,20 @@ Dashboard'da "AI envanteri ve uyum" bölümü ve VERBİS CSV indirme düğmesi v
 Gateway'e bağlanmayan kullanım (çalışanın ChatGPT'ye doğrudan kod / müşteri verisi yapıştırması)
 için Chrome / Edge eklentisi: `extension/` (Manifest V3).
 
-- AI sohbet sitelerine **yapıştırılan** metin tarayıcıda taranır (Telveguard'ın tespit motorunun
-  JavaScript sürümü; Python motoruyla aynı sonucu verdiği her CI koşusunda test edilir).
-- **Uyar modu:** "Maskeleyerek yapıştır" (önerilen; değerler `[TCKN_1]` olur) / "Vazgeç" /
-  "Yine de yapıştır". **Engelle modu:** kişisel veri ya da sır içeren yapıştırma engellenir.
+- AI sohbet sitelerinde metin iki anda tarayıcıda taranır: **yapıştırırken** ve **gönderirken**
+  (Enter ya da gönder düğmesi; elle yazılan metin de yakalanır). Tarama Telveguard'ın tespit
+  motorunun JavaScript sürümüyle yapılır; Python motoruyla aynı sonucu verdiği her CI koşusunda test edilir.
+- **Uyar modu:** yapıştırmada "Maskeleyerek yapıştır" / "Vazgeç" / "Yine de yapıştır"; gönderimde
+  "Maskele ve gönder" / "Düzenle" / "Yine de gönder". Değerler `[TCKN_1]` gibi yer tutucu olur;
+  kutuda önceden maskelenmiş `[TCKN_1]` varsa yeni değer `[TCKN_2]` olur. "Yine de" denen değer aynı
+  sayfada ikinci kez sorulmaz.
+- **Engelle modu:** kişisel veri ya da sır içeren yapıştırma ve gönderim engellenir; gönderimde
+  "Metni maskele" ile metin düzeltilip tekrar gönderilebilir.
+- Yakalanmayanlar: dosya yükleme / sürükle-bırak, sitelerin masaüstü uygulamaları, Safari ve Firefox.
 - Telveguard'a yalnızca site, veri **türü** adetleri ve kullanıcının kararı gider; **metin asla
   gönderilmez.** Olaylar denetim hattına `api_format=browser` olarak yazılır, Röntgen'de ve
-  envanterde ("beyan edilmemiş kullanım") kendiliğinden görünür.
+  envanterde ("beyan edilmemiş kullanım") kendiliğinden görünür. Olay ayrıntısında yapıştırma
+  mı gönderim mi olduğu yazar.
 - AI sitesi **ziyaretlerini** kaydetmek opsiyoneldir ve varsayılan kapalıdır: çalışan izlemesidir,
   açmadan önce çalışanları bilgilendirin (KVKK).
 
