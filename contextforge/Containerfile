@@ -1,7 +1,7 @@
 # Telveguard dağıtımı = resmi ContextForge imajı + Telveguard eklentisi.
 # Çekirdek koda dokunulmaz; upstream güncellemesi = CF_VERSION'ı artırmak.
 #
-#   podman build -f contextforge/Containerfile -t harbor.sirket.local/telveguard/contextforge:0.1.0 .
+#   podman build -f contextforge/Containerfile -t harbor.sirket.local/telveguard/contextforge:0.2.0 .
 #
 # Air-gapped: ghcr.io yerine Harbor proxy-cache yolunu CF_IMAGE ile verin.
 ARG CF_IMAGE=ghcr.io/ibm/mcp-context-forge

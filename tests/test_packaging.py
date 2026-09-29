@@ -39,6 +39,15 @@ def test_versions_are_consistent():
     assert manifest["version"] == cf["version"]
     # Eklenti, kendi sürümüyle yayınlanan çekirdeğe bağımlı olmalı
     assert f"telveguard-core>={core['version']}" in cf["dependencies"]
+    # Aynı sürümle dağıtılan diğer bileşenler de unutulmasın
+    v = core["version"]
+    chart = yaml.safe_load((ROOT / "deploy/helm/telveguard-gateway/Chart.yaml").read_text(encoding="utf-8"))
+    assert chart["version"] == chart["appVersion"] == v, "Helm Chart.yaml version / appVersion"
+    import json
+    assert json.loads((ROOT / "extension/manifest.json").read_text(encoding="utf-8"))["version"] == v
+    cf_cfg = yaml.safe_load((ROOT / "contextforge/plugins-telveguard.yaml").read_text(encoding="utf-8"))
+    assert cf_cfg["plugins"][0]["version"] == v
+    assert f'version="{v}"' in (ROOT / "gateway/app/main.py").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("name", PACKAGES)
