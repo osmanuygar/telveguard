@@ -71,6 +71,7 @@ XRAY_QUERIES = {
                countIf(would_action = 'block' AND action != 'block') AS would_block,
                countIf(notEmpty(output_leaked)) AS output_leaks,
                countIf(output_action IN ('mask', 'block')) AS output_protected,
+               countIf(quota != '' AND quota != 'backend_unavailable') AS quota_blocks,
                sum(prompt_tokens) AS prompt_tokens, sum(completion_tokens) AS completion_tokens,
                round(sum(est_cost_usd), 6) AS est_cost_usd,
                countIf(est_cost_usd IS NULL) AS cost_unknown_requests,

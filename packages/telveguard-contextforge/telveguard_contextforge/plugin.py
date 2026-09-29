@@ -18,7 +18,7 @@ Metadata'ya yalnızca sayılar ve tür adları yazılır; ham değerler asla log
 from __future__ import annotations
 
 from fnmatch import fnmatch
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -44,7 +44,24 @@ VAULT_KEY = "telveguard_vault"
 DEFAULT_MASK = ["TCKN", "VKN", "IBAN_TR", "CREDIT_CARD", "PHONE_TR", "EMAIL_ADDRESS", "PLATE_TR", "SECRET_*"]
 
 
+class ToolAccessRule(BaseModel):
+    """Kimin hangi aracı kullanabileceği. teams / users boşsa kural herkese uyar ("*" da olur)."""
+    name: str = ""
+    teams: List[str] = Field(default_factory=list)
+    users: List[str] = Field(default_factory=list)   # user_id / e-posta, fnmatch
+    allow: List[str] = Field(default_factory=list)   # araç adı desenleri
+    deny: List[str] = Field(default_factory=list)
+
+
+class ToolAccessConfig(BaseModel):
+    """default=allow: yalnızca deny'lar engeller. default=deny: yalnızca açıkça izin verilen araçlar.
+    Deny HER ZAMAN kazanır (kullanıcının herhangi bir ekibine uyan deny, başka ekibin allow'unu ezer)."""
+    default: Literal["allow", "deny"] = "allow"
+    rules: List[ToolAccessRule] = Field(default_factory=list)
+
+
 class TelveguardConfig(BaseModel):
+    tool_access: ToolAccessConfig = Field(default_factory=ToolAccessConfig)
     mask_entities: List[str] = Field(default_factory=lambda: list(DEFAULT_MASK))
     # Kurum dışına veri taşıyabilen araçlar (fnmatch desenleri)
     external_tools: List[str] = Field(default_factory=lambda: ["slack*", "email*", "web_*", "http_*", "github*"])
@@ -67,6 +84,19 @@ def _tool_metadata_attr(context: PluginContext, attr: str) -> Optional[str]:
         return None
     value = meta.get(attr) if isinstance(meta, dict) else getattr(meta, attr, None)
     return value if isinstance(value, str) else None
+
+
+def _caller(context: PluginContext) -> Dict[str, Any]:
+    """Aracı kim çağırıyor? ContextForge kimliği doğrular ve UserContext'e koyar
+    (kullanıcı, ekipler, gruplar, bir servis hesabı / agent adına ise service_account)."""
+    gc = context.global_context
+    uc = gc.user_context
+    if uc is not None:
+        teams = list(uc.teams or ([uc.team_id] if uc.team_id else []))
+        return {"user": uc.user_id, "teams": teams, "groups": list(uc.groups or []),
+                "service_account": uc.service_account}
+    user = (gc.user.get("email") or gc.user.get("id")) if isinstance(gc.user, dict) else gc.user
+    return {"user": user, "teams": [], "groups": [], "service_account": None}
 
 
 def _walk_strings(value: Any, fn: Callable[[str], str]) -> Any:
@@ -142,15 +172,58 @@ class TelveguardPlugin(Plugin):
         (email_send -> mockcrm-email-send); bu yüzden "email*" deseni ham adla eşleşmez.
         Hem orijinal ad (metadata) hem de önekli ad normalize edilip denenir; önekli
         adda desen herhangi bir ayraçtan sonra da eşleşebilir (şüphede engelle)."""
-        names = {_norm_tool(tool_name)}
-        original = _tool_metadata_attr(context, "original_name")
-        if original:
-            names.add(_norm_tool(original))
+        names, _ = self._tool_names(tool_name, context)
         for pattern in (_norm_tool(p) for p in self._cfg.external_tools):
             for name in names:
                 if fnmatch(name, pattern) or fnmatch(name, f"*_{pattern}"):
                     return True
         return False
+
+    @staticmethod
+    def _tool_names(tool_name: str, context: PluginContext) -> Tuple[Set[str], Optional[str]]:
+        names = {_norm_tool(tool_name)}
+        original = _tool_metadata_attr(context, "original_name")
+        if original:
+            names.add(_norm_tool(original))
+        return names, _norm_tool(original) if original else None
+
+    def _access_violation(self, tool_name: str, context: PluginContext) -> Optional[PluginViolation]:
+        """Araç izin listesi. Eşleştirme bilerek asimetrik:
+          deny  -> önekli ad dahil geniş eşleşme (şüphede engelle; "*_github*" gibi)
+          allow -> yalnızca orijinal ad (yoksa tam ad) ile tam desen: "crm_*" izni,
+                   adında "_crm_" geçen alakasız bir aracı açmasın."""
+        acc = self._cfg.tool_access
+        if not acc.rules and acc.default == "allow":
+            return None
+        caller = _caller(context)
+        who = set(caller["teams"]) | set(caller["groups"])
+        names, original = self._tool_names(tool_name, context)
+        allow_name = original or _norm_tool(tool_name)
+
+        def applies(rule: ToolAccessRule) -> bool:
+            team_ok = not rule.teams or "*" in rule.teams or bool(set(rule.teams) & who)
+            user_ok = not rule.users or any(fnmatch((caller["user"] or "").lower(), u.lower()) for u in rule.users)
+            return team_ok and user_ok
+
+        applicable = [r for r in acc.rules if applies(r)]
+        for rule in applicable:
+            for pattern in (_norm_tool(p) for p in rule.deny):
+                if any(fnmatch(n, pattern) or fnmatch(n, f"*_{pattern}") for n in names):
+                    return self._denied(tool_name, caller, rule.name or "deny")
+        if acc.default == "deny" and not any(
+                fnmatch(allow_name, _norm_tool(p)) for r in applicable for p in r.allow):
+            return self._denied(tool_name, caller, "default-deny")
+        return None
+
+    @staticmethod
+    def _denied(tool_name: str, caller: Dict[str, Any], rule: str) -> PluginViolation:
+        return PluginViolation(
+            reason="Araç kullanım izni yok",
+            description=f"Telveguard: '{tool_name}' aracını kullanma izniniz yok ({rule}).",
+            code="TELVEGUARD_TOOL_DENIED",
+            details={"tool": tool_name, "rule": rule, "user": caller["user"], "teams": caller["teams"],
+                     "service_account": caller["service_account"]},
+        )
 
     # ---------- hook'lar ----------
 
@@ -167,6 +240,9 @@ class TelveguardPlugin(Plugin):
         return PromptPrehookResult(continue_processing=True)
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        # İzin önce: yetkisiz araç için argüman bile taranmaz
+        if v := self._access_violation(payload.name, context):
+            return ToolPreInvokeResult(continue_processing=False, violation=v)
         text = _collect_text(payload.args or {})
         if v := self._injection_violation(text, f"'{payload.name}' araç argümanları"):
             return ToolPreInvokeResult(continue_processing=False, violation=v)
@@ -181,10 +257,13 @@ class TelveguardPlugin(Plugin):
                         reason="Kişisel veri sızdırma girişimi",
                         description=f"Telveguard: '{payload.name}' kurum dışı bir araç; {', '.join(leaked)} gönderilemez.",
                         code="TELVEGUARD_PII_EXFILTRATION",
-                        details={"tool": payload.name, "entities": leaked},
+                        details={"tool": payload.name, "entities": leaked, "user": _caller(context)["user"]},
                     ),
                 )
-        return ToolPreInvokeResult(continue_processing=True)
+        # Agent kimliği: izin verilen çağrıda da kim / hangi servis hesabı adına
+        caller = _caller(context)
+        return ToolPreInvokeResult(continue_processing=True, metadata={"telveguard": {
+            "caller": caller["user"], "teams": caller["teams"], "service_account": caller["service_account"]}})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         if self._cfg.scan_tool_results_for_injection:

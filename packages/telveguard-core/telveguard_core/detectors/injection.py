@@ -4,7 +4,8 @@ Prompt injection tespiti - iki katman:
 1) Hızlı yol: Türkçe + İngilizce sezgisel kurallar (<1 ms). Global araçların
    çoğu İngilizce eğitildiği için Türkçe saldırıları kaçırır; bu katman o boşluğu kapatır.
 2) Opsiyonel: LLM Guard PromptInjection (DeBERTa sınıflandırıcı, MIT lisans).
-   ENABLE_LLM_GUARD=1 ile açılır, modeli lokal dizinden okur.
+   ENABLE_LLM_GUARD=1 ile açılır, modeli LLM_GUARD_MODEL_PATH dizininden okur (internet yok).
+   LLM_GUARD_THRESHOLD (0,92), LLM_GUARD_USE_ONNX=1 (CPU'da daha hızlı, onnx/ alt dizini).
 """
 import os
 import re
@@ -53,13 +54,36 @@ class InjectionResult:
     engine: str = "heuristic"
 
 
+# LLM Guard injection dediğinde verilen skor: varsayılan engelleme eşiğinin (0,85) üstünde
+LLM_GUARD_DETECTED_SCORE = 0.9
+
+
+def _build_llm_guard():
+    """LLM Guard PromptInjection'ı LOKAL modelle kurar (air-gapped: HuggingFace'e hiç çıkmaz).
+    Model scripts/mirror_models.sh ile indirilir; varsayılan dizin /models/prompt-injection.
+    LLM Guard >= 0.3.16 API'si: PromptInjection(model=Model(path=...)) (kaynaktan doğrulandı)."""
+    from llm_guard.input_scanners import PromptInjection  # type: ignore
+    from llm_guard.input_scanners.prompt_injection import V2_MODEL  # type: ignore
+    from llm_guard.model import Model  # type: ignore
+
+    path = os.getenv("LLM_GUARD_MODEL_PATH", "/models/prompt-injection")
+    if not os.path.isdir(path):
+        raise RuntimeError(f"LLM Guard modeli bulunamadı: {path} (scripts/mirror_models.sh ile indirin, "
+                           "LLM_GUARD_MODEL_PATH ile gösterin)")
+    use_onnx = os.getenv("LLM_GUARD_USE_ONNX") == "1"
+    offline = {"local_files_only": True}
+    model = Model(path=path, revision=None,
+                  onnx_path=path if use_onnx else None, onnx_revision=None,
+                  onnx_subfolder="onnx", onnx_filename="model.onnx",
+                  pipeline_kwargs=dict(V2_MODEL.pipeline_kwargs), kwargs=dict(offline),
+                  tokenizer_kwargs=dict(offline))
+    threshold = float(os.getenv("LLM_GUARD_THRESHOLD", "0.92"))
+    return PromptInjection(model=model, threshold=threshold, use_onnx=use_onnx)
+
+
 class InjectionDetector:
     def __init__(self):
-        self._llm_guard = None
-        if os.getenv("ENABLE_LLM_GUARD") == "1":
-            from llm_guard.input_scanners import PromptInjection  # type: ignore
-
-            self._llm_guard = PromptInjection(threshold=0.9)
+        self._llm_guard = _build_llm_guard() if os.getenv("ENABLE_LLM_GUARD") == "1" else None
 
     def scan(self, text: str) -> InjectionResult:
         lowered = _fold(text)
@@ -70,9 +94,12 @@ class InjectionDetector:
                 score = max(score, weight)
         result = InjectionResult(score=score, matched=matched)
 
-        if self._llm_guard is not None and score < 0.9:
-            _, is_valid, risk = self._llm_guard.scan(text)
-            if risk > result.score:
-                result = InjectionResult(score=float(risk), matched=matched + ["llm_guard"],
+        if self._llm_guard is not None and score < LLM_GUARD_DETECTED_SCORE:
+            # scan() -> (metin, is_valid, risk_score). risk_score OLASILIK DEĞİL: eşiğe göre
+            # ölçeklenmiş [-1, 1] (0,95 olasılık / 0,92 eşik -> 0,4). Olasılık gibi okunursa
+            # tespit edilen injection engelleme eşiğinin altında kalır. Karar is_valid'dedir.
+            _, is_valid, _risk = self._llm_guard.scan(text)
+            if not is_valid:
+                result = InjectionResult(score=LLM_GUARD_DETECTED_SCORE, matched=matched + ["llm_guard"],
                                          engine="llm_guard")
         return result

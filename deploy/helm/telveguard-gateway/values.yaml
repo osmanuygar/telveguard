@@ -25,6 +25,9 @@ auth:
     userClaim: preferred_username   # Entra ID: preferred_username / upn
     teamClaim: groups               # Keycloak rolleri için: realm_access.roles
     teamPrefix: ""                  # ör. "telveguard-": yalnızca bu önekli gruplar ekip sayılır
+    # Bu gruptaki kullanıcılar yönetim uçlarına (Röntgen, simülatör, KVKK raporu) kendi JWT'leriyle
+    # erişir; statik admin-token'a gerek kalmaz. Ör. telveguard-admin
+    adminGroup: ""
 
 # ---------------- upstream LLM'ler ----------------
 upstream:
@@ -47,6 +50,11 @@ clickhouse:
   user: telveguard_reader # yalnızca SELECT yetkili kullanıcı önerilir
   database: telveguard
 
+# ---------------- kota sayacı ----------------
+# Politikada `quotas` varsa sayaç Redis'te tutulmalı; yoksa limitler worker / pod başına olur.
+quota:
+  redisUrl: ""            # ör. redis://redis.telveguard.svc:6379/0 (parola: secret'taki redis-password)
+
 # ---------------- politika ----------------
 policy:
   # Doluysa bu ConfigMap kullanılır (anahtar: policy.yaml); boşsa chart'taki files/policy.yaml
@@ -57,7 +65,8 @@ policy:
 # ---------------- sırlar ----------------
 # Önerilen: Secret'ı chart dışında (Vault / sealed-secrets / oc create secret) oluşturup adını verin.
 # Beklenen anahtarlar (hepsi opsiyonel): admin-token, upstream-external-key,
-# upstream-internal-key, upstream-anthropic-key, upstream-anthropic-internal-key, clickhouse-password
+# upstream-internal-key, upstream-anthropic-key, upstream-anthropic-internal-key, clickhouse-password,
+# redis-password
 existingSecret: ""
 # existingSecret boşsa chart bu değerlerden Secret üretir (geliştirme / test için).
 # adminToken boşsa yönetim uçları (Röntgen, simülatör, raporlar) KAPALIDIR.

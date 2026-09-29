@@ -39,9 +39,12 @@ adres Telveguard'a çevrilir (Claude Code dahil).
 - **AI Kullanım Röntgeni:** kim, hangi modeli, ne kadar kullanıyor; yurt dışına ne gidiyor,
   ne engellendi, ne kadar tuttu (tarayıcıda açılan dashboard).
 - **KVKK yurt dışı aktarım raporu:** aylık, Excel'de açılan CSV.
-- **Prometheus metrikleri:** `/metrics` (istek, maskeleme / engelleme, sızıntı, gecikme, hatalar).
+- **Ekip kota / hız sınırı:** ekip başına dakikalık istek ve aylık token / maliyet bütçesi;
+  sayaç Redis'te, tüm pod'lar ortak görür. Aşımda 429 + `Retry-After`.
+- **Prometheus metrikleri:** `/metrics` (istek, maskeleme / engelleme, sızıntı, kota, gecikme, hatalar).
 - **MCP / agent koruması:** IBM ContextForge eklentisi; araç çıktısındaki kişisel veriyi
-  maskeler, kişisel veri veya sırrın dış araçlara (Slack, e-posta, web) gönderilmesini engeller.
+  maskeler, kişisel veri veya sırrın dış araçlara (Slack, e-posta, web) gönderilmesini engeller;
+  ekip / kullanıcı bazlı **araç izin listesi** uygular ve aracı kimin (hangi agent) çağırdığını kaydeder.
 
 ## Hızlı başlangıç
 
@@ -158,6 +161,21 @@ output_rules:
 
 Çıktı kuralı varsa streaming istekleri de tamponlanıp taranır.
 
+Ekip kotaları da politika dosyasındadır (sayaç `REDIS_URL`; yoksa worker başına bellek):
+
+```yaml
+quotas:
+  on_backend_error: open          # Redis erişilemezse: open = geçir, closed = 503
+  default: { requests_per_minute: 300 }
+  teams:
+    stajyer: { requests_per_minute: 30, monthly_cost_usd: 25 }
+    analitik: { monthly_tokens: 20000000 }
+```
+
+Kota kullanıcının birincil ekibine uygulanır; politika tarafından engellenen istekler kotadan
+düşmez. Aylık bütçe istekten önce kontrol edilir, kullanım cevaptan sonra eklenir (bütçeyi aşan
+istek tamamlanır, sonrakiler 429 alır).
+
 Bir isteğin politikadan nasıl geçeceğini görmek için (upstream'e gitmez):
 
 ```bash
@@ -181,6 +199,8 @@ helm upgrade --install telveguard deploy/helm/telveguard-gateway -n ai-guvenlik 
   --set auth.oidc.issuer=https://sso.sirket.local/realms/ai \
   --set auth.oidc.audience=telveguard \
   --set auth.oidc.teamPrefix=telveguard- \
+  --set auth.oidc.adminGroup=telveguard-admin \
+  --set quota.redisUrl=redis://redis.telveguard.svc:6379/0 \
   --set existingSecret=telveguard-sirlar \
   --set upstream.internalUrl=http://vllm.llm.svc:8000/v1 \
   --set audit.kafkaBootstrap=kafka-bootstrap.kafka.svc:9092 \
@@ -203,6 +223,8 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `AUTH_MODE` | `jwt` (üretim: OIDC token zorunlu) ya da `header` (geliştirme, doğrulama yok) |
 | `OIDC_ISSUER`, `OIDC_AUDIENCE` | JWT modunda zorunlu; imza anahtarları issuer'ın JWKS'inden alınır (`OIDC_JWKS_URL` ile değiştirilebilir) |
 | `OIDC_USER_CLAIM`, `OIDC_TEAM_CLAIM`, `OIDC_TEAM_PREFIX` | Kullanıcı ve ekip claim'leri (varsayılan `preferred_username`, `groups`); ekip grubu öneki |
+| `OIDC_ADMIN_GROUP` | Bu gruptaki kullanıcılar yönetim uçlarına kendi JWT'leriyle erişir (ör. `telveguard-admin`) |
+| `REDIS_URL`, `REDIS_PASSWORD` | Kota sayacı (tüm pod / worker'lar için ortak) |
 | `WORKERS` | Pod başına uvicorn worker sayısı (metrikler worker'lar arasında birleştirilir) |
 | `UPSTREAM_INTERNAL_URL` / `UPSTREAM_EXTERNAL_URL` | Kurum içi ve yurt dışı LLM adresleri (OpenAI uyumlu) |
 | `UPSTREAM_INTERNAL_KEY` / `UPSTREAM_EXTERNAL_KEY` | Upstream API anahtarları |
@@ -214,7 +236,8 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB` | Röntgen ve KVKK raporu için (yalnızca okuma yetkili kullanıcı önerilir) |
 | `TELVEGUARD_ADMIN_TOKEN` | Yönetim uçları (Röntgen, simülatör, rapor); **boşsa bu uçlar kapalıdır** |
 | `ENABLE_TR_NER=1`, `TR_NER_MODEL_PATH` | Türkçe kişi / kurum / yer adı tespiti (BERT, lokal model) |
-| `ENABLE_LLM_GUARD=1` | Ek injection sınıflandırıcı (LLM Guard) |
+| `ENABLE_LLM_GUARD=1`, `LLM_GUARD_MODEL_PATH` | Ek injection sınıflandırıcı (LLM Guard); model lokal dizinden, internetsiz (`/models/prompt-injection`) |
+| `LLM_GUARD_THRESHOLD`, `LLM_GUARD_USE_ONNX=1` | Sınıflandırıcı eşiği (0,92) ve CPU'da daha hızlı ONNX çalıştırma |
 
 Tahmini maliyet `policies/default.yaml` içindeki `pricing` tablosundan hesaplanır; fiyatı
 girilmemiş modeller Röntgen'de "fiyat tanımsız" görünür.
@@ -232,11 +255,15 @@ model ve ekip adı istemci kontrolünde olduğu için etiket yapılmaz, bu kır�
 | `telveguard_injection_detected_total` | Injection skoru ≥ 0,5 olan istekler |
 | `telveguard_scan_duration_seconds` | Tarama + politika süresi (gateway'in eklediği gecikme) |
 | `telveguard_request_duration_seconds`, `telveguard_upstream_duration_seconds` | Uçtan uca ve LLM süresi |
+| `telveguard_quota_exceeded_total{kind}`, `telveguard_quota_backend_errors_total` | Kota aşımları ve sayaç (Redis) hataları |
 | `telveguard_upstream_errors_total`, `telveguard_audit_failures_total`, `telveguard_auth_failures_total{reason}` | Hatalar |
 
 ## Yönetim uçları
 
-Hepsi `Authorization: Bearer <TELVEGUARD_ADMIN_TOKEN>` ister.
+İki yoldan biriyle açılır: `OIDC_ADMIN_GROUP` grubundaki kullanıcının **kendi JWT'si** (önerilen;
+dashboard'a da bu token girilir) ya da statik `TELVEGUARD_ADMIN_TOKEN` (otomasyon için). İkisi
+de yoksa uçlar kapalıdır. Her erişim kimliğiyle loglanır (`telveguard.admin`): KVKK raporuna kimin
+baktığı izlenebilir.
 
 | Uç | Ne döner |
 |---|---|
@@ -255,7 +282,21 @@ docker build -f contextforge/Containerfile -t telveguard/contextforge:dev .
 
 - Araç çıktısındaki kişisel veri ve sırlar maskelenir, gizlenmiş injection engellenir.
 - Kurum dışı araçlara (`slack*`, `email*`, `web_*`, `http_*`, `github*`) kişisel veri veya sır
-  gönderilmesi engellenir. Ayarlar: `contextforge/plugins-telveguard.yaml`.
+  gönderilmesi engellenir.
+- **Araç izin listesi:** ekip / kullanıcı bazlı `allow` / `deny`; deny her zaman kazanır
+  (başka ekibin izni yasağı aşamaz). Varsayılan yapılandırma yıkıcı araçları (`*delete*`,
+  `*drop*`, `*destroy*`) herkese kapatır. İzin verilen çağrılarda da çağıran kullanıcı ve
+  servis hesabı (agent) kaydedilir.
+
+```yaml
+tool_access:
+  default: allow                    # deny: yalnızca açıkça izin verilen araçlar
+  rules:
+    - { name: stajyer-dis-arac-yok, teams: [stajyer], deny: ["github*", "email*"] }
+    - { name: yuklenici, users: ["*@yuklenici.com"], deny: ["*"] }
+```
+
+Ayarlar: `contextforge/plugins-telveguard.yaml`.
 
 ## Geliştirme
 
@@ -303,9 +344,12 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 
 - Maskeleme veya çıktı kuralı olan streaming istekleri tamponlanıp tek parça döner. Hiçbiri
   yoksa gerçek streaming yapılır; bu durumda cevap taranmaz ve token / maliyet bilgisi gelmez.
-- Yönetim uçları (Röntgen, simülatör, rapor) OIDC rolüyle değil, ayrı bir yönetici token'ıyla korunur.
 - Injection kuralları sezgisel bir başlangıç setidir; Türkçe saldırı veri setiyle eğitilmiş
-  bir sınıflandırıcı hedefleniyor. LLM Guard için lokal model yolu henüz bağlanmadı.
+  bir sınıflandırıcı hedefleniyor (LLM Guard İngilizce ağırlıklıdır).
+- ContextForge araç izin listesinde **ekip** kuralları, ContextForge'un kimlik bilgisinde ekip
+  olmasına bağlıdır (ContextForge ekip / SSO grup eşlemesi). Kullanıcı ve `"*"` kuralları her
+  durumda çalışır.
+- Kota, maskesiz gerçek streaming isteklerinde yalnızca istek sayısını sayar (token bilgisi gelmez).
 - ContextForge'da yer tutucu numaraları (`[TCKN_1]`) tek araç çağrısı içinde tutarlıdır,
   çağrılar arasında değil.
 
@@ -314,7 +358,9 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 1. **Faz 1 (tamamlandı):** LLM gateway, Türkçe PII ve sır tespiti, çıktı koruması, OIDC kimlik
    doğrulama, denetim kaydı, Röntgen, KVKK aktarım raporu, politika gözlem modu ve simülatörü,
    Prometheus metrikleri, OKD Helm chart'ı.
-2. **Faz 2:** ekip kota / hız sınırı, Anthropic ↔ OpenAI biçim çevirisi (Claude Code'u kurum içi modele bağlamak), MCP gateway'de araç izin listesi ve agent kimliği; gölge AI tespiti için tarayıcı eklentisi.
+2. **Faz 2:** ~~ekip kota / hız sınırı~~, ~~MCP araç izin listesi ve agent kimliği~~, ~~yönetimde
+   OIDC rolü~~, ~~LLM Guard lokal model~~ (tamamlandı); Anthropic ↔ OpenAI biçim çevirisi (Claude
+   Code'u kurum içi modele bağlamak); gölge AI tespiti için tarayıcı eklentisi.
 3. **Faz 3:** AI envanteri, EU AI Act risk sınıflandırması, VERBİS raporları.
 
 ## Lisans

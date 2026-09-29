@@ -61,6 +61,7 @@ class PolicyEngine:
         self.output_rules = cfg.get("output_rules", [])
         self.destinations = cfg.get("destinations", {})
         self.pricing = cfg.get("pricing", {})
+        self.quotas = cfg.get("quotas") or {}   # gateway'de doğrulanır ve uygulanır (quota.py)
         for rule in self.rules + self.output_rules:
             mode = rule.get("mode", self.mode)
             if mode not in MODES:

@@ -60,6 +60,15 @@ output_rules:
     action: mask
     mode: monitor
 
+# Ekip kota / hız sınırı (sayaç Redis'te: REDIS_URL). Kota BİRİNCİL ekibe uygulanır.
+# Limitler: requests_per_minute, monthly_tokens, monthly_cost_usd (ay İstanbul saatine göre).
+quotas:
+  on_backend_error: open        # Redis erişilemezse: open = istekleri geçir, closed = 503
+  default:
+    requests_per_minute: 300
+  teams:
+    stajyer: { requests_per_minute: 30, monthly_cost_usd: 25 }
+
 # Röntgen maliyet tahmini: USD / 1M token. Liste sırayla denenir, İLK eşleşen önek kazanır
 # (claude-opus-5-5, claude-opus-5'ten önce gelmeli). Eşleşmeyen modelin maliyeti "bilinmiyor".
 # Claude: Anthropic birinci taraf API liste fiyatları (2026-06). Bedrock/Vertex fiyatları farklıdır.

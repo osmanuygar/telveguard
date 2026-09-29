@@ -158,3 +158,15 @@ def test_anthropic_upstream_env_and_secret_refs():
     assert e["UPSTREAM_ANTHROPIC_INTERNAL_URL"]["value"] == "http://vllm-anthropic:8000"
     assert e["UPSTREAM_ANTHROPIC_KEY"]["valueFrom"]["secretKeyRef"]["key"] == "upstream-anthropic-key"
     assert "UPSTREAM_ANTHROPIC_INTERNAL_URL" not in env(render())   # tanımsızsa yok
+
+
+def test_admin_group_env():
+    assert "OIDC_ADMIN_GROUP" not in env(render())
+    assert env(render("--set", "auth.oidc.adminGroup=telveguard-admin"))["OIDC_ADMIN_GROUP"]["value"] == "telveguard-admin"
+
+
+def test_quota_redis_env_and_password_secret():
+    assert "REDIS_URL" not in env(render())
+    e = env(render("--set", "quota.redisUrl=redis://redis:6379/0"))
+    assert e["REDIS_URL"]["value"] == "redis://redis:6379/0"
+    assert e["REDIS_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "redis-password"

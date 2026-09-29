@@ -12,6 +12,7 @@ Anthropic /v1/messages (Claude Code dahil). İstemciler yalnızca taban adresi d
 """
 import copy
 import hmac
+import logging
 import os
 import time
 from collections import Counter
@@ -27,6 +28,7 @@ from . import metrics
 from . import xray as xray_mod
 from .audit import AuditSink
 from .auth import AuthError, Authenticator, Identity
+from .quota import QuotaBackendError, QuotaManager
 from .formats import CHAT, FORMATS, MESSAGES, RESPONSES, UPSTREAM_KEYS, UPSTREAMS, ApiFormat, Part  # noqa: F401
 from telveguard_core.detectors.injection import InjectionDetector, InjectionResult
 from telveguard_core.pii.engine import TrPiiEngine
@@ -45,11 +47,13 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "ch"):  # testlerde sahte ClickHouse enjekte edilebilir
         app.state.ch = xray_mod.ClickHouse.from_env(app.state.http)
     app.state.auth = Authenticator.from_env(app.state.http)
+    app.state.quota = QuotaManager.from_env(app.state.policy.quotas)
     yield
     await app.state.audit.stop()
     await app.state.http.aclose()
 
 
+admin_log = logging.getLogger("telveguard.admin")
 app = FastAPI(title="Telveguard Gateway", version="0.1.0", lifespan=lifespan)
 
 
@@ -70,19 +74,34 @@ def _upstream_error(fmt: ApiFormat, resp: httpx.Response) -> JSONResponse:
                          "upstream_error", "upstream_error")
 
 
-def _require_admin(request: Request) -> Optional[JSONResponse]:
-    """Yönetim uçları (simülatör, Röntgen, raporlar) TELVEGUARD_ADMIN_TOKEN ile korunur.
-    Token tanımlı değilse uçlar kapalıdır: simülatör açık kalırsa saldırgan injection
-    skorunu yoklayarak tespiti atlatmayı deneyebilir."""
+async def _require_admin(request: Request) -> Optional[JSONResponse]:
+    """Yönetim uçları (simülatör, Röntgen, raporlar) iki yoldan biriyle açılır:
+      * OIDC_ADMIN_GROUP (AUTH_MODE=jwt): bu gruptaki kullanıcının kendi JWT'si (önerilen)
+      * TELVEGUARD_ADMIN_TOKEN: statik token (ör. otomasyon / geçiş dönemi)
+    İkisi de yoksa uçlar kapalıdır: simülatör açık kalırsa saldırgan injection skorunu
+    yoklayarak tespiti atlatmayı deneyebilir. Her başarılı erişim kimliğiyle loglanır."""
     expected = os.getenv("TELVEGUARD_ADMIN_TOKEN", "")
-    if not expected:
-        return _openai_error(404, "Yönetim uçları kapalı (TELVEGUARD_ADMIN_TOKEN tanımlı değil).",
-                             "admin_disabled", "admin_error")
-    auth = request.headers.get("authorization", "")
-    given = auth[7:] if auth.lower().startswith("bearer ") else request.headers.get("x-telveguard-admin-token", "")
-    if not hmac.compare_digest(given.encode(), expected.encode()):
-        return _openai_error(401, "Geçersiz yönetici token'ı.", "unauthorized", "admin_error")
-    return None
+    auth = request.app.state.auth
+    if not expected and not auth.admin_group:
+        return _openai_error(404, "Yönetim uçları kapalı (OIDC_ADMIN_GROUP ya da TELVEGUARD_ADMIN_TOKEN "
+                                  "tanımlı değil).", "admin_disabled", "admin_error")
+    header = request.headers.get("authorization", "")
+    given = header[7:].strip() if header.lower().startswith("bearer ") \
+        else request.headers.get("x-telveguard-admin-token", "")
+    if expected and given and hmac.compare_digest(given.encode(), expected.encode()):
+        admin_log.info("admin_access via=static_token path=%s", request.url.path)
+        return None
+    if auth.admin_group and given.count(".") == 2:  # JWT biçimi
+        try:
+            identity = await auth.verify_token(given)
+        except AuthError as e:
+            return _openai_error(e.status, f"Telveguard: {e.message}", e.reason, "admin_error")
+        if not auth.is_admin(identity):
+            admin_log.warning("admin_denied user=%s path=%s", identity.user, request.url.path)
+            return _openai_error(403, f"'{auth.admin_group}' grubunda değilsiniz.", "forbidden", "admin_error")
+        admin_log.info("admin_access via=oidc user=%s path=%s", identity.user, request.url.path)
+        return None
+    return _openai_error(401, "Geçersiz yönetici kimliği.", "unauthorized", "admin_error")
 
 
 @dataclass
@@ -264,6 +283,22 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
         await audit(prompt_tokens=0, completion_tokens=0, usage_known=1, est_cost_usd=0.0)
         return fmt.error(403, f"Telveguard: {decision.reason}", "blocked")
 
+    # Kota (engellenen istek kotadan yemez): politika SONRASI, upstream ÖNCESİ
+    try:
+        exceeded = await st.quota.check(a.team)
+    except QuotaBackendError:
+        await audit(prompt_tokens=0, completion_tokens=0, usage_known=1, est_cost_usd=0.0,
+                    upstream_status=503, quota="backend_unavailable")
+        return fmt.error(503, "Telveguard: kota sayacına ulaşılamadı.", "quota_unavailable", "api_error")
+    if exceeded:
+        metrics.QUOTA_EXCEEDED.labels(exceeded.kind).inc()
+        await audit(prompt_tokens=0, completion_tokens=0, usage_known=1, est_cost_usd=0.0,
+                    upstream_status=429, quota=exceeded.kind, action="block",
+                    rules=decision.rules + [f"kota:{exceeded.kind}"], reason=exceeded.message)
+        resp = fmt.error(429, f"Telveguard: {exceeded.message}", "quota_exceeded", "rate_limit_error")
+        resp.headers["Retry-After"] = str(exceeded.retry_after)
+        return resp
+
     upstream = fmt.upstream(destination, request.headers)
     if upstream is None:
         await audit(prompt_tokens=0, completion_tokens=0, usage_known=1, est_cost_usd=0.0,
@@ -335,9 +370,12 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
                         output_rules=out.rules,
                         monitored_rules=decision.monitored_rules + out.monitored_rules)
 
+    usage = _usage_fields(st, fmt, model, result)
+    # Upstream çağrıldı: çıktı engellense de token / maliyet kotadan düşer
+    await st.quota.record(a.team, usage["prompt_tokens"] + usage["completion_tokens"], usage["est_cost_usd"])
+
     if out.action == "block":
-        await audit(masked_prompt, resp.status_code, masked_count=len(vault), **output_audit,
-                    **_usage_fields(st, fmt, model, result))
+        await audit(masked_prompt, resp.status_code, masked_count=len(vault), **output_audit, **usage)
         return fmt.error(403, f"Telveguard: model cevabı engellendi ({out.reason}).", "output_blocked")
 
     for part, leaks in scanned:
@@ -348,8 +386,7 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
         # yazıyorsa diske [SECRET_..._1] değil gerçek değer gitmeli
         part.set(st.pii.unmask(text, vault))
 
-    await audit(masked_prompt, resp.status_code, masked_count=len(vault), **output_audit,
-                **_usage_fields(st, fmt, model, result))
+    await audit(masked_prompt, resp.status_code, masked_count=len(vault), **output_audit, **usage)
 
     if wants_stream:
         return StreamingResponse(fmt.buffered_sse(result), media_type="text/event-stream")
@@ -388,7 +425,7 @@ async def messages_count_tokens(request: Request):
 async def policy_simulate(request: Request, format: str = "chat"):
     """Bir isteğin politikadan nasıl geçeceğini gösterir; upstream'e gitmez, denetime yazılmaz.
     Gövde ilgili API'ninkiyle aynıdır (?format=chat|responses|messages)."""
-    if err := _require_admin(request):
+    if err := await _require_admin(request):
         return err
     fmt = FORMATS.get(format)
     if fmt is None:
@@ -450,7 +487,7 @@ async def xray_page():
 
 @app.get("/v1/xray")
 async def xray_api(request: Request, days: int = 30, team: str = ""):
-    if err := _require_admin(request):
+    if err := await _require_admin(request):
         return err
     if not 1 <= days <= 366:
         return _openai_error(400, "days 1 ile 366 arasında olmalı.", "invalid_request", "invalid_request_error")
@@ -466,7 +503,7 @@ async def xray_api(request: Request, days: int = 30, team: str = ""):
 @app.get("/v1/reports/kvkk-transfer")
 async def kvkk_transfer_report(request: Request, month: str, format: str = "csv"):
     """Aylık KVKK md. 9 yurt dışı aktarım raporu: ekip x sağlayıcı x kişisel veri türü."""
-    if err := _require_admin(request):
+    if err := await _require_admin(request):
         return err
     try:
         xray_mod.month_range(month)

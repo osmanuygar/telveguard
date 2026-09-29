@@ -114,3 +114,18 @@ def test_metrics_aggregate_across_workers():
     after = [_counter(scrape(), "telveguard_requests_total", action="allow", destination="internal", api_format="chat")
              for _ in range(5)]  # farklı worker'lara düşen birkaç okuma
     assert all(a - before == 20 for a in after), (before, after)
+
+
+# ---------------- kota (Redis, çoklu worker) ----------------
+
+@gw_only
+def test_quota_shared_across_workers_via_redis():
+    """stajyer: 30 istek/dk. Gateway 2 worker'la çalışır; sayaç Redis'te ortak olmasaydı
+    60 istek geçerdi. Dakika sınırında sayaç sıfırlanmasın diye dakikanın başında başlanır."""
+    while time.localtime().tm_sec > 40:
+        time.sleep(1)
+    codes = [chat(GATEWAY, "merhaba", {"x-telveguard-team": "stajyer"}, model="vllm/qwen3").status_code
+             for _ in range(40)]
+    ok, limited = codes.count(200), codes.count(429)
+    assert ok + limited == 40 and ok <= 30 and limited >= 10, codes
+    assert 429 not in codes[:ok] and 200 not in codes[ok:]      # önce izin, sonra ret

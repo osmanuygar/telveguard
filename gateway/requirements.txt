@@ -9,3 +9,4 @@ prometheus-client>=0.20   # /metrics
 # transformers>=4.44
 # torch  (CPU wheel yeterli)
 # llm-guard>=0.3.16
+redis>=5                  # kota sayacı (REDIS_URL)

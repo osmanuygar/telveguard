@@ -82,3 +82,12 @@ def test_placeholders_reset_per_tools_call(api, tools):
     a = text_of(call(api, tools["crm_lookup"], {"musteri_id": 1}))
     b = text_of(call(api, tools["crm_lookup"], {"musteri_id": 2}))
     assert "[TCKN_1]" in a and "[TCKN_1]" in b
+
+
+def test_destructive_tool_denied_with_real_user_context(api, tools):
+    """Araç izin listesi gerçek ContextForge'da: kural uygulanır ve kimlik UserContext'ten gelir."""
+    resp = call(api, tools["delete_customer"], {"musteri_id": 1})
+    data = resp["error"]["data"]
+    assert data["plugin_error_code"] == "TELVEGUARD_TOOL_DENIED"
+    assert data["details"]["rule"] == "yikici-araclar-yasak"
+    assert data["details"]["user"] == ADMIN["email"]          # ContextForge kimliği eklentiye ulaştı

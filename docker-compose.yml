@@ -21,6 +21,16 @@ services:
       retries: 20
       start_period: 10s
 
+  # Kota sayacı: tüm gateway worker'ları / pod'ları aynı sayacı görür
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     environment:
@@ -52,6 +62,7 @@ services:
       CLICKHOUSE_DB: telveguard
       # header: geliştirme (kimlik doğrulanmaz); üretimde jwt + OIDC_ISSUER / OIDC_AUDIENCE
       AUTH_MODE: ${AUTH_MODE:-header}
+      REDIS_URL: redis://redis:6379/0
       # Boşsa yönetim uçları (/v1/xray, /v1/policy/simulate, raporlar) kapalıdır
       TELVEGUARD_ADMIN_TOKEN: ${TELVEGUARD_ADMIN_TOKEN:-}
     volumes:
@@ -60,4 +71,5 @@ services:
     ports: ["8080:8080"]
     depends_on:
       kafka: { condition: service_healthy }
+      redis: { condition: service_healthy }
     restart: unless-stopped

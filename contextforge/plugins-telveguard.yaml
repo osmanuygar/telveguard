@@ -15,6 +15,17 @@ plugins:
       external_tools: ["slack*", "email*", "web_*", "http_*", "github*"]
       exfil_block_entities: [TCKN, VKN, IBAN_TR, CREDIT_CARD, "SECRET_*"]
       injection_block_threshold: 0.85
+      # Araç izin listesi. Deny her zaman kazanır; default: deny ile yalnızca izin verilenler çalışır.
+      # Ekip / grup ContextForge'un kimlik bilgisinden (UserContext) gelir.
+      tool_access:
+        default: allow
+        rules:
+          - name: yikici-araclar-yasak      # herkes için temkinli varsayılan; gerekirse kaldırın
+            teams: ["*"]
+            deny: ["*delete*", "*drop*", "*destroy*"]
+          # - name: stajyer-dis-arac-yok
+          #   teams: [stajyer]
+          #   deny: ["github*", "email*", "slack*"]
 
 plugin_dirs: []
 plugin_settings:

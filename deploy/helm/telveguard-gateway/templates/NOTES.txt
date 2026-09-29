@@ -16,13 +16,18 @@ Telveguard Gateway kuruldu: {{ include "tg.fullname" . }}
 
 UYARI: audit.kafkaBootstrap boş; denetim olayları yalnızca pod loglarına (stdout) yazılıyor.
 {{- end }}
+{{- if and (not .Values.quota.redisUrl) (or (gt (int .Values.replicaCount) 1) (gt (int .Values.workers) 1) .Values.autoscaling.enabled) }}
+
+UYARI: quota.redisUrl boş; politikada kota varsa limitler her worker / pod için AYRI uygulanır
+       (ör. 30/dk limit, 2 pod x 2 worker ile 120/dk olur). Redis tanımlayın.
+{{- end }}
 {{- if not .Values.clickhouse.url }}
 
 Not: clickhouse.url boş; Röntgen (/xray) ve KVKK raporu devre dışı (503).
 {{- end }}
-{{- if and (not .Values.existingSecret) (not .Values.secrets.adminToken) }}
+{{- if and (not .Values.auth.oidc.adminGroup) (not .Values.existingSecret) (not .Values.secrets.adminToken) }}
 
-Not: yönetici token'ı yok; yönetim uçları kapalı (existingSecret'a admin-token ekleyin).
+Not: yönetim uçları kapalı. auth.oidc.adminGroup (önerilen) ya da admin-token tanımlayın.
 {{- end }}
 {{- if and (not .Values.existingSecret) (or .Values.secrets.adminToken .Values.secrets.upstreamExternalKey) }}
 

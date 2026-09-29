@@ -38,6 +38,7 @@ class Identity:
     user: str
     teams: List[str] = field(default_factory=list)  # sıralı; ilki denetimde birincil ekip
     source: str = "header"
+    groups: List[str] = field(default_factory=list)  # önek süzmeden TÜM gruplar (yönetici grubu için)
 
     @property
     def team(self) -> str:
@@ -66,7 +67,7 @@ class Authenticator:
     def __init__(self, mode: str = "header", http: Optional[httpx.AsyncClient] = None, *,
                  issuer: str = "", audience: str = "", jwks_url: str = "",
                  user_claim: str = "preferred_username", team_claim: str = "groups",
-                 team_prefix: str = "", leeway: int = 30, jwks_ttl: int = 300,
+                 team_prefix: str = "", admin_group: str = "", leeway: int = 30, jwks_ttl: int = 300,
                  jwks_min_refresh: int = 30):
         if mode not in MODES:
             raise ValueError(f"AUTH_MODE '{mode}' geçersiz ({' | '.join(MODES)})")
@@ -75,6 +76,8 @@ class Authenticator:
         self.mode, self.http = mode, http
         self.issuer, self.audience, self.jwks_url = issuer.rstrip("/"), audience, jwks_url
         self.user_claim, self.team_claim, self.team_prefix = user_claim, team_claim, team_prefix
+        # Yönetim uçları (Röntgen, simülatör, rapor) bu gruptaki kullanıcılara açık (yalnızca jwt)
+        self.admin_group = admin_group.lstrip("/") if mode == "jwt" else ""
         self.leeway, self.jwks_ttl, self.jwks_min_refresh = leeway, jwks_ttl, jwks_min_refresh
         self._keys: Dict[str, jwt.PyJWK] = {}
         self._fetched_at = 0.0      # son BAŞARILI çekim (TTL için)
@@ -90,7 +93,15 @@ class Authenticator:
                    issuer=e("OIDC_ISSUER", ""), audience=e("OIDC_AUDIENCE", ""),
                    jwks_url=e("OIDC_JWKS_URL", ""),
                    user_claim=e("OIDC_USER_CLAIM", "preferred_username"),
-                   team_claim=e("OIDC_TEAM_CLAIM", "groups"), team_prefix=e("OIDC_TEAM_PREFIX", ""))
+                   team_claim=e("OIDC_TEAM_CLAIM", "groups"), team_prefix=e("OIDC_TEAM_PREFIX", ""),
+                   admin_group=e("OIDC_ADMIN_GROUP", ""))
+
+    async def verify_token(self, token: str) -> Identity:
+        """Yalnızca JWT doğrulama (yönetim uçları için)."""
+        return await self._verify(token)
+
+    def is_admin(self, identity: Identity) -> bool:
+        return bool(self.admin_group) and identity.source == "jwt" and self.admin_group in identity.groups
 
     # ---------------- kimlik ----------------
 
@@ -128,7 +139,9 @@ class Authenticator:
         user = _claim(claims, self.user_claim) or claims.get("sub")
         if not isinstance(user, str) or not user:
             raise AuthError("no_user", f"Token'da kullanıcı yok ({self.user_claim} / sub)")
-        return Identity(user, self._teams(_claim(claims, self.team_claim)), "jwt")
+        raw = _claim(claims, self.team_claim)
+        groups = [g.lstrip("/") for g in (raw if isinstance(raw, list) else [raw]) if isinstance(g, str)]
+        return Identity(user, self._teams(raw), "jwt", groups)
 
     def _teams(self, raw: Any) -> List[str]:
         values = raw if isinstance(raw, list) else [raw] if isinstance(raw, str) else []

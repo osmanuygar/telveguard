@@ -43,6 +43,7 @@ services:
       OIDC_ISSUER: http://mock-oidc:9200
       OIDC_AUDIENCE: telveguard
       OIDC_TEAM_PREFIX: telveguard-
+      REDIS_URL: redis://redis:6379/0
     volumes:
       - ./policies:/policies:ro
     ports: ["8081:8080"]
