@@ -24,6 +24,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
+from . import compliance
 from . import metrics
 from . import xray as xray_mod
 from .audit import AuditSink
@@ -48,6 +49,8 @@ async def lifespan(app: FastAPI):
         app.state.ch = xray_mod.ClickHouse.from_env(app.state.http)
     app.state.auth = Authenticator.from_env(app.state.http)
     app.state.quota = QuotaManager.from_env(app.state.policy.quotas)
+    # AI sistem beyanları (EU AI Act envanteri); yoksa tüm kullanımlar "beyan edilmemiş"
+    app.state.inventory = compliance.load_inventory(os.getenv("INVENTORY_PATH", "policies/inventory.yaml"))
     yield
     await app.state.audit.stop()
     await app.state.http.aclose()
@@ -523,3 +526,45 @@ async def kvkk_transfer_report(request: Request, month: str, format: str = "csv"
         return {"month": month, "rows": rows}
     return Response(xray_mod.kvkk_csv(rows), media_type="text/csv; charset=utf-8", headers={
         "Content-Disposition": f'attachment; filename="kvkk-yurtdisi-aktarim-{month}.csv"'})
+
+
+# ---------------- AI envanteri (EU AI Act) + VERBİS taslağı ----------------
+
+@app.get("/v1/inventory")
+async def ai_inventory(request: Request, days: int = 90):
+    """Beyan edilen AI sistemleri + risk sınıfı + yükümlülükler; beyan edilmemiş kullanımlar. TASLAK."""
+    if err := await _require_admin(request):
+        return err
+    if not 1 <= days <= 730:
+        return _openai_error(400, "days 1 ile 730 arasında olmalı.", "invalid_request", "invalid_request_error")
+    ch, err = _require_clickhouse(request)
+    if err:
+        return err
+    try:
+        usage = await xray_mod.inventory_usage(ch, days)
+    except xray_mod.ClickHouseError as e:
+        return _openai_error(502, str(e), "clickhouse_error", "admin_error")
+    return compliance.build_inventory(request.app.state.inventory, usage)
+
+
+@app.get("/v1/reports/verbis")
+async def verbis_report(request: Request, days: int = 365, format: str = "json"):
+    """VERBİS başlıklarına eşlenmiş taslak (veri kategorisi, amaç, alıcı, yurt dışı aktarım, saklama)."""
+    if err := await _require_admin(request):
+        return err
+    if not 1 <= days <= 730 or format not in ("json", "csv"):
+        return _openai_error(400, "days 1-730, format json ya da csv olmalı.", "invalid_request",
+                             "invalid_request_error")
+    ch, err = _require_clickhouse(request)
+    if err:
+        return err
+    try:
+        rows = await xray_mod.verbis_rows(ch, days)
+    except xray_mod.ClickHouseError as e:
+        return _openai_error(502, str(e), "clickhouse_error", "admin_error")
+    report = compliance.build_verbis(request.app.state.inventory, rows,
+                                     os.getenv("AUDIT_RETENTION", "2 yıl (denetim kaydı saklama süresi)"))
+    if format == "json":
+        return report
+    return Response(compliance.verbis_csv(report), media_type="text/csv; charset=utf-8", headers={
+        "Content-Disposition": 'attachment; filename="verbis-taslak.csv"'})

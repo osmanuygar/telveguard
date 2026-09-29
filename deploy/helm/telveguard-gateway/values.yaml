@@ -61,6 +61,9 @@ policy:
   existingConfigMap: ""
   # Chart'taki varsayılan politikayı tamamen değiştirmek için YAML metni (opsiyonel)
   content: ""
+  # AI sistem beyanları (EU AI Act envanteri); boşsa chart'taki files/inventory.yaml örneği.
+  # existingConfigMap kullanılıyorsa bu ConfigMap'te inventory.yaml anahtarı da olmalı.
+  inventoryContent: ""
 
 # ---------------- sırlar ----------------
 # Önerilen: Secret'ı chart dışında (Vault / sealed-secrets / oc create secret) oluşturup adını verin.

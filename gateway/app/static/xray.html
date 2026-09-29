@@ -99,6 +99,9 @@ summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
 #tooltip .k { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
 #tooltip .k i { width: 12px; height: 2px; display: inline-block; }
 .loading { opacity: 0.5; transition: opacity .15s; }
+.risk { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12px; white-space: nowrap; }
+.risk i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+ul.plain { margin: 4px 0 0; padding-left: 18px; color: var(--text-secondary); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -161,6 +164,16 @@ summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
     <div class="grid cols-2 section">
       <div class="card"><h2>Kural isabetleri</h2><p class="sub">Gözlem modundaki kurallar isteği etkilemez; yalnızca sayılır.</p><div id="rules"></div></div>
       <div class="card"><h2>Dikkat gerektiren kullanıcılar</h2><p class="sub">Engellenen, injection denemesi veya yurt dışına kişisel veri gönderen.</p><div id="users"></div></div>
+    </div>
+    <div class="card section">
+      <h2>AI envanteri ve uyum (EU AI Act, KVKK)</h2>
+      <p class="sub" id="inv-disclaimer"></p>
+      <div class="legend" id="inv-summary"></div>
+      <div id="inv-systems"></div>
+      <h2 style="margin-top:16px">Beyan edilmemiş kullanımlar</h2>
+      <p class="sub">Denetim kayıtlarında görülen ama hiçbir AI sistemi beyanına uymayan ekip × model kullanımları.</p>
+      <div id="inv-undeclared"></div>
+      <div style="margin-top:12px"><button id="verbis" type="button">VERBİS taslağı (CSV)</button></div>
     </div>
     <p class="sub section" id="footnote"></p>
   </div>
@@ -339,6 +352,7 @@ async function load() {
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body.error?.message || `HTTP ${r.status}`);
     last = body; render(body);
+    loadInventory(token).catch(() => {});
     setStatus(`Güncellendi: ${new Date().toLocaleTimeString("tr-TR")}`);
   } catch (e) {
     setStatus("Veri alınamadı: " + e.message, true);
@@ -420,6 +434,54 @@ function render(d) {
     "maskesiz streaming istekleri (token bilgisi gelmez) toplama katılmaz.";
 }
 
+// Risk rozeti: durum rengi + simge + etiket (renk tek başına anlam taşımaz)
+const RISK_STYLE = { prohibited: ["var(--status-critical)", "⛔"], unclassified: ["var(--status-warning)", "?"],
+  high: ["var(--status-critical)", "▲"], limited: ["var(--status-warning)", "●"], minimal: ["var(--status-good)", "✓"] };
+function riskBadge(risk, label) {
+  const [color, icon] = RISK_STYLE[risk] || ["var(--text-muted)", "•"];
+  return el("span", { class: "risk" }, el("i", { style: `background:${color}` }), `${icon} ${label}`);
+}
+
+async function loadInventory(token) {
+  const r = await fetch(`/v1/inventory?days=${Math.max(Number($("days").value), 30)}`, { headers: { Authorization: "Bearer " + token } });
+  if (!r.ok) return;
+  const inv = await r.json();
+  $("inv-disclaimer").textContent = `${inv.disclaimer} (Tarih: ${inv.as_of})`;
+  const s = inv.summary;
+  $("inv-summary").replaceChildren(
+    riskBadge("prohibited", `Yasak ${s.prohibited}`), riskBadge("high", `Yüksek ${s.high}`),
+    riskBadge("limited", `Sınırlı ${s.limited}`), riskBadge("minimal", `Minimal ${s.minimal}`),
+    riskBadge("unclassified", `Beyan edilmemiş ${s.unclassified}`));
+  table("inv-systems", [
+    { label: "Sistem", render: (x) => el("div", {}, el("div", {}, x.name), el("div", { class: "meta" }, `${x.owner_team} · ${x.use_case_label}`)) },
+    { label: "Risk", render: (x) => el("div", {}, riskBadge(x.risk, x.risk_label),
+        el("div", { class: "meta" }, `${x.legal_ref} · ${x.in_force ? "yürürlükte" : x.applies_from + " itibarıyla"}`)) },
+    { label: "İstek", num: true, render: (x) => n(x.observed.requests) },
+    { label: "Yükümlülükler / uyarılar", render: (x) => el("ul", { class: "plain" },
+        ...x.warnings.map((w) => el("li", { style: "color:var(--text-primary)" }, "⚠ " + w)),
+        ...x.obligations.map((o) => el("li", {}, o))) },
+  ], inv.systems);
+  table("inv-undeclared", [
+    { key: "team", label: "Ekip" }, { key: "model", label: "Model" },
+    { label: "İstek", num: true, render: (x) => n(x.requests) },
+    { label: "Veri türleri", render: (x) => (x.entities || []).map(entityLabel).join(", ") || "–" },
+    { label: "Son görülme", render: (x) => (x.last_seen || "").slice(0, 16) },
+  ], inv.undeclared);
+}
+
+async function downloadVerbis() {
+  const token = $("token").value.trim();
+  if (!token) { setStatus("Yönetici token'ını girin.", true); return; }
+  try {
+    const r = await fetch("/v1/reports/verbis?format=csv", { headers: { Authorization: "Bearer " + token } });
+    if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.error?.message || `HTTP ${r.status}`); }
+    const url = URL.createObjectURL(await r.blob());
+    const a = el("a", { href: url, download: "verbis-taslak.csv" });
+    document.body.append(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    setStatus("VERBİS taslağı indirildi (hukuk birimi onayı gerekir).");
+  } catch (e) { setStatus("Taslak alınamadı: " + e.message, true); }
+}
+
 async function downloadKvkk() {
   const token = $("token").value.trim(), month = $("month").value;
   if (!token || !month) { setStatus("KVKK raporu için token ve ay seçin.", true); return; }
@@ -439,6 +501,7 @@ $("filters").addEventListener("submit", (e) => { e.preventDefault(); load(); });
 $("days").addEventListener("change", load);
 $("team").addEventListener("change", load);
 $("kvkk").addEventListener("click", downloadKvkk);
+$("verbis").addEventListener("click", downloadVerbis);
 $("theme").addEventListener("click", () => {
   const dark = document.documentElement.dataset.theme
     ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;

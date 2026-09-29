@@ -11,4 +11,10 @@ data:
 {{- else }}
 {{ .Files.Get "files/policy.yaml" | indent 4 }}
 {{- end }}
+  inventory.yaml: |
+{{- if .Values.policy.inventoryContent }}
+{{ .Values.policy.inventoryContent | indent 4 }}
+{{- else }}
+{{ .Files.Get "files/inventory.yaml" | indent 4 }}
+{{- end }}
 {{- end }}

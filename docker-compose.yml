@@ -46,6 +46,7 @@ services:
     build: { context: ., dockerfile: gateway/Dockerfile }
     environment:
       POLICY_PATH: /policies/default.yaml
+      INVENTORY_PATH: /policies/inventory.yaml   # AI sistem beyanları (EU AI Act envanteri)
       KAFKA_BOOTSTRAP: kafka:9092
       UPSTREAM_INTERNAL_URL: ${UPSTREAM_INTERNAL_URL:-http://host.docker.internal:11434/v1}
       UPSTREAM_EXTERNAL_URL: ${UPSTREAM_EXTERNAL_URL:-https://api.openai.com/v1}

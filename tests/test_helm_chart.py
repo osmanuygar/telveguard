@@ -170,3 +170,13 @@ def test_quota_redis_env_and_password_secret():
     e = env(render("--set", "quota.redisUrl=redis://redis:6379/0"))
     assert e["REDIS_URL"]["value"] == "redis://redis:6379/0"
     assert e["REDIS_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "redis-password"
+
+
+def test_inventory_in_configmap_matches_repo():
+    chart_copy = open(f"{CHART}/files/inventory.yaml", encoding="utf-8").read()
+    assert chart_copy == open("policies/inventory.yaml", encoding="utf-8").read(), \
+        "Güncelleyin: cp policies/inventory.yaml deploy/helm/telveguard-gateway/files/inventory.yaml"
+    docs = render()
+    cm = docs[("ConfigMap", "tg-telveguard-gateway-policy")]
+    assert yaml.safe_load(cm["data"]["inventory.yaml"]) == yaml.safe_load(chart_copy)
+    assert env(docs)["INVENTORY_PATH"]["value"] == "/policies/inventory.yaml"

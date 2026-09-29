@@ -39,6 +39,9 @@ adres Telveguard'a çevrilir (Claude Code dahil).
 - **AI Kullanım Röntgeni:** kim, hangi modeli, ne kadar kullanıyor; yurt dışına ne gidiyor,
   ne engellendi, ne kadar tuttu (tarayıcıda açılan dashboard).
 - **KVKK yurt dışı aktarım raporu:** aylık, Excel'de açılan CSV.
+- **AI envanteri ve EU AI Act:** beyan edilen AI sistemlerini kullanım amacına göre sınıflandırır
+  (yasak / yüksek / sınırlı / minimal), yükümlülükleri ve yürürlük tarihlerini listeler; denetim
+  kayıtlarında görülüp beyan edilmemiş kullanımları ortaya çıkarır. **VERBİS taslağı** üretir.
 - **Ekip kota / hız sınırı:** ekip başına dakikalık istek ve aylık token / maliyet bütçesi;
   sayaç Redis'te, tüm pod'lar ortak görür. Aşımda 429 + `Retry-After`.
 - **Prometheus metrikleri:** `/metrics` (istek, maskeleme / engelleme, sızıntı, kota, gecikme, hatalar).
@@ -230,7 +233,7 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `UPSTREAM_INTERNAL_KEY` / `UPSTREAM_EXTERNAL_KEY` | Upstream API anahtarları |
 | `UPSTREAM_ANTHROPIC_URL`, `UPSTREAM_ANTHROPIC_KEY` | Anthropic biçimi için upstream (varsayılan `https://api.anthropic.com`) |
 | `UPSTREAM_ANTHROPIC_INTERNAL_URL`, `UPSTREAM_ANTHROPIC_INTERNAL_KEY` | Anthropic biçimini kabul eden kurum içi sunucu (opsiyonel) |
-| `POLICY_PATH` | Politika dosyası |
+| `POLICY_PATH`, `INVENTORY_PATH` | Politika dosyası ve AI sistem beyanları (envanter) |
 | `KAFKA_BOOTSTRAP`, `KAFKA_AUDIT_TOPIC` | Denetim kaydı; boşsa olaylar stdout'a yazılır |
 | `AUDIT_STORE_MASKED=1` | Maskelenmiş prompt da saklansın (ham prompt hiçbir zaman saklanmaz) |
 | `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB` | Röntgen ve KVKK raporu için (yalnızca okuma yetkili kullanıcı önerilir) |
@@ -258,6 +261,39 @@ model ve ekip adı istemci kontrolünde olduğu için etiket yapılmaz, bu kır�
 | `telveguard_quota_exceeded_total{kind}`, `telveguard_quota_backend_errors_total` | Kota aşımları ve sayaç (Redis) hataları |
 | `telveguard_upstream_errors_total`, `telveguard_audit_failures_total`, `telveguard_auth_failures_total{reason}` | Hatalar |
 
+## AI envanteri, EU AI Act ve VERBİS
+
+Risk sınıfını model değil **kullanım amacı** belirler: aynı model müşteri sorularını yanıtlarken
+sınırlı, işe alımda aday elerken yüksek risklidir. Kurum AI sistemlerini `policies/inventory.yaml`'da
+beyan eder; Telveguard her beyanı resmi kategorilerden oluşan bir kataloğa göre sınıflandırır
+(md. 5 yasaklar, Ek III yüksek risk, md. 50 şeffaflık) ve yükümlülükleri tarihleriyle listeler.
+
+```yaml
+systems:
+  - id: aday-on-eleme
+    name: CV ön eleme
+    owner_team: insan-kaynaklari
+    models: ["gpt-*"]
+    use_case: recruitment          # -> Yüksek risk, Ek III 4(a), 2.12.2027'den itibaren
+    purpose: Başvuruların ön değerlendirmesi
+    data_subjects: [Çalışan adayı]
+    decides_about_people: true
+```
+
+- **Beyan edilmemiş kullanımlar:** denetim kayıtlarında görülüp hiçbir beyana uymayan ekip × model
+  kullanımları ayrı listelenir; bilinmeyen AI kullanımını ortaya çıkarır.
+- **Uyarılar:** kişiler hakkında karar verip "minimal" beyan edilen sistem, trafiği görülmeyen
+  beyan, yurt dışı modele kişisel veri gönderen sistem (KVKK md. 9).
+- **VERBİS taslağı:** kayıtlarda görülen veri türleri VERBİS kategorilerine eşlenir (TCKN → Kimlik,
+  IBAN → Finans, parola → İşlem Güvenliği); amaç ve kişi grupları beyanlardan, alıcılar ve yurt dışı
+  aktarım AI sağlayıcılarından, saklama süresi denetim kaydından gelir. Aktarım dayanağı gibi hukuki
+  alanlar bilerek "hukuk birimi belirleyecek" bırakılır.
+- Takvim Digital Omnibus'a (AB 2026/1744) göredir: Ek III yüksek risk 2.12.2027, md. 50 şeffaflık
+  2.8.2026, yeni yasaklar 2.12.2026.
+
+**Çıktılar taslaktır, hukuki tavsiye değildir;** nihai değerlendirme hukuk / uyum birimindedir.
+Dashboard'da "AI envanteri ve uyum" bölümü ve VERBİS CSV indirme düğmesi vardır.
+
 ## Yönetim uçları
 
 İki yoldan biriyle açılır: `OIDC_ADMIN_GROUP` grubundaki kullanıcının **kendi JWT'si** (önerilen;
@@ -270,6 +306,8 @@ baktığı izlenebilir.
 | `GET /xray` | Röntgen dashboard'u (veri içermez; token'la aşağıdaki API'yi çağırır) |
 | `GET /v1/xray?days=30&team=` | Özet, günlük trend, ekip / model / veri türü kırılımı, kural isabetleri |
 | `GET /v1/reports/kvkk-transfer?month=2026-09` | KVKK yurt dışı aktarım raporu (CSV; `&format=json` da olur) |
+| `GET /v1/inventory?days=90` | AI envanteri: beyan edilen sistemler, risk sınıfı, yükümlülükler, beyan edilmemiş kullanımlar |
+| `GET /v1/reports/verbis?format=csv\|json` | VERBİS başlıklarına eşlenmiş taslak |
 | `POST /v1/policy/simulate?format=chat\|responses\|messages` | Bir isteğe verilecek karar ve modele gidecek maskeli gövde |
 
 ## MCP / agent trafiği (ContextForge)
@@ -359,9 +397,10 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
    doğrulama, denetim kaydı, Röntgen, KVKK aktarım raporu, politika gözlem modu ve simülatörü,
    Prometheus metrikleri, OKD Helm chart'ı.
 2. **Faz 2:** ~~ekip kota / hız sınırı~~, ~~MCP araç izin listesi ve agent kimliği~~, ~~yönetimde
-   OIDC rolü~~, ~~LLM Guard lokal model~~ (tamamlandı); Anthropic ↔ OpenAI biçim çevirisi (Claude
-   Code'u kurum içi modele bağlamak); gölge AI tespiti için tarayıcı eklentisi.
-3. **Faz 3:** AI envanteri, EU AI Act risk sınıflandırması, VERBİS raporları.
+   OIDC rolü~~, ~~LLM Guard lokal model~~ (tamamlandı); gölge AI tespiti için tarayıcı eklentisi.
+   Claude Code'u kurum içi modele bağlamak için çeviri gerekmiyor: vLLM `/v1/messages`'ı kendisi
+   sunuyor, `UPSTREAM_ANTHROPIC_INTERNAL_URL=http://vllm:8000` yeterli.
+3. **Faz 3:** ~~AI envanteri, EU AI Act risk sınıflandırması, VERBİS taslağı~~ (tamamlandı).
 
 ## Lisans
 

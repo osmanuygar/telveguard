@@ -152,6 +152,35 @@ def provider_of(model: str) -> str:
     return next((name for prefix, name in PROVIDERS if model.startswith(prefix)), "Diğer / bilinmiyor")
 
 
+# ---------------- AI envanteri / VERBİS ----------------
+
+INVENTORY_USAGE_QUERY = """
+    SELECT team, model, any(destination) AS destination, count() AS requests, uniqExact(user) AS users,
+           toString(min(event_time)) AS first_seen, toString(max(event_time)) AS last_seen,
+           groupUniqArrayArray(entities) AS entities,
+           countIf(destination = 'external' AND action != 'block' AND notEmpty(entities)) AS external_with_pii
+    FROM audit WHERE event_time >= now() - INTERVAL {days:UInt32} DAY
+    GROUP BY team, model ORDER BY requests DESC LIMIT 1000"""
+
+# Engellenen istekler aktarılmadığı için VERBİS'e girmez; maskeli gidenler girer (hukuk değerlendirir)
+VERBIS_QUERY = """
+    SELECT entity, destination, model, team, count() AS requests
+    FROM audit ARRAY JOIN entities AS entity
+    WHERE event_time >= now() - INTERVAL {days:UInt32} DAY AND action != 'block'
+    GROUP BY entity, destination, model, team"""
+
+
+async def inventory_usage(ch: ClickHouse, days: int) -> List[Dict[str, Any]]:
+    return await ch.query(INVENTORY_USAGE_QUERY, {"days": days})
+
+
+async def verbis_rows(ch: ClickHouse, days: int) -> List[Dict[str, Any]]:
+    rows = await ch.query(VERBIS_QUERY, {"days": days})
+    for r in rows:
+        r["provider"] = provider_of(r["model"])
+    return rows
+
+
 KVKK_QUERY = """
     SELECT team, model, entity, count() AS requests, uniqExact(user) AS users,
            countIf(action = 'block') AS blocked,

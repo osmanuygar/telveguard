@@ -183,3 +183,20 @@ def test_kvkk_report_end_to_end():
     assert (int(row["masked_sent"]), int(row["unmasked_sent"]), int(row["blocked"])) == (1, 0, 0)
     csv_r = httpx.get(f"{GATEWAY}/v1/reports/kvkk-transfer", params={"month": month}, headers=ADMIN, timeout=30)
     assert csv_r.status_code == 200 and csv_r.content.startswith(b"\xef\xbb\xbf")
+
+
+def test_inventory_and_verbis_against_real_clickhouse():
+    """Envanter / VERBİS SQL'i gerçek ClickHouse'ta çalışmalı (birim testleri sahte ClickHouse kullanır)."""
+    _xray(RUN_TEAM, 4)  # bu koşunun olayları ClickHouse'a ulaşmış olsun
+    inv = httpx.get(f"{GATEWAY}/v1/inventory", params={"days": 1}, headers=ADMIN, timeout=30)
+    assert inv.status_code == 200, inv.text
+    body = inv.json()
+    assert body["disclaimer"].startswith("TASLAK")
+    undeclared = {(u["team"], u["model"]) for u in body["undeclared"]}
+    assert (RUN_TEAM, "claude-opus-5") in undeclared           # bu ekip beyan edilmemiş
+    assert {s["id"] for s in body["systems"]} >= {"musteri-destek-taslak", "yazilim-asistani", "satis-analizi"}
+    rep = httpx.get(f"{GATEWAY}/v1/reports/verbis", params={"days": 1}, headers=ADMIN, timeout=30)
+    assert rep.status_code == 200, rep.text
+    kimlik = next(r for r in rep.json()["rows"] if r["veri_kategorisi"] == "Kimlik")
+    assert "TCKN" in kimlik["tespit_edilen_turler"] and kimlik["yurt_disina_aktarim"] == "Evet"
+    assert "Anthropic" in kimlik["saglayicilar"] and "ABD" in kimlik["aktarilan_ulkeler"]

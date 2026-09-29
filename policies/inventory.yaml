@@ -1,0 +1,40 @@
+# AI sistemleri envanteri (EU AI Act). Risk sınıfını KULLANIM AMACI belirler.
+# Telveguard her sistemi use_case'e göre sınıflandırır, yükümlülükleri listeler ve denetim
+# kayıtlarında görülüp hiçbir sisteme uymayan kullanımları "beyan edilmemiş" diye işaretler.
+# Geçerli use_case değerleri: gateway/app/compliance.py -> USE_CASES
+# Çıktılar TASLAKTIR; nihai değerlendirme hukuk / uyum birimindedir.
+systems:
+  - id: musteri-destek-taslak
+    name: Müşteri temsilcisi cevap asistanı
+    owner_team: musteri-hizmetleri
+    models: ["claude-*", "vllm/*"]
+    use_case: customer_support_internal     # temsilciye taslak; müşteriyle doğrudan konuşmaz
+    purpose: Müşteri taleplerine temsilci için yanıt taslağı hazırlama
+    data_subjects: [Müşteri]
+    decides_about_people: false
+
+  - id: yazilim-asistani
+    name: Kod asistanı (Claude Code)
+    owner_team: yazilim
+    models: ["claude-*", "gpt-*"]
+    use_case: code_assistant
+    purpose: Yazılım geliştirme
+    data_subjects: [Çalışan]
+
+  - id: satis-analizi
+    name: Satış raporu özetleme
+    owner_team: analitik
+    models: ["claude-*", "gemini-*", "vllm/*"]
+    use_case: data_analysis
+    purpose: Satış ve operasyon raporlarının özetlenmesi
+    data_subjects: [Müşteri, Tedarikçi yetkilisi]
+
+# Örnek (yüksek risk): işe alımda aday eleme - Ek III 4(a), 2.12.2027'den itibaren
+#  - id: aday-on-eleme
+#    name: CV ön eleme
+#    owner_team: insan-kaynaklari
+#    models: ["gpt-*"]
+#    use_case: recruitment
+#    purpose: Başvuruların ön değerlendirmesi
+#    data_subjects: [Çalışan adayı]
+#    decides_about_people: true

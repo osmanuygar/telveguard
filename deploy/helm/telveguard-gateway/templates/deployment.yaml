@@ -64,6 +64,8 @@ spec:
             {{- end }}
             - name: POLICY_PATH
               value: /policies/policy.yaml
+            - name: INVENTORY_PATH
+              value: /policies/inventory.yaml
             {{- with .Values.quota.redisUrl }}
             - name: REDIS_URL
               value: {{ . | quote }}
