@@ -85,3 +85,45 @@ def test_default_policy_masks_secret_even_for_internal_model():
     policy = PolicyEngine("policies/default.yaml")
     d = policy.evaluate(Context("analitik", "vllm/qwen3", "internal", {"SECRET_AWS_KEY"}, 0.0))
     assert d.action == "mask" and d.mask_entities == {"SECRET_AWS_KEY"}
+
+
+# Parola tanıyıcısı: kod / yorum / şablon kalıpları parola sayılmamalı (repo taramasında görüldü)
+@pytest.mark.parametrize("text", [
+    "aioredis.from_url(url, password=password or None, socket_timeout=0.5)",
+    "redisUrl: ''   # (parola: secret'taki redis-password)",
+    "password: ${DB_PASSWORD}",
+    'password = os.getenv("DB_PASSWORD")',
+    'PASSWORD: "{{ .Values.secrets.pw }}"',
+    "password: ********",
+    "şifre: <şifreniz>",
+    "pwd = self.settings.password",
+    "password=None",
+])
+def test_password_false_positives_ignored(engine, text):
+    assert "SECRET_PASSWORD" not in {f.entity for f in engine.analyze(text)}
+
+
+@pytest.mark.parametrize("text,value", [
+    ("şifre: Yaz2026!guclu", "Yaz2026!guclu"),
+    ("password=changeme123", "changeme123"),
+    ("DB_PASSWORD=Sup3rS3cret", "Sup3rS3cret"),
+    ("parola: Summer2026", "Summer2026"),
+    ('"password": "hunter2hunter"', "hunter2hunter"),
+])
+def test_real_passwords_still_detected(engine, text, value):
+    found = [f for f in engine.analyze(text) if f.entity == "SECRET_PASSWORD"]
+    assert found and text[found[0].start:found[0].end] == value
+
+
+@pytest.mark.parametrize("text", [
+    "def __init__(self, url: str, password: Optional[str] = None):",
+    "şifre: [SECRET_PASSWORD_1]",          # maskelenmiş metin tekrar taranırsa kendi yer tutucusu
+])
+def test_type_annotations_and_own_placeholders_ignored(engine, text):
+    assert "SECRET_PASSWORD" not in {f.entity for f in engine.analyze(text)}
+
+
+def test_masking_is_idempotent(engine):
+    """Maskeli metni tekrar maskelemek değiştirmemeli (ör. ContextForge + gateway art arda)."""
+    once = engine.mask("şifre: Yaz2026!guclu ve TC 10000000146").text
+    assert engine.mask(once).text == once
