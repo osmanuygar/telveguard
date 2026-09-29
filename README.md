@@ -1,5 +1,10 @@
 # Telveguard
 
+[![CI](https://github.com/osmanuygar/telveguard/actions/workflows/ci.yml/badge.svg)](https://github.com/osmanuygar/telveguard/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/telveguard-core?label=telveguard-core)](https://pypi.org/project/telveguard-core/)
+[![PyPI](https://img.shields.io/pypi/v/telveguard-contextforge?label=telveguard-contextforge)](https://pypi.org/project/telveguard-contextforge/)
+[![Lisans](https://img.shields.io/badge/lisans-Apache%202.0-blue)](LICENSE)
+
 **Kurumsal yapay zekâ kullanımı için Türkiye odaklı güvenlik geçidi.** Çalışanların ve
 uygulamaların LLM'lere gönderdiği isteklerdeki kişisel veriyi (TCKN, IBAN, kart, telefon...)
 ve sırları (API anahtarı, parola...) maskeler, saldırı girişimlerini engeller, her isteği
@@ -8,49 +13,38 @@ KVKK'ya uygun şekilde kayda geçirir. Kurum içinde (on-prem / air-gapped) çal
 > **Neden "Telveguard"?** Türk kahvesi içilir, *telve* fincanda kalır. Model işine yarayanı alır;
 > kişisel veri kurumun fincanında kalır.
 
-```
-uygulama ──► Telveguard ──► kurum içi LLM (vLLM / Ollama)        veri olduğu gibi
-               │        └─► OpenAI / Anthropic / Gemini           veri maskeli: TC [TCKN_1]
-               │                   cevap döner, [TCKN_1] gerçek değere geri çevrilir
-               └─► Kafka ─► ClickHouse ─► AI Kullanım Röntgeni + KVKK raporu
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/telveguard-flow-dark.svg">
+  <img alt="Telveguard istek akışı: istek kimlik, tarama, politika ve maskeleme adımlarından geçer; kurum içi modele olduğu gibi, yurt dışı modele maskeli gider; her istek ve tarayıcı eklentisi olayları denetim kaydına ve raporlara düşer." src="docs/assets/telveguard-flow-light.svg" width="100%">
+</picture>
 
-Uygulamalar kod değiştirmez: OpenAI ve Anthropic API'leriyle uyumlu olduğu için yalnızca taban
-adres Telveguard'a çevrilir (Claude Code dahil).
+Kurum içi modele veri olduğu gibi, yurt dışı modele maskeli (`[TCKN_1]`) gider; cevap dönünce yer
+tutucular gerçek değere çevrilir. Uygulamalar kod değiştirmez: OpenAI ve Anthropic API'leriyle
+uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code dahil).
 
 ## Neler yapar?
 
-- **Türkçe kişisel veri maskeleme:** TCKN, VKN, IBAN ve kart numarası sağlama toplamıyla
-  doğrulanır (rastgele 11 haneli sayı TCKN sayılmaz); telefon, e-posta, plaka; opsiyonel
-  Türkçe NER ile kişi / kurum / yer adları.
-- **Sır tespiti:** AWS, GitHub, OpenAI, Anthropic, Slack, Google, Stripe anahtarları, JWT,
-  private key, parolalı bağlantı dizeleri, `şifre: ...`.
-- **Prompt injection engelleme:** Türkçe ve İngilizce; araç çıktılarına ve web içeriğine
-  gizlenmiş (dolaylı) saldırılar dahil. "ÖNCEKİ TÜM TALİMATLARI YOK SAY" gibi büyük harfli
-  Türkçe yazımlar da yakalanır.
-- **YAML politika:** ekip, model ve veri türüne göre izin ver / uyar / maskele / engelle.
-  Yeni kural önce **gözlem modunda** denenebilir; **simülatör** bir isteğin ne olacağını gösterir.
-- **Çıktı koruması:** model cevabında **girdide olmayan** bir kişisel veri veya sır üretirse
-  (eğitim verisinden / RAG belgesinden sızıntı) gizlenir ya da cevap engellenir.
-- **Kimlik doğrulama:** Keycloak / Entra ID gibi OIDC sağlayıcılarının JWT'si; kullanıcı ve
-  ekipler token'dan gelir, header ile taklit edilemez.
-- **Denetim kaydı:** ham prompt hiç saklanmaz; özet, bulunan veri türleri, karar, token ve
-  tahmini maliyet Kafka üzerinden ClickHouse'a yazılır (KVKK saklama süresi ayarlı).
-- **AI Kullanım Röntgeni:** kim, hangi modeli, ne kadar kullanıyor; yurt dışına ne gidiyor,
-  ne engellendi, ne kadar tuttu (tarayıcıda açılan dashboard).
-- **KVKK yurt dışı aktarım raporu:** aylık, Excel'de açılan CSV.
-- **AI envanteri ve EU AI Act:** beyan edilen AI sistemlerini kullanım amacına göre sınıflandırır
-  (yasak / yüksek / sınırlı / minimal), yükümlülükleri ve yürürlük tarihlerini listeler; denetim
-  kayıtlarında görülüp beyan edilmemiş kullanımları ortaya çıkarır. **VERBİS taslağı** üretir.
-- **Ekip kota / hız sınırı:** ekip başına dakikalık istek ve aylık token / maliyet bütçesi;
-  sayaç Redis'te, tüm pod'lar ortak görür. Aşımda 429 + `Retry-After`.
-- **Gölge AI tarayıcı eklentisi:** ChatGPT, Claude.ai, Gemini, Copilot gibi sitelere yapıştırılan
-  kişisel veri ve sırları tarayıcıda yakalar; maskeleyerek yapıştırma, uyarı ya da engelleme.
-  Metin tarayıcıdan çıkmaz; olaylar Röntgen'de görünür.
-- **Prometheus metrikleri:** `/metrics` (istek, maskeleme / engelleme, sızıntı, kota, gecikme, hatalar).
-- **MCP / agent koruması:** IBM ContextForge eklentisi; araç çıktısındaki kişisel veriyi
-  maskeler, kişisel veri veya sırrın dış araçlara (Slack, e-posta, web) gönderilmesini engeller;
-  ekip / kullanıcı bazlı **araç izin listesi** uygular ve aracı kimin (hangi agent) çağırdığını kaydeder.
+**Koruma**
+- **Türkçe kişisel veri:** TCKN, VKN, IBAN, kart (sağlama toplamıyla; rastgele 11 haneli sayı TCKN
+  sayılmaz), telefon, e-posta, plaka; opsiyonel Türkçe NER ile kişi / kurum / yer adları.
+- **Sırlar:** AWS, GitHub, OpenAI, Anthropic, Slack, Google, Stripe anahtarları, JWT, private key,
+  parolalı bağlantı dizeleri, `şifre: ...`.
+- **Prompt injection:** Türkçe ve İngilizce, araç çıktılarına ve web içeriğine gizlenmiş saldırılar dahil.
+- **Çıktı koruması:** model cevabında girdide olmayan bir kişisel veri veya sır üretirse gizlenir.
+- **MCP / agent:** ContextForge eklentisi; araç çıktısı maskeleme, dış araçlara sızdırma engeli, araç izin listesi.
+- **Gölge AI:** tarayıcı eklentisi ChatGPT, Claude.ai, Gemini'ye yapıştırılan veriyi yerelde maskeler.
+
+**Görünürlük ve uyum**
+- **Denetim kaydı:** ham prompt hiç saklanmaz; veri türleri, karar, token, maliyet ClickHouse'ta.
+- **AI Kullanım Röntgeni:** kim, hangi modeli, hangi veriyle kullanıyor; ne engellendi, ne kadar tuttu.
+- **KVKK ve VERBİS:** aylık yurt dışı aktarım raporu, VERBİS taslağı.
+- **EU AI Act:** AI sistem envanteri, risk sınıfı ve yükümlülükler; beyan edilmemiş kullanımlar.
+
+**Kurumsal işletim**
+- **Kimlik:** OIDC / JWT (Keycloak, Entra ID); header ile taklit edilemez.
+- **Politika:** YAML; izin ver / uyar / maskele / engelle, gözlem modu ve simülatör.
+- **Kota:** ekip başına istek / dk ve aylık token / maliyet bütçesi.
+- **İşletim:** Prometheus metrikleri, OKD / OpenShift Helm chart'ı, air-gapped kurulum.
 
 ## Hızlı başlangıç
 
@@ -109,8 +103,11 @@ export ANTHROPIC_BASE_URL=https://telveguard.sirket.local
 export ANTHROPIC_AUTH_TOKEN=<OIDC access token>     # AUTH_MODE=jwt
 ```
 
-Not: Cursor gibi istekleri kendi sunucuları üzerinden gönderen araçlar kurum içindeki bir
-gateway'e erişemez; bunlar için ağ seviyesinde çözüm gerekir (yol haritası: gölge AI tespiti).
+Claude Code'u kurum içi modele bağlamak için biçim çevirisi gerekmez: vLLM `/v1/messages`'ı
+kendisi sunar, `UPSTREAM_ANTHROPIC_INTERNAL_URL=http://vllm:8000` yeterlidir.
+
+Cursor gibi istekleri kendi sunucuları üzerinden gönderen araçlar kurum içindeki bir gateway'e
+erişemez; tarayıcıdan kullanılan AI siteleri için [tarayıcı eklentisi](#gölge-ai-tarayıcı-eklentisi) vardır.
 
 ## Uygulamanızı bağlamak
 
@@ -224,6 +221,9 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 
 ## Yapılandırma
 
+<details>
+<summary>Ortam değişkenleri</summary>
+
 | Değişken | Açıklama |
 |---|---|
 | `AUTH_MODE` | `jwt` (üretim: OIDC token zorunlu) ya da `header` (geliştirme, doğrulama yok) |
@@ -246,6 +246,8 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `ENABLE_LLM_GUARD=1`, `LLM_GUARD_MODEL_PATH` | Ek injection sınıflandırıcı (LLM Guard); model lokal dizinden, internetsiz (`/models/prompt-injection`) |
 | `LLM_GUARD_THRESHOLD`, `LLM_GUARD_USE_ONNX=1` | Sınıflandırıcı eşiği (0,92) ve CPU'da daha hızlı ONNX çalıştırma |
 
+</details>
+
 Tahmini maliyet `policies/default.yaml` içindeki `pricing` tablosundan hesaplanır; fiyatı
 girilmemiş modeller Röntgen'de "fiyat tanımsız" görünür.
 
@@ -253,6 +255,9 @@ girilmemiş modeller Röntgen'de "fiyat tanımsız" görünür.
 
 `GET /metrics` (Prometheus). Etiketler yalnızca sınırlı kümelerdendir (karar, hedef, veri türü);
 model ve ekip adı istemci kontrolünde olduğu için etiket yapılmaz, bu kırılım Röntgen'dedir.
+
+<details>
+<summary>Metrik listesi</summary>
 
 | Metrik | Ne ölçer |
 |---|---|
@@ -263,7 +268,10 @@ model ve ekip adı istemci kontrolünde olduğu için etiket yapılmaz, bu kır�
 | `telveguard_scan_duration_seconds` | Tarama + politika süresi (gateway'in eklediği gecikme) |
 | `telveguard_request_duration_seconds`, `telveguard_upstream_duration_seconds` | Uçtan uca ve LLM süresi |
 | `telveguard_quota_exceeded_total{kind}`, `telveguard_quota_backend_errors_total` | Kota aşımları ve sayaç (Redis) hataları |
+| `telveguard_shadow_ai_events_total{action}` | Tarayıcı eklentisi olayları |
 | `telveguard_upstream_errors_total`, `telveguard_audit_failures_total`, `telveguard_auth_failures_total{reason}` | Hatalar |
+
+</details>
 
 ## AI envanteri, EU AI Act ve VERBİS
 
@@ -353,10 +361,10 @@ baktığı izlenebilir.
 | `GET /v1/reports/kvkk-transfer?month=2026-09` | KVKK yurt dışı aktarım raporu (CSV; `&format=json` da olur) |
 | `GET /v1/inventory?days=90` | AI envanteri: beyan edilen sistemler, risk sınıfı, yükümlülükler, beyan edilmemiş kullanımlar |
 | `GET /v1/reports/verbis?format=csv\|json` | VERBİS başlıklarına eşlenmiş taslak |
+| `POST /v1/policy/simulate?format=chat\|responses\|messages` | Bir isteğe verilecek karar ve modele gidecek maskeli gövde |
 
 Tarayıcı eklentisi olayları ayrı bir uçtan gelir: `POST /v1/shadow-ai/events`
 (`Authorization: Bearer <SHADOW_AI_TOKEN>`; tanımlı değilse kapalı).
-| `POST /v1/policy/simulate?format=chat\|responses\|messages` | Bir isteğe verilecek karar ve modele gidecek maskeli gövde |
 
 ## MCP / agent trafiği (ContextForge)
 
@@ -417,6 +425,7 @@ extension/                       Gölge AI tarayıcı eklentisi (Chrome / Edge, 
 clickhouse/init.sql              Denetim şeması
 policies/default.yaml            Örnek KVKK politikası + fiyat tablosu
 docs/FORK_STRATEGY.md            ContextForge'u neden ve nasıl kullanıyoruz
+docs/assets/make_diagram.py      README akış diyagramını (SVG) üretir
 ```
 
 ## Kullanılan açık kaynak projeler
@@ -444,16 +453,9 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 - ContextForge'da yer tutucu numaraları (`[TCKN_1]`) tek araç çağrısı içinde tutarlıdır,
   çağrılar arasında değil.
 
-## Yol haritası
+## Sürümler
 
-1. **Faz 1 (tamamlandı):** LLM gateway, Türkçe PII ve sır tespiti, çıktı koruması, OIDC kimlik
-   doğrulama, denetim kaydı, Röntgen, KVKK aktarım raporu, politika gözlem modu ve simülatörü,
-   Prometheus metrikleri, OKD Helm chart'ı.
-2. **Faz 2:** ~~ekip kota / hız sınırı~~, ~~MCP araç izin listesi ve agent kimliği~~, ~~yönetimde
-   OIDC rolü~~, ~~LLM Guard lokal model~~, ~~gölge AI tarayıcı eklentisi~~ (tamamlandı).
-   Claude Code'u kurum içi modele bağlamak için çeviri gerekmiyor: vLLM `/v1/messages`'ı kendisi
-   sunuyor, `UPSTREAM_ANTHROPIC_INTERNAL_URL=http://vllm:8000` yeterli.
-3. **Faz 3:** ~~AI envanteri, EU AI Act risk sınıflandırması, VERBİS taslağı~~ (tamamlandı).
+Değişiklikler: [CHANGELOG.md](CHANGELOG.md) · [GitHub sürümleri](https://github.com/osmanuygar/telveguard/releases)
 
 ## Lisans
 
