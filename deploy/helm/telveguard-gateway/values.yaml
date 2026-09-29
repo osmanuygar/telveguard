@@ -30,6 +30,9 @@ auth:
 upstream:
   internalUrl: http://vllm:8000/v1          # kurum içi (vLLM / Ollama)
   externalUrl: https://api.openai.com/v1    # yurt dışı sağlayıcı (maskeli gider)
+  # Anthropic /v1/messages (Claude SDK, Claude Code); taban adres /v1 içermez
+  anthropicUrl: https://api.anthropic.com
+  anthropicInternalUrl: ""                  # Anthropic biçimini kabul eden kurum içi sunucu (opsiyonel)
 
 # ---------------- denetim (Kafka) ----------------
 audit:
@@ -54,7 +57,7 @@ policy:
 # ---------------- sırlar ----------------
 # Önerilen: Secret'ı chart dışında (Vault / sealed-secrets / oc create secret) oluşturup adını verin.
 # Beklenen anahtarlar (hepsi opsiyonel): admin-token, upstream-external-key,
-# upstream-internal-key, clickhouse-password
+# upstream-internal-key, upstream-anthropic-key, upstream-anthropic-internal-key, clickhouse-password
 existingSecret: ""
 # existingSecret boşsa chart bu değerlerden Secret üretir (geliştirme / test için).
 # adminToken boşsa yönetim uçları (Röntgen, simülatör, raporlar) KAPALIDIR.
@@ -62,6 +65,7 @@ secrets:
   adminToken: ""
   upstreamExternalKey: ""
   upstreamInternalKey: ""
+  upstreamAnthropicKey: ""
   clickhousePassword: ""
 
 # ---------------- opsiyonel modeller (air-gapped) ----------------

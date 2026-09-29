@@ -113,6 +113,10 @@ XRAY_QUERIES = {
             SELECT rule, 'monitor' AS mode, count() AS hits FROM audit ARRAY JOIN monitored_rules AS rule
             WHERE {_WINDOW} GROUP BY rule
         ) ORDER BY hits DESC, rule""",
+    "by_format": f"""
+        SELECT if(api_format = '', 'chat', api_format) AS api_format, count() AS requests,
+               round(sum(est_cost_usd), 6) AS est_cost_usd
+        FROM audit WHERE {_WINDOW} GROUP BY api_format ORDER BY requests DESC""",
     "top_users": f"""
         SELECT user, any(team) AS team, count() AS requests,
                countIf(action = 'block') AS blocked, countIf(injection_score >= 0.5) AS injection_attempts,

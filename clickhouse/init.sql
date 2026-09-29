@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS telveguard.audit_queue
     est_cost_usd Nullable(Float64),
     -- kimlik (OIDC) ve çıktı koruması
     teams Array(String), auth_source String,
-    output_leaked Array(String), output_action String, output_rules Array(String)
+    output_leaked Array(String), output_action String, output_rules Array(String),
+    api_format String
 )
 ENGINE = Kafka
 SETTINGS kafka_broker_list = 'kafka:9092',
@@ -44,7 +45,9 @@ CREATE TABLE IF NOT EXISTS telveguard.audit
     teams Array(LowCardinality(String)), auth_source LowCardinality(String),
     -- model cevabında üretilen (girdide olmayan) PII / sır türleri ve uygulanan karar
     output_leaked Array(LowCardinality(String)), output_action LowCardinality(String),
-    output_rules Array(LowCardinality(String))
+    output_rules Array(LowCardinality(String)),
+    -- istemci API biçimi: chat | responses | messages (Claude Code vb.)
+    api_format LowCardinality(String)
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
@@ -60,7 +63,7 @@ SELECT toUUID(event_id) AS event_id,
        latency_ms, upstream_status, output_entities, masked_count, output_scan,
        monitored_rules, would_action, masked_entities,
        prompt_tokens, completion_tokens, usage_known, est_cost_usd,
-       teams, auth_source, output_leaked, output_action, output_rules
+       teams, auth_source, output_leaked, output_action, output_rules, api_format
 FROM telveguard.audit_queue;
 
 -- Örnek rapor: ekip bazında yurt dışına giden kişisel veri denemeleri (son 30 gün)

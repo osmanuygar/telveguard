@@ -190,6 +190,8 @@ const ENTITY_LABELS = { TCKN: "T.C. kimlik no", VKN: "Vergi kimlik no", IBAN_TR:
   LOCATION: "Konum", ORGANIZATION: "Kurum" };
 const entityLabel = (e) => ENTITY_LABELS[e] || (e.startsWith("SECRET_") ? "Sır: " + e.slice(7).toLowerCase().replace(/_/g, " ") : e);
 
+const FORMAT_LABELS = { chat: "OpenAI chat", responses: "OpenAI responses", messages: "Anthropic / Claude" };
+
 // İşlem serileri: sabit kategorik sıra (renk varlığa bağlı, sıralamaya değil)
 const ACTIONS = [
   { key: "allow", label: "İzin verildi", color: "var(--series-1)" },
@@ -366,6 +368,8 @@ function render(d) {
   const costNote = Number(s.cost_unknown_requests) ? `${n(s.cost_unknown_requests)} istekte fiyat bilinmiyor` : null;
   $("tiles").replaceChildren(
     tile("Toplam istek", compact.format(s.requests), `${n(s.users)} kullanıcı · ${n(s.teams)} ekip`),
+    tile("Arayüzler", (d.by_format || []).length ? n((d.by_format.find((f) => f.api_format === "messages") || {}).requests) : "0",
+         (d.by_format || []).map((f) => `${FORMAT_LABELS[f.api_format] || f.api_format} ${n(f.requests)}`).join(" · ") || "–"),
     tile("Yurt dışı oranı", pct(s.external_requests, s.requests), `${n(s.external_requests)} istek`),
     tile("Maskelenen", compact.format(s.masked), pct(s.masked, s.requests) + " istek"),
     tile("Engellenen", compact.format(s.blocked), pct(s.blocked, s.requests) + " istek"),

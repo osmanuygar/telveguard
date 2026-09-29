@@ -64,6 +64,12 @@ spec:
               value: {{ .Values.upstream.internalUrl | quote }}
             - name: UPSTREAM_EXTERNAL_URL
               value: {{ .Values.upstream.externalUrl | quote }}
+            - name: UPSTREAM_ANTHROPIC_URL
+              value: {{ .Values.upstream.anthropicUrl | quote }}
+            {{- with .Values.upstream.anthropicInternalUrl }}
+            - name: UPSTREAM_ANTHROPIC_INTERNAL_URL
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.audit.kafkaBootstrap }}
             - name: KAFKA_BOOTSTRAP
               value: {{ . | quote }}
@@ -94,6 +100,8 @@ spec:
             {{- include "tg.secretEnv" (dict "env" "TELVEGUARD_ADMIN_TOKEN" "secret" $secret "key" "admin-token") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "UPSTREAM_EXTERNAL_KEY" "secret" $secret "key" "upstream-external-key") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "UPSTREAM_INTERNAL_KEY" "secret" $secret "key" "upstream-internal-key") | nindent 12 }}
+            {{- include "tg.secretEnv" (dict "env" "UPSTREAM_ANTHROPIC_KEY" "secret" $secret "key" "upstream-anthropic-key") | nindent 12 }}
+            {{- include "tg.secretEnv" (dict "env" "UPSTREAM_ANTHROPIC_INTERNAL_KEY" "secret" $secret "key" "upstream-anthropic-internal-key") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "CLICKHOUSE_PASSWORD" "secret" $secret "key" "clickhouse-password") | nindent 12 }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

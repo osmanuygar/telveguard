@@ -13,6 +13,8 @@ services:
       UPSTREAM_INTERNAL_URL: http://mock-llm:9000/v1
       UPSTREAM_EXTERNAL_URL: http://mock-llm:9000/v1
       UPSTREAM_EXTERNAL_KEY: ""
+      UPSTREAM_ANTHROPIC_URL: http://mock-llm:9000
+      UPSTREAM_ANTHROPIC_KEY: e2e-anthropic-key
       AUDIT_STORE_MASKED: "1"
       TELVEGUARD_ADMIN_TOKEN: e2e-admin-token   # yalnızca lokal test
     depends_on:
@@ -36,6 +38,7 @@ services:
       KAFKA_BOOTSTRAP: kafka:9092
       UPSTREAM_INTERNAL_URL: http://mock-llm:9000/v1
       UPSTREAM_EXTERNAL_URL: http://mock-llm:9000/v1
+      UPSTREAM_ANTHROPIC_URL: http://mock-llm:9000
       AUTH_MODE: jwt
       OIDC_ISSUER: http://mock-oidc:9200
       OIDC_AUDIENCE: telveguard

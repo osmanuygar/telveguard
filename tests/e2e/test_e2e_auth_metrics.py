@@ -108,9 +108,9 @@ def test_metrics_aggregate_across_workers():
     """Gateway 2 worker'la çalışır; /metrics hangi worker'a düşerse düşsün toplamı göstermeli."""
     def scrape():
         return httpx.get(f"{GATEWAY}/metrics", timeout=10).text
-    before = _counter(scrape(), "telveguard_requests_total", action="allow", destination="internal")
+    before = _counter(scrape(), "telveguard_requests_total", action="allow", destination="internal", api_format="chat")
     for _ in range(20):
         assert chat(GATEWAY, "merhaba", model="vllm/qwen3").status_code == 200
-    after = [_counter(scrape(), "telveguard_requests_total", action="allow", destination="internal")
+    after = [_counter(scrape(), "telveguard_requests_total", action="allow", destination="internal", api_format="chat")
              for _ in range(5)]  # farklı worker'lara düşen birkaç okuma
     assert all(a - before == 20 for a in after), (before, after)

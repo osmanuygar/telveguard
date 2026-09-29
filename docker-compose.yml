@@ -40,6 +40,9 @@ services:
       UPSTREAM_INTERNAL_URL: ${UPSTREAM_INTERNAL_URL:-http://host.docker.internal:11434/v1}
       UPSTREAM_EXTERNAL_URL: ${UPSTREAM_EXTERNAL_URL:-https://api.openai.com/v1}
       UPSTREAM_EXTERNAL_KEY: ${UPSTREAM_EXTERNAL_KEY:-}
+      # Anthropic /v1/messages (Claude SDK, Claude Code)
+      UPSTREAM_ANTHROPIC_URL: ${UPSTREAM_ANTHROPIC_URL:-https://api.anthropic.com}
+      UPSTREAM_ANTHROPIC_KEY: ${UPSTREAM_ANTHROPIC_KEY:-}
       ENABLE_TR_NER: ${ENABLE_TR_NER:-0}
       ENABLE_LLM_GUARD: ${ENABLE_LLM_GUARD:-0}
       # Röntgen + KVKK raporu (prod'da yalnızca SELECT yetkili ayrı kullanıcı önerilir)

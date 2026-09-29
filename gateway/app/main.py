@@ -1,16 +1,17 @@
 """
-Telveguard Gateway - OpenAI uyumlu LLM güvenlik proxy'si.
+Telveguard Gateway - LLM güvenlik proxy'si (OpenAI ve Anthropic uyumlu).
 
-Akış:  istemci -> [kimlik] -> [PII + injection tarama] -> [politika] ->
-       (engelle | maskele | geçir) -> upstream LLM -> [maskeyi geri aç + çıktı tarama]
+Akış:  istemci -> [kimlik] -> [PII + sır + injection tarama] -> [politika] ->
+       (engelle | maskele | geçir) -> upstream LLM -> [çıktı koruması + maskeyi geri aç]
        -> istemci ;  her istek -> audit olayı (Kafka)
 
-İstemciler sadece base_url değiştirerek bağlanır:
-    OpenAI(base_url="http://telveguard-gateway:8080/v1", api_key="...")
+Desteklenen biçimler (formats.py): OpenAI /v1/chat/completions ve /v1/responses,
+Anthropic /v1/messages (Claude Code dahil). İstemciler yalnızca taban adresi değiştirir:
+    OpenAI(base_url="http://telveguard:8080/v1", ...)
+    Anthropic(base_url="http://telveguard:8080", ...)   /  ANTHROPIC_BASE_URL=http://telveguard:8080
 """
 import copy
 import hmac
-import json
 import os
 import time
 from collections import Counter
@@ -26,25 +27,10 @@ from . import metrics
 from . import xray as xray_mod
 from .audit import AuditSink
 from .auth import AuthError, Authenticator, Identity
-from telveguard_core.detectors.injection import InjectionDetector
+from .formats import CHAT, FORMATS, MESSAGES, RESPONSES, UPSTREAM_KEYS, UPSTREAMS, ApiFormat, Part  # noqa: F401
+from telveguard_core.detectors.injection import InjectionDetector, InjectionResult
 from telveguard_core.pii.engine import TrPiiEngine
-from telveguard_core.detectors.injection import InjectionResult
 from telveguard_core.policy import Context, Decision, PolicyEngine
-
-UPSTREAMS = {
-    "internal": os.getenv("UPSTREAM_INTERNAL_URL", "http://vllm:8000/v1"),
-    "external": os.getenv("UPSTREAM_EXTERNAL_URL", "https://api.openai.com/v1"),
-}
-UPSTREAM_KEYS = {
-    "internal": os.getenv("UPSTREAM_INTERNAL_KEY", ""),
-    "external": os.getenv("UPSTREAM_EXTERNAL_KEY", ""),
-}
-
-# Injection taraması: dolaylı vektörler dahil (tool çıktıları, RAG içeriği).
-# system/assistant uygulamanın kendi metni sayılır, injection için taranmaz.
-SCANNED_ROLES = {"user", "tool", "function"}
-# PII taraması TÜM rollerde yapılır: system prompt'a veya konuşma geçmişine
-# gömülü kişisel veri de dışarı gider.
 
 
 @asynccontextmanager
@@ -69,57 +55,19 @@ app = FastAPI(title="Telveguard Gateway", version="0.1.0", lifespan=lifespan)
 
 # ---------------- yardımcılar ----------------
 
-def _iter_text_parts(messages: List[Dict[str, Any]]):
-    """(mesaj, anahtar/indeks, metin) üçlüleri: hem düz string hem çok parçalı içerik."""
-    for msg in messages:
-        content = msg.get("content")
-        if isinstance(content, str):
-            yield msg, None, content
-        elif isinstance(content, list):
-            for i, part in enumerate(content):
-                if isinstance(part, dict) and part.get("type") == "text":
-                    yield msg, i, part.get("text", "")
-
-
-def _set_text(msg, idx, text):
-    if idx is None:
-        msg["content"] = text
-    else:
-        msg["content"][idx]["text"] = text
-
-
 def _openai_error(status: int, message: str, code: str,
                   type_: str = "telveguard_policy_violation") -> JSONResponse:
-    return JSONResponse(status_code=status, content={
-        "error": {"message": message, "type": type_, "code": code}
-    })
+    return CHAT.error(status, message, code, type_)
 
 
-def _upstream_error(resp: httpx.Response) -> JSONResponse:
-    """Upstream hatası JSON değilse (ör. proxy'nin HTML 502 sayfası) OpenAI formatına sar."""
+def _upstream_error(fmt: ApiFormat, resp: httpx.Response) -> JSONResponse:
+    """Upstream hatası JSON ise olduğu gibi (zaten o biçimde); değilse (ör. proxy'nin HTML
+    502 sayfası) istemcinin biçiminde hata."""
     try:
         return JSONResponse(status_code=resp.status_code, content=resp.json())
     except ValueError:
-        return _openai_error(resp.status_code, f"Upstream hata döndü ({resp.status_code}).",
-                             "upstream_error", "upstream_error")
-
-
-def _as_sse(completion: dict):
-    """Maskeleme yapıldığında stream'i tamponlayıp tek parça SSE olarak döndürür
-    (yer tutucuların parça sınırında bölünmesini önlemek için)."""
-    choice = completion["choices"][0]
-    chunk = {
-        "id": completion.get("id"), "object": "chat.completion.chunk",
-        "created": completion.get("created"), "model": completion.get("model"),
-        "choices": [{"index": 0, "delta": {"role": "assistant",
-                     "content": choice["message"].get("content", "")},
-                     "finish_reason": choice.get("finish_reason")}],
-    }
-
-    async def gen():
-        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-        yield "data: [DONE]\n\n"
-    return gen()
+        return fmt.error(resp.status_code, f"Upstream hata döndü ({resp.status_code}).",
+                         "upstream_error", "upstream_error")
 
 
 def _require_admin(request: Request) -> Optional[JSONResponse]:
@@ -140,10 +88,12 @@ def _require_admin(request: Request) -> Optional[JSONResponse]:
 @dataclass
 class Analysis:
     identity: Identity
+    fmt: ApiFormat
     model: str
     destination: str
-    messages: List[Dict[str, Any]]
-    full_text: str                  # injection için taranan roller
+    body: Dict[str, Any]
+    parts: List[Part]
+    full_text: str                  # injection için taranan roller (kullanıcı + araç sonuçları)
     all_text: str                   # maskelemeden ÖNCEKİ tüm metin (çıktı sızıntısı karşılaştırması)
     entity_counts: Counter          # tüm rollerdeki PII/sır türleri ve adetleri
     injection: InjectionResult
@@ -162,28 +112,30 @@ class Analysis:
     def entities(self) -> Set[str]:
         return set(self.entity_counts)
 
+    @property
+    def messages(self) -> Any:  # geriye uyumluluk (chat)
+        return self.body.get("messages", [])
 
-def _analyze(st, body: Dict[str, Any], identity: Identity) -> Analysis:
+
+def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT) -> Analysis:
     """Tarama + politika. Gerçek istek ve simülatör aynı yolu kullanır."""
-    model = body.get("model", "")
+    model = body.get("model", "") if isinstance(body.get("model"), str) else ""
     destination = st.policy.destination_of(model)
-    messages = body.get("messages", [])
-
-    scanned = [t for m, _, t in _iter_text_parts(messages) if m.get("role") in SCANNED_ROLES]
-    full_text = "\n".join(scanned)
-    all_text = "\n".join(t for _, _, t in _iter_text_parts(messages))
+    parts = fmt.request_parts(body)
+    full_text = "\n".join(p.text for p in parts if p.role in fmt.injection_roles)
+    all_text = "\n".join(p.text for p in parts)
     entity_counts = Counter(f.entity for f in st.pii.analyze(all_text))
     injection = st.injection.scan(full_text)
     ctx = Context(identity.team, model, destination, set(entity_counts), injection.score,
                   frozenset(identity.teams))
     decision = st.policy.evaluate(ctx)
-    return Analysis(identity, model, destination, messages, full_text, all_text, entity_counts,
-                    injection, ctx, decision)
+    return Analysis(identity, fmt, model, destination, body, parts, full_text, all_text,
+                    entity_counts, injection, ctx, decision)
 
 
-def _auth_error(e: AuthError) -> JSONResponse:
+def _auth_error(e: AuthError, fmt: ApiFormat = CHAT) -> JSONResponse:
     metrics.AUTH_FAILURES.labels(e.reason).inc()
-    resp = _openai_error(e.status, f"Telveguard: {e.message}", e.reason, "authentication_error")
+    resp = fmt.error(e.status, f"Telveguard: {e.message}", e.reason, "authentication_error")
     if e.status == 401:
         resp.headers["WWW-Authenticate"] = f'Bearer error="invalid_token", error_description="{e.reason}"'
     return resp
@@ -206,24 +158,34 @@ def _redact(text: str, leaks, entities: Set[str]) -> str:
     return text
 
 
-def _usage_fields(st, model: str, completion: Optional[dict]) -> Dict[str, Any]:
+def _usage_fields(st, fmt: ApiFormat, model: str, resp: Optional[dict]) -> Dict[str, Any]:
     """Röntgen için token + tahmini maliyet. usage yoksa (maskesiz stream, upstream hatası)
     token 0 ve maliyet None yazılır: "bilinmiyor", "bedava" değil."""
-    usage = (completion or {}).get("usage") or {}
-    pt, ct = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
-    known = bool(usage)
+    pt, ct, effective_pt, known = fmt.usage(resp)
     return {"prompt_tokens": pt, "completion_tokens": ct, "usage_known": int(known),
-            "est_cost_usd": st.policy.estimate_cost_usd(model, pt, ct) if known else None}
+            "est_cost_usd": st.policy.estimate_cost_usd(model, effective_pt, ct) if known else None}
 
 
-def _mask_messages(st, messages, decision: Decision, vault: Dict[str, str]) -> Optional[str]:
-    """Karar maskeleme gerektiriyorsa mesajları yerinde maskeler; denetim metnini döndürür."""
+def _mask_parts(st, parts: List[Part], decision: Decision, vault: Dict[str, str]) -> Optional[str]:
+    """Karar maskeleme gerektiriyorsa tüm parçaları (system ve araç argümanları dahil) yerinde
+    maskeler; denetim için maskeli metni döndürür."""
     if decision.action != "mask" or not decision.mask_entities:
         return None
-    for msg, idx, text in list(_iter_text_parts(messages)):
-        _set_text(msg, idx, st.pii.mask(text, list(decision.mask_entities), vault).text)
-    # Maskeleme tüm rollere uygulandığı için denetim kaydı da hepsini içerir (system dahil)
-    return "\n".join(t for _, _, t in _iter_text_parts(messages))
+    for p in parts:
+        p.set(st.pii.mask(p.text, list(decision.mask_entities), vault).text)
+    return "\n".join(p.text for p in parts)
+
+
+async def _read_body(request: Request, fmt: ApiFormat):
+    try:
+        body = await request.json()
+    except ValueError:
+        return None, fmt.error(400, "Geçersiz JSON gövdesi.", "invalid_request", "invalid_request_error")
+    if not isinstance(body, dict):
+        return None, fmt.error(400, "Gövde bir JSON nesnesi olmalı.", "invalid_request", "invalid_request_error")
+    if err := fmt.validate(body):
+        return None, fmt.error(400, err, "invalid_request", "invalid_request_error")
+    return body, None
 
 
 # ---------------- endpoint'ler ----------------
@@ -241,36 +203,46 @@ async def metrics_endpoint():
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
+    return await _timed(request, CHAT)
+
+
+@app.post("/v1/responses")
+async def responses(request: Request):
+    return await _timed(request, RESPONSES)
+
+
+@app.post("/v1/messages")
+async def messages(request: Request):
+    return await _timed(request, MESSAGES)
+
+
+async def _timed(request: Request, fmt: ApiFormat):
     t0 = time.perf_counter()
     request.state.destination = "none"  # kimlik / gövde hatasında (sınırlı etiket)
     try:
-        return await _chat_completions(request, t0)
+        return await _proxy(request, t0, fmt)
     finally:
         metrics.REQUEST_SECONDS.labels(request.state.destination).observe(time.perf_counter() - t0)
 
 
-async def _chat_completions(request: Request, t0: float):
+async def _proxy(request: Request, t0: float, fmt: ApiFormat):
     st = request.app.state
     # Kimlik gövdeden ÖNCE: doğrulanmamış isteğin gövdesi işlenmez
     try:
         identity = await st.auth.authenticate(request.headers)
     except AuthError as e:
-        return _auth_error(e)
-    try:
-        body = await request.json()
-    except ValueError:
-        return _openai_error(400, "Geçersiz JSON gövdesi.", "invalid_request", "invalid_request_error")
-    if not isinstance(body, dict) or not isinstance(body.get("messages", []), list):
-        return _openai_error(400, "Gövde bir nesne, 'messages' bir liste olmalı.",
-                             "invalid_request", "invalid_request_error")
+        return _auth_error(e, fmt)
+    body, err = await _read_body(request, fmt)
+    if err:
+        return err
 
     # 1-2) Tarama + politika
     t_scan = time.perf_counter()
-    a = _analyze(st, body, identity)
+    a = _analyze(st, body, identity, fmt)
     metrics.SCAN_SECONDS.observe(time.perf_counter() - t_scan)
-    model, destination, decision, messages = a.model, a.destination, a.decision, a.messages
+    model, destination, decision = a.model, a.destination, a.decision
     request.state.destination = destination
-    metrics.REQUESTS.labels(decision.action, destination).inc()
+    metrics.REQUESTS.labels(decision.action, destination, fmt.name).inc()
     for entity in a.entities:
         metrics.ENTITIES.labels(entity, "input").inc()
     if a.injection.score >= 0.5:
@@ -283,24 +255,26 @@ async def _chat_completions(request: Request, t0: float):
             masked_prompt=masked_prompt, latency_ms=(time.perf_counter() - t0) * 1000,
             upstream_status=upstream_status,
         )
-        ev.update(teams=a.identity.teams, auth_source=a.identity.source)
+        ev.update(teams=a.identity.teams, auth_source=a.identity.source, api_format=fmt.name)
         ev.update(extra)
         await st.audit.emit(ev)
 
     if decision.action == "block":
         # Upstream'e hiçbir şey gitmedi: maliyet kesin olarak 0
         await audit(prompt_tokens=0, completion_tokens=0, usage_known=1, est_cost_usd=0.0)
-        return _openai_error(403, f"Telveguard: {decision.reason}", "blocked")
+        return fmt.error(403, f"Telveguard: {decision.reason}", "blocked")
+
+    upstream = fmt.upstream(destination, request.headers)
+    if upstream is None:
+        await audit(prompt_tokens=0, completion_tokens=0, usage_known=1, est_cost_usd=0.0,
+                    upstream_status=400)
+        return fmt.error(400, f"Telveguard: '{model}' kurum içi bir model; bu API biçimi için kurum içi "
+                              "upstream tanımlı değil.", "no_upstream", "invalid_request_error")
+    url, headers = upstream
 
     # 3) Maskeleme (tüm konuşma boyunca ortak vault -> tutarlı yer tutucular)
     vault: Dict[str, str] = {}
-    masked_prompt = _mask_messages(st, messages, decision, vault)
-
-    # 4) Upstream'e ilet
-    url = f"{UPSTREAMS[destination]}/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if UPSTREAM_KEYS[destination]:
-        headers["Authorization"] = f"Bearer {UPSTREAM_KEYS[destination]}"
+    masked_prompt = _mask_parts(st, a.parts, decision, vault)
 
     wants_stream = bool(body.get("stream"))
     # Maskeleme ya da çıktı kuralı varsa stream tamponlanır: yer tutucular parça sınırında
@@ -314,16 +288,17 @@ async def _chat_completions(request: Request, t0: float):
             resp = await st.http.send(req, stream=True)
         except httpx.HTTPError:
             metrics.UPSTREAM_ERRORS.labels(destination, "unreachable").inc()
-            await audit(masked_prompt, 502, output_scan="skipped_stream", **_usage_fields(st, model, None))
-            return _openai_error(502, "Upstream'e ulaşılamadı.", "upstream_unreachable", "upstream_error")
-        await audit(masked_prompt, resp.status_code, output_scan="skipped_stream", **_usage_fields(st, model, None))
+            await audit(masked_prompt, 502, output_scan="skipped_stream", **_usage_fields(st, fmt, model, None))
+            return fmt.error(502, "Upstream'e ulaşılamadı.", "upstream_unreachable", "upstream_error")
+        await audit(masked_prompt, resp.status_code, output_scan="skipped_stream",
+                    **_usage_fields(st, fmt, model, None))
 
         async def relay():
             async for chunk in resp.aiter_raw():
                 yield chunk
             await resp.aclose()
         return StreamingResponse(relay(), status_code=resp.status_code,
-                                 media_type="text/event-stream")
+                                 media_type=resp.headers.get("content-type", "text/event-stream"))
 
     body["stream"] = False
     t_up = time.perf_counter()
@@ -331,26 +306,25 @@ async def _chat_completions(request: Request, t0: float):
         resp = await st.http.post(url, json=body, headers=headers)
     except httpx.HTTPError:
         metrics.UPSTREAM_ERRORS.labels(destination, "unreachable").inc()
-        await audit(masked_prompt, 502, **_usage_fields(st, model, None))
-        return _openai_error(502, "Upstream'e ulaşılamadı.", "upstream_unreachable", "upstream_error")
+        await audit(masked_prompt, 502, **_usage_fields(st, fmt, model, None))
+        return fmt.error(502, "Upstream'e ulaşılamadı.", "upstream_unreachable", "upstream_error")
     metrics.UPSTREAM_SECONDS.labels(destination).observe(time.perf_counter() - t_up)
     if resp.status_code >= 400:
         metrics.UPSTREAM_ERRORS.labels(destination, metrics.upstream_error_kind(resp.status_code)).inc()
-        await audit(masked_prompt, resp.status_code, **_usage_fields(st, model, None))
-        return _upstream_error(resp)
+        await audit(masked_prompt, resp.status_code, **_usage_fields(st, fmt, model, None))
+        return _upstream_error(fmt, resp)
 
-    completion = resp.json()
+    result = resp.json()
 
-    # 5) Çıktı: sızıntı taraması (maske geri açılmadan ÖNCE) -> çıktı politikası -> maskeyi geri aç
+    # 5) Çıktı: sızıntı taraması (maske geri açılmadan ÖNCE) -> çıktı politikası -> maskeyi geri aç.
+    # Araç çağrıları dahil: Claude Code'un yazdığı dosya içeriği de çıktıdır.
     output_entities: Set[str] = set()
-    scanned_outputs = []
-    for choice in completion.get("choices", []):
-        msg = choice.get("message", {})
-        if isinstance(msg.get("content"), str):
-            findings, leaks = _find_output_leaks(st, msg["content"], a.all_text, vault)
-            output_entities |= {f.entity for f in findings}
-            scanned_outputs.append((msg, leaks))
-    leaked = {f.entity for _, leaks in scanned_outputs for f in leaks}
+    scanned = []
+    for part in fmt.response_parts(result):
+        findings, leaks = _find_output_leaks(st, part.text, a.all_text, vault)
+        output_entities |= {f.entity for f in findings}
+        scanned.append((part, leaks))
+    leaked = {f.entity for _, leaks in scanned for f in leaks}
     out = st.policy.evaluate_output(a.ctx, leaked)
     for entity in leaked:
         metrics.ENTITIES.labels(entity, "output_leak").inc()
@@ -363,35 +337,66 @@ async def _chat_completions(request: Request, t0: float):
 
     if out.action == "block":
         await audit(masked_prompt, resp.status_code, masked_count=len(vault), **output_audit,
-                    **_usage_fields(st, model, completion))
-        return _openai_error(403, f"Telveguard: model cevabı engellendi ({out.reason}).", "output_blocked")
+                    **_usage_fields(st, fmt, model, result))
+        return fmt.error(403, f"Telveguard: model cevabı engellendi ({out.reason}).", "output_blocked")
 
-    for msg, leaks in scanned_outputs:
+    for part, leaks in scanned:
+        text = part.text
         if out.action == "mask":
-            msg["content"] = _redact(msg["content"], leaks, out.mask_entities)
-        msg["content"] = st.pii.unmask(msg["content"], vault)
+            text = _redact(text, leaks, out.mask_entities)
+        # Yer tutucular araç argümanlarında da geri açılır: model maskeli sırrı bir dosyaya
+        # yazıyorsa diske [SECRET_..._1] değil gerçek değer gitmeli
+        part.set(st.pii.unmask(text, vault))
 
     await audit(masked_prompt, resp.status_code, masked_count=len(vault), **output_audit,
-                **_usage_fields(st, model, completion))
+                **_usage_fields(st, fmt, model, result))
 
     if wants_stream:
-        return StreamingResponse(_as_sse(completion), media_type="text/event-stream")
-    return JSONResponse(completion)
+        return StreamingResponse(fmt.buffered_sse(result), media_type="text/event-stream")
+    return JSONResponse(result)
+
+
+@app.post("/v1/messages/count_tokens")
+async def messages_count_tokens(request: Request):
+    """Claude Code bağlam boyutunu ölçmek için çağırır. Metin upstream'e gittiği için aynı
+    kimlik / politika / maskeleme uygulanır; model çağrısı olmadığından denetime yazılmaz."""
+    st = request.app.state
+    try:
+        identity = await st.auth.authenticate(request.headers)
+    except AuthError as e:
+        return _auth_error(e, MESSAGES)
+    body, err = await _read_body(request, MESSAGES)
+    if err:
+        return err
+    a = _analyze(st, body, identity, MESSAGES)
+    if a.decision.action == "block":
+        return MESSAGES.error(403, f"Telveguard: {a.decision.reason}", "blocked")
+    upstream = MESSAGES.upstream(a.destination, request.headers, path="/v1/messages/count_tokens")
+    if upstream is None:
+        return MESSAGES.error(400, "Bu model için Anthropic upstream'i tanımlı değil.", "no_upstream")
+    _mask_parts(st, a.parts, a.decision, {})
+    try:
+        resp = await st.http.post(upstream[0], json=body, headers=upstream[1])
+    except httpx.HTTPError:
+        return MESSAGES.error(502, "Upstream'e ulaşılamadı.", "upstream_unreachable")
+    if resp.status_code >= 400:
+        return _upstream_error(MESSAGES, resp)
+    return JSONResponse(resp.json())
 
 
 @app.post("/v1/policy/simulate")
-async def policy_simulate(request: Request):
+async def policy_simulate(request: Request, format: str = "chat"):
     """Bir isteğin politikadan nasıl geçeceğini gösterir; upstream'e gitmez, denetime yazılmaz.
-    Gövde /v1/chat/completions ile aynıdır; ekip/kullanıcı aynı header'lardan okunur."""
+    Gövde ilgili API'ninkiyle aynıdır (?format=chat|responses|messages)."""
     if err := _require_admin(request):
         return err
-    try:
-        body = await request.json()
-    except ValueError:
-        return _openai_error(400, "Geçersiz JSON gövdesi.", "invalid_request", "invalid_request_error")
-    if not isinstance(body, dict) or not isinstance(body.get("messages", []), list):
-        return _openai_error(400, "Gövde bir nesne, 'messages' bir liste olmalı.",
-                             "invalid_request", "invalid_request_error")
+    fmt = FORMATS.get(format)
+    if fmt is None:
+        return _openai_error(400, "format chat, responses ya da messages olmalı.", "invalid_request",
+                             "invalid_request_error")
+    body, err = await _read_body(request, fmt)
+    if err:
+        return err
 
     body = copy.deepcopy(body)
     # Yönetici aracı: Authorization yönetici token'ını taşır; simüle edilecek kimlik
@@ -399,11 +404,12 @@ async def policy_simulate(request: Request):
     h = request.headers
     teams = [t.strip() for t in h.get("x-telveguard-team", "default").split(",") if t.strip()]
     identity = Identity(h.get("x-telveguard-user", "simulate"), teams or ["default"], "simulate")
-    a = _analyze(request.app.state, body, identity)
+    a = _analyze(request.app.state, body, identity, fmt)
     d = a.decision
-    vault: Dict[str, str] = {}
-    _mask_messages(request.app.state, a.messages, d, vault)
+    _mask_parts(request.app.state, a.parts, d, {})
+    blocked = d.action == "block"
     return {
+        "format": fmt.name,
         "team": a.team,
         "teams": a.identity.teams,
         "model": a.model,
@@ -417,7 +423,8 @@ async def policy_simulate(request: Request):
             "monitored_rules": d.monitored_rules, "would_action": d.would_action,
         },
         # Engellenecekse upstream'e hiçbir şey gitmez
-        "upstream_messages": None if d.action == "block" else a.messages,
+        "upstream_messages": None if blocked else body.get("messages"),
+        "upstream_body": None if blocked else body,
     }
 
 

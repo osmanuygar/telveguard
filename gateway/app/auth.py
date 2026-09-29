@@ -2,8 +2,9 @@
 İstemci kimliği: kim istek atıyor, hangi ekiplerde?
 
 AUTH_MODE=jwt (üretim): OIDC sağlayıcısının (Keycloak, Entra ID...) imzaladığı JWT.
-    Uygulama token'ı OpenAI SDK'sında api_key olarak verir; SDK zaten
-    "Authorization: Bearer <token>" gönderir, kod değişikliği gerekmez.
+    Uygulama token'ı SDK'da api_key olarak verir: OpenAI SDK "Authorization: Bearer",
+    Anthropic SDK "x-api-key" gönderir; ikisi de kabul edilir, kod değişikliği gerekmez.
+    Claude Code: ANTHROPIC_AUTH_TOKEN (Bearer) ya da ANTHROPIC_API_KEY (x-api-key).
     x-telveguard-* header'ları bu modda YOK SAYILIR (sahtecilik yapılamaz).
 AUTH_MODE=header (geliştirme): x-telveguard-user / x-telveguard-team header'ları; doğrulama yok.
 
@@ -98,9 +99,10 @@ class Authenticator:
             return Identity(headers.get("x-telveguard-user", "anonymous"),
                             [headers.get("x-telveguard-team", "default")], "header")
         auth = headers.get("authorization", "")
-        if not auth.lower().startswith("bearer ") or not auth[7:].strip():
-            raise AuthError("missing_token", "Kimlik doğrulama gerekli: Authorization: Bearer <JWT>")
-        return await self._verify(auth[7:].strip())
+        token = auth[7:].strip() if auth.lower().startswith("bearer ") else headers.get("x-api-key", "").strip()
+        if not token:
+            raise AuthError("missing_token", "Kimlik doğrulama gerekli: Authorization: Bearer <JWT> ya da x-api-key")
+        return await self._verify(token)
 
     async def _verify(self, token: str) -> Identity:
         try:

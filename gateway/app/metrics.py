@@ -13,7 +13,8 @@ import os
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, CollectorRegistry, Counter, Histogram, generate_latest
 from prometheus_client import multiprocess
 
-REQUESTS = Counter("telveguard_requests", "Politika kararına göre istekler", ["action", "destination"])
+REQUESTS = Counter("telveguard_requests", "Politika kararına göre istekler",
+                   ["action", "destination", "api_format"])  # api_format: chat | responses | messages
 ENTITIES = Counter("telveguard_entities_detected", "Tespit edilen PII / sır türleri",
                    ["entity", "stage"])  # stage: input | output_leak
 INJECTIONS = Counter("telveguard_injection_detected", "Injection skoru >= 0,5 olan istekler")

@@ -15,7 +15,8 @@ uygulama ──► Telveguard ──► kurum içi LLM (vLLM / Ollama)        ve
                └─► Kafka ─► ClickHouse ─► AI Kullanım Röntgeni + KVKK raporu
 ```
 
-Uygulamalar kod değiştirmez: OpenAI uyumlu olduğu için yalnızca `base_url` Telveguard'a çevrilir.
+Uygulamalar kod değiştirmez: OpenAI ve Anthropic API'leriyle uyumlu olduğu için yalnızca taban
+adres Telveguard'a çevrilir (Claude Code dahil).
 
 ## Neler yapar?
 
@@ -73,6 +74,34 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
 (yalnızca bu yerel test ortamı içindir).
 
 Kapatmak için: `docker compose -f docker-compose.yml -f docker-compose.test.yml down`
+
+## Desteklenen API'ler
+
+| Uç | Biçim | Kimler kullanır | Taban adres |
+|---|---|---|---|
+| `POST /v1/chat/completions` | OpenAI Chat | OpenAI SDK, LangChain, LlamaIndex, Open WebUI, LibreChat, Continue, Aider | `http://telveguard:8080/v1` |
+| `POST /v1/responses` | OpenAI Responses | OpenAI SDK (`client.responses`), Codex CLI | `http://telveguard:8080/v1` |
+| `POST /v1/messages` (+ `/count_tokens`) | Anthropic Messages | Claude SDK, **Claude Code**, Cline / Roo (Anthropic modu) | `http://telveguard:8080` |
+
+Üçünde de aynı koruma çalışır: kimlik, Türkçe PII ve sır maskeleme, injection engelleme,
+politika, çıktı koruması, denetim kaydı, Röntgen ve metrikler. Taranan yerler yalnızca
+mesajlar değildir: system prompt, araç sonuçları (dosya içerikleri, web sayfaları — dolaylı
+injection dahil) ve araç çağrısı argümanları da taranır. Model, maskeli bir sırrı araç
+çağrısıyla dosyaya yazarsa (Claude Code) istemciye giden çağrıda gerçek değer geri konur.
+
+Biçim çevirisi yoktur: OpenAI biçimi OpenAI uyumlu upstream'e, Anthropic biçimi Anthropic
+API'sine (`UPSTREAM_ANTHROPIC_URL`) gider. Anthropic biçimini kurum içi bir modele göndermek
+için Anthropic uyumlu bir kurum içi sunucu gerekir (`UPSTREAM_ANTHROPIC_INTERNAL_URL`).
+
+**Claude Code'u bağlamak:**
+
+```bash
+export ANTHROPIC_BASE_URL=https://telveguard.sirket.local
+export ANTHROPIC_AUTH_TOKEN=<OIDC access token>     # AUTH_MODE=jwt
+```
+
+Not: Cursor gibi istekleri kendi sunucuları üzerinden gönderen araçlar kurum içindeki bir
+gateway'e erişemez; bunlar için ağ seviyesinde çözüm gerekir (yol haritası: gölge AI tespiti).
 
 ## Uygulamanızı bağlamak
 
@@ -177,6 +206,8 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `WORKERS` | Pod başına uvicorn worker sayısı (metrikler worker'lar arasında birleştirilir) |
 | `UPSTREAM_INTERNAL_URL` / `UPSTREAM_EXTERNAL_URL` | Kurum içi ve yurt dışı LLM adresleri (OpenAI uyumlu) |
 | `UPSTREAM_INTERNAL_KEY` / `UPSTREAM_EXTERNAL_KEY` | Upstream API anahtarları |
+| `UPSTREAM_ANTHROPIC_URL`, `UPSTREAM_ANTHROPIC_KEY` | Anthropic biçimi için upstream (varsayılan `https://api.anthropic.com`) |
+| `UPSTREAM_ANTHROPIC_INTERNAL_URL`, `UPSTREAM_ANTHROPIC_INTERNAL_KEY` | Anthropic biçimini kabul eden kurum içi sunucu (opsiyonel) |
 | `POLICY_PATH` | Politika dosyası |
 | `KAFKA_BOOTSTRAP`, `KAFKA_AUDIT_TOPIC` | Denetim kaydı; boşsa olaylar stdout'a yazılır |
 | `AUDIT_STORE_MASKED=1` | Maskelenmiş prompt da saklansın (ham prompt hiçbir zaman saklanmaz) |
@@ -195,7 +226,7 @@ model ve ekip adı istemci kontrolünde olduğu için etiket yapılmaz, bu kır�
 
 | Metrik | Ne ölçer |
 |---|---|
-| `telveguard_requests_total{action,destination}` | Politika kararına göre istekler |
+| `telveguard_requests_total{action,destination,api_format}` | Politika kararı ve API biçimine göre istekler |
 | `telveguard_entities_detected_total{entity,stage}` | Girdide / çıktı sızıntısında bulunan veri türleri |
 | `telveguard_output_actions_total{action}` | Cevaptaki sızıntıya uygulanan karar |
 | `telveguard_injection_detected_total` | Injection skoru ≥ 0,5 olan istekler |
@@ -212,7 +243,7 @@ Hepsi `Authorization: Bearer <TELVEGUARD_ADMIN_TOKEN>` ister.
 | `GET /xray` | Röntgen dashboard'u (veri içermez; token'la aşağıdaki API'yi çağırır) |
 | `GET /v1/xray?days=30&team=` | Özet, günlük trend, ekip / model / veri türü kırılımı, kural isabetleri |
 | `GET /v1/reports/kvkk-transfer?month=2026-09` | KVKK yurt dışı aktarım raporu (CSV; `&format=json` da olur) |
-| `POST /v1/policy/simulate` | Bir isteğe verilecek karar ve modele gidecek maskeli mesajlar |
+| `POST /v1/policy/simulate?format=chat\|responses\|messages` | Bir isteğe verilecek karar ve modele gidecek maskeli gövde |
 
 ## MCP / agent trafiği (ContextForge)
 
@@ -283,7 +314,7 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 1. **Faz 1 (tamamlandı):** LLM gateway, Türkçe PII ve sır tespiti, çıktı koruması, OIDC kimlik
    doğrulama, denetim kaydı, Röntgen, KVKK aktarım raporu, politika gözlem modu ve simülatörü,
    Prometheus metrikleri, OKD Helm chart'ı.
-2. **Faz 2:** ekip kota / hız sınırı, Anthropic API (`/v1/messages`) uyumu, MCP gateway'de araç izin listesi ve agent kimliği; gölge AI tespiti için tarayıcı eklentisi.
+2. **Faz 2:** ekip kota / hız sınırı, Anthropic ↔ OpenAI biçim çevirisi (Claude Code'u kurum içi modele bağlamak), MCP gateway'de araç izin listesi ve agent kimliği; gölge AI tespiti için tarayıcı eklentisi.
 3. **Faz 3:** AI envanteri, EU AI Act risk sınıflandırması, VERBİS raporları.
 
 ## Lisans

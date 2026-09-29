@@ -38,7 +38,8 @@ jobs:
       - name: Bağımlılıklar
         run: |
           python -m pip install --upgrade pip
-          pip install -r gateway/requirements.txt pytest pytest-asyncio cpex build twine \
+          # openai + anthropic: API biçimi testleri gerçek SDK'larla koşar (yoksa sessizce atlanırdı)
+          pip install -r gateway/requirements.txt pytest pytest-asyncio cpex build twine openai anthropic \
               -e packages/telveguard-core -e packages/telveguard-contextforge
       - name: Testler (birim + Helm + paketleme; uçtan uca testler ortam olmadığı için atlanır)
         run: pytest -q -rs

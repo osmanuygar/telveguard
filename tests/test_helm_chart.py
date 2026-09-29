@@ -150,3 +150,11 @@ def test_service_monitor_optional():
     assert not any(k == "ServiceMonitor" for k, _ in render())
     sm = render("--set", "metrics.serviceMonitor.enabled=true")[("ServiceMonitor", "tg-telveguard-gateway")]
     assert sm["spec"]["endpoints"][0]["path"] == "/metrics"
+
+
+def test_anthropic_upstream_env_and_secret_refs():
+    e = env(render("--set", "upstream.anthropicInternalUrl=http://vllm-anthropic:8000"))
+    assert e["UPSTREAM_ANTHROPIC_URL"]["value"] == "https://api.anthropic.com"
+    assert e["UPSTREAM_ANTHROPIC_INTERNAL_URL"]["value"] == "http://vllm-anthropic:8000"
+    assert e["UPSTREAM_ANTHROPIC_KEY"]["valueFrom"]["secretKeyRef"]["key"] == "upstream-anthropic-key"
+    assert "UPSTREAM_ANTHROPIC_INTERNAL_URL" not in env(render())   # tanımsızsa yok
