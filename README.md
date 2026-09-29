@@ -37,6 +37,7 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 **Görünürlük ve uyum**
 - **Denetim kaydı:** ham prompt hiç saklanmaz; veri türleri, karar, token, maliyet ClickHouse'ta.
 - **AI Kullanım Röntgeni:** kim, hangi modeli, hangi veriyle kullanıyor; ne engellendi, ne kadar tuttu.
+- **Olay gezgini ve politika deneme:** tek tek isteklerin kararı; yeni kuralı canlıya almadan denemek.
 - **KVKK ve VERBİS:** aylık yurt dışı aktarım raporu, VERBİS taslağı.
 - **EU AI Act:** AI sistem envanteri, risk sınıfı ve yükümlülükler; beyan edilmemiş kullanımlar.
 
@@ -73,8 +74,17 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
 # {"error":{"message":"Telveguard: Olası prompt injection tespit edildi.", ... "code":"blocked"}}
 ```
 
-**Röntgen:** http://localhost:8080/xray → yönetici token'ı olarak `e2e-admin-token`
-(yalnızca bu yerel test ortamı içindir).
+**Yönetim konsolu:** http://localhost:8080/xray → sağ üstteki alana yönetici token'ı olarak
+`e2e-admin-token` (yalnızca bu yerel test ortamı içindir). Üç sekme:
+
+- **Röntgen** (`#rontgen`): özet, trend, ekip / model / veri türü kırılımı, envanter.
+  Kutucuklara, çubuklara ve satırlara tıklayınca ilgili olaylar açılır.
+- **Olaylar** (`#olaylar`): denetim kayıtları; ekip, kullanıcı, model, karar, veri türü,
+  kural ve güne göre süzülür, satıra tıklayınca ayrıntısı açılır. Filtreler adreste durur,
+  bağlantı olarak paylaşılabilir (ör. `#olaylar?action=block&team=stajyer`).
+- **Politika deneme** (`#deneme`): metni yapıştırın, ekip ve modeli seçin; karar, tetiklenen
+  kurallar, işaretlenmiş kişisel veri / sırlar ve modele gidecek maskeli metin yan yana görünür.
+  Aynı isteğin kurum içi modelde ne olacağı da gösterilir. Modele gitmez, kayda yazılmaz.
 
 Kapatmak için: `docker compose -f docker-compose.yml -f docker-compose.test.yml down`
 
@@ -356,12 +366,15 @@ baktığı izlenebilir.
 
 | Uç | Ne döner |
 |---|---|
-| `GET /xray` | Röntgen dashboard'u (veri içermez; token'la aşağıdaki API'yi çağırır) |
+| `GET /xray` | Yönetim konsolu: Röntgen, Olaylar, Politika deneme (veri içermez; token'la aşağıdaki API'yi çağırır) |
 | `GET /v1/xray?days=30&team=` | Özet, günlük trend, ekip / model / veri türü kırılımı, kural isabetleri |
+| `GET /v1/events?team=&user=&model=&action=&destination=&entity=&rule=&day=&flag=` | Denetim kayıtları, en yeni önce (sayfalı: `limit`, `before_ts`, `before_id`) |
+| `GET /v1/events/{id}` | Tek olay: tüm alanlar, maskeli metin (`AUDIT_STORE_MASKED=1` ise), aynı prompt'un tekrarı |
+| `GET /v1/policy/info` | Politikadaki hedef önekleri ve kurallar |
 | `GET /v1/reports/kvkk-transfer?month=2026-09` | KVKK yurt dışı aktarım raporu (CSV; `&format=json` da olur) |
 | `GET /v1/inventory?days=90` | AI envanteri: beyan edilen sistemler, risk sınıfı, yükümlülükler, beyan edilmemiş kullanımlar |
 | `GET /v1/reports/verbis?format=csv\|json` | VERBİS başlıklarına eşlenmiş taslak |
-| `POST /v1/policy/simulate?format=chat\|responses\|messages` | Bir isteğe verilecek karar ve modele gidecek maskeli gövde |
+| `POST /v1/policy/simulate?format=chat\|responses\|messages` | Bir isteğe verilecek karar, işaretli metin bölümleri ve modele gidecek maskeli gövde |
 
 Tarayıcı eklentisi olayları ayrı bir uçtan gelir: `POST /v1/shadow-ai/events`
 (`Authorization: Bearer <SHADOW_AI_TOKEN>`; tanımlı değilse kapalı).
@@ -416,7 +429,7 @@ TELVEGUARD_E2E_URL=http://localhost:8080 TELVEGUARD_E2E_JWT_URL=http://localhost
 ```
 
 ```
-gateway/                         LLM gateway + Röntgen dashboard
+gateway/                         LLM gateway + yönetim konsolu (Röntgen, Olaylar, Politika deneme)
 packages/telveguard-core/        Tespit motoru: Türkçe PII, sırlar, injection, politika (bağımlılıksız)
 packages/telveguard-contextforge/ ContextForge eklentisi
 contextforge/                    ContextForge imajı + eklenti ayarları

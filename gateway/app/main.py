@@ -15,9 +15,11 @@ import hmac
 import logging
 import os
 import time
+import uuid
 from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Dict, List, Optional, Set
 
 import httpx
@@ -447,8 +449,12 @@ async def policy_simulate(request: Request, format: str = "chat"):
     identity = Identity(h.get("x-telveguard-user", "simulate"), teams or ["default"], "simulate")
     a = _analyze(request.app.state, body, identity, fmt)
     d = a.decision
+    originals = [p.text for p in a.parts]
     _mask_parts(request.app.state, a.parts, d, {})
     blocked = d.action == "block"
+    parts = [{"role": p.role, "segments": _segments(request.app.state, text),
+              "sent": None if blocked else p.text}
+             for p, text in zip(a.parts, originals) if text.strip()]
     return {
         "format": fmt.name,
         "team": a.team,
@@ -466,7 +472,38 @@ async def policy_simulate(request: Request, format: str = "chat"):
         # Engellenecekse upstream'e hiçbir şey gitmez
         "upstream_messages": None if blocked else body.get("messages"),
         "upstream_body": None if blocked else body,
+        # Arayüz için: metin, tespit edilen değerler ayrı bölüm olarak (offset yok: JS UTF-16 sayar)
+        "parts": parts,
     }
+
+
+def _segments(st, text: str) -> List[Dict[str, str]]:
+    out, pos = [], 0
+    for f in sorted(st.pii.analyze(text), key=lambda f: f.start):
+        if f.start < pos:
+            continue
+        if f.start > pos:
+            out.append({"text": text[pos:f.start]})
+        out.append({"text": text[f.start:f.end], "entity": f.entity})
+        pos = f.end
+    if pos < len(text):
+        out.append({"text": text[pos:]})
+    return out
+
+
+@app.get("/v1/policy/info")
+async def policy_info(request: Request):
+    """Arayüz için politika özeti: hedef önekleri ve kurallar (simülatör, olay ayrıntısı)."""
+    if err := await _require_admin(request):
+        return err
+    pol = request.app.state.policy
+
+    def rules(items):
+        return [{"name": r.get("name", ""), "action": r.get("action"), "mode": r.get("mode", pol.mode),
+                 "when": r.get("when", {}), "message": r.get("message", "")} for r in items]
+    teams = sorted({t for r in pol.rules + pol.output_rules for t in (r.get("when") or {}).get("teams", [])})
+    return {"default_action": pol.default_action, "mode": pol.mode, "destinations": pol.destinations,
+            "rules": rules(pol.rules), "output_rules": rules(pol.output_rules), "teams": teams}
 
 
 # ---------------- Röntgen + KVKK raporu ----------------
@@ -502,6 +539,73 @@ async def xray_api(request: Request, days: int = 30, team: str = ""):
         return await xray_mod.xray(ch, days, team)
     except xray_mod.ClickHouseError as e:
         return _openai_error(502, str(e), "clickhouse_error", "admin_error")
+
+
+@app.get("/v1/events")
+async def events_api(request: Request, days: int = 30, flag: str = "", limit: int = 50,
+                     before_ts: int = 0, before_id: str = ""):
+    """Denetim kayıtları, en yeni önce. Filtreler: team, user, model, action, destination,
+    api_format, entity, rule, day (YYYY-MM-DD); flag Röntgen kutucuklarının görünümleri."""
+    if err := await _require_admin(request):
+        return err
+    q = request.query_params
+    filters = {k: q.get(k, "").strip() for k in xray_mod.EVENT_FILTERS}
+    filters["days"] = str(days)
+    problem = None
+    if not 1 <= days <= 366:
+        problem = "days 1 ile 366 arasında olmalı."
+    elif not 1 <= limit <= xray_mod.EVENTS_MAX_LIMIT:
+        problem = f"limit 1 ile {xray_mod.EVENTS_MAX_LIMIT} arasında olmalı."
+    elif flag and flag not in xray_mod.EVENT_FLAGS:
+        problem = "flag şunlardan biri olmalı: " + ", ".join(xray_mod.EVENT_FLAGS)
+    elif filters["day"] and not _is_date(filters["day"]):
+        problem = "day YYYY-MM-DD biçiminde olmalı."
+    elif before_ts and not _is_uuid(before_id):
+        problem = "before_id geçerli bir olay kimliği olmalı."
+    if problem:
+        return _openai_error(400, problem, "invalid_request", "invalid_request_error")
+    ch, err = _require_clickhouse(request)
+    if err:
+        return err
+    try:
+        return await xray_mod.events(ch, filters, flag, before_ts, before_id, limit)
+    except xray_mod.ClickHouseError as e:
+        return _openai_error(502, str(e), "clickhouse_error", "admin_error")
+
+
+@app.get("/v1/events/{event_id}")
+async def event_detail_api(request: Request, event_id: str):
+    """Tek olay: tüm alanlar + (AUDIT_STORE_MASKED=1 ise) maskeli metin + aynı prompt'un tekrarı."""
+    if err := await _require_admin(request):
+        return err
+    if not _is_uuid(event_id):
+        return _openai_error(400, "Geçersiz olay kimliği.", "invalid_request", "invalid_request_error")
+    ch, err = _require_clickhouse(request)
+    if err:
+        return err
+    try:
+        ev = await xray_mod.event_detail(ch, event_id)
+    except xray_mod.ClickHouseError as e:
+        return _openai_error(502, str(e), "clickhouse_error", "admin_error")
+    if ev is None:
+        return _openai_error(404, "Olay bulunamadı.", "not_found", "admin_error")
+    return ev
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+        return True
+    except ValueError:
+        return False
+
+
+def _is_date(value: str) -> bool:
+    try:
+        date.fromisoformat(value)
+        return len(value) == 10
+    except ValueError:
+        return False
 
 
 @app.get("/v1/reports/kvkk-transfer")

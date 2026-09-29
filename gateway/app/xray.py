@@ -236,3 +236,93 @@ def kvkk_csv(rows: List[Dict[str, Any]]) -> str:
     for r in rows:
         w.writerow([_csv_safe(r[key]) for key, _ in KVKK_COLUMNS])
     return buf.getvalue()
+
+
+# ---------------- Olay gezgini ----------------
+# Filtreler sabit SQL parçalarından seçilir (beyaz liste); değerler yine parametre olarak bağlanır.
+
+EVENT_COLUMNS = """
+    toString(event_id) AS event_id, toString(event_time) AS event_time,
+    toUnixTimestamp64Milli(event_time) AS ts, user, team, teams, auth_source, model, destination,
+    if(api_format = '', 'chat', api_format) AS api_format, action, rules, reason, monitored_rules,
+    would_action, entities, masked_entities, injection_score, injection_engine, output_leaked,
+    output_action, output_rules, quota, prompt_tokens, completion_tokens, usage_known, est_cost_usd,
+    latency_ms, upstream_status, prompt_chars"""
+
+EVENT_FILTERS = {
+    "team": "team = {team:String}",
+    "user": "user = {user:String}",
+    "model": "model = {model:String}",
+    "action": "action = {action:String}",
+    "destination": "destination = {destination:String}",
+    "api_format": "if(api_format = '', 'chat', api_format) = {api_format:String}",
+    "entity": "has(entities, {entity:String})",
+    "rule": "(has(rules, {rule:String}) OR has(monitored_rules, {rule:String}) OR has(output_rules, {rule:String}))",
+    "day": "toDate(event_time) = toDate({day:String})",
+}
+
+# Röntgen kutucuklarından gelinen özel görünümler (Röntgen sorgularıyla aynı tanımlar)
+EVENT_FLAGS = {
+    "external_unmasked_pii": f"destination = 'external' AND action != 'block' AND {_UNMASKED_PII}",
+    "injection": "injection_score >= 0.5",
+    "secret": "arrayExists(e -> startsWith(e, 'SECRET_'), entities)",
+    "would_block": "would_action = 'block' AND action != 'block'",
+    "monitor_diff": "would_action != '' AND would_action != action",
+    "output_leak": "notEmpty(output_leaked)",
+    "quota": "quota != '' AND quota != 'backend_unavailable'",
+}
+
+EVENTS_MAX_LIMIT = 200
+
+
+def events_query(filters: Dict[str, str], flag: str, before_ts: int, before_id: str,
+                 limit: int) -> tuple:
+    """(sql, params). `day` verilirse dönem yerine o gün; sayfalama (zaman, id) anahtarıyla."""
+    where, params = [], {"limit": limit}
+    if filters.get("day"):
+        params["day"] = filters["day"]
+    else:
+        where.append("event_time >= now() - INTERVAL {days:UInt32} DAY")
+        params["days"] = int(filters.get("days") or 30)
+    for key, clause in EVENT_FILTERS.items():
+        if filters.get(key):
+            where.append(clause)
+            params.setdefault(key, filters[key])
+    if flag:
+        where.append(EVENT_FLAGS[flag])
+    if before_ts:
+        where.append("(toUnixTimestamp64Milli(event_time), toString(event_id)) < "
+                     "({before_ts:Int64}, {before_id:String})")
+        params.update(before_ts=before_ts, before_id=before_id)
+    sql = (f"SELECT {EVENT_COLUMNS} FROM audit WHERE {' AND '.join(where)} "
+           "ORDER BY event_time DESC, event_id DESC LIMIT {limit:UInt32}")
+    return sql, params
+
+
+async def events(ch: ClickHouse, filters: Dict[str, str], flag: str = "", before_ts: int = 0,
+                 before_id: str = "", limit: int = 50) -> Dict[str, Any]:
+    sql, params = events_query(filters, flag, before_ts, before_id, limit + 1)
+    rows = await ch.query(sql, params)
+    more = len(rows) > limit
+    rows = rows[:limit]
+    return {"events": rows,
+            "next": {"before_ts": rows[-1]["ts"], "before_id": rows[-1]["event_id"]} if more and rows else None}
+
+
+EVENT_DETAIL_QUERY = f"""
+    SELECT {EVENT_COLUMNS}, prompt_sha256, masked_prompt, masked_count, output_scan
+    FROM audit WHERE event_id = toUUID({{id:String}}) LIMIT 1"""
+
+# Aynı prompt'un (SHA-256) son 90 günde kaç kez, kaç kullanıcıdan geldiği
+SAME_PROMPT_QUERY = """
+    SELECT count() AS requests, uniqExact(user) AS users, toString(min(event_time)) AS first_seen
+    FROM audit WHERE prompt_sha256 = {sha:String} AND event_time >= now() - INTERVAL 90 DAY"""
+
+
+async def event_detail(ch: ClickHouse, event_id: str) -> Optional[Dict[str, Any]]:
+    rows = await ch.query(EVENT_DETAIL_QUERY, {"id": event_id})
+    if not rows:
+        return None
+    ev = rows[0]
+    ev["same_prompt"] = (await ch.query(SAME_PROMPT_QUERY, {"sha": ev["prompt_sha256"]}) or [{}])[0]
+    return ev
