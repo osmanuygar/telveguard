@@ -148,8 +148,10 @@ PROVIDERS = [("gpt-", "OpenAI"), ("o1", "OpenAI"), ("o3", "OpenAI"), ("claude-",
              ("gemini-", "Google"), ("mistral", "Mistral"), ("command", "Cohere")]
 
 
-def provider_of(model: str) -> str:
-    return next((name for prefix, name in PROVIDERS if model.startswith(prefix)), "Diğer / bilinmiyor")
+def provider_of(model: str, registry=None) -> str:
+    """Önce politikadaki `providers` adı (ör. "Azure OpenAI"), yoksa model adından tahmin."""
+    named = registry.provider_name(model) if registry else None
+    return named or next((name for prefix, name in PROVIDERS if model.startswith(prefix)), "Diğer / bilinmiyor")
 
 
 # ---------------- AI envanteri / VERBİS ----------------
@@ -174,10 +176,10 @@ async def inventory_usage(ch: ClickHouse, days: int) -> List[Dict[str, Any]]:
     return await ch.query(INVENTORY_USAGE_QUERY, {"days": days})
 
 
-async def verbis_rows(ch: ClickHouse, days: int) -> List[Dict[str, Any]]:
+async def verbis_rows(ch: ClickHouse, days: int, registry=None) -> List[Dict[str, Any]]:
     rows = await ch.query(VERBIS_QUERY, {"days": days})
     for r in rows:
-        r["provider"] = provider_of(r["model"])
+        r["provider"] = provider_of(r["model"], registry)
     return rows
 
 
@@ -202,11 +204,11 @@ def month_range(month: str) -> tuple:
     return start, end
 
 
-async def kvkk_transfer(ch: ClickHouse, month: str) -> List[Dict[str, Any]]:
+async def kvkk_transfer(ch: ClickHouse, month: str, registry=None) -> List[Dict[str, Any]]:
     start, end = month_range(month)
     rows = await ch.query(KVKK_QUERY, {"start": start.isoformat(), "end": end.isoformat()})
     for r in rows:
-        r["provider"] = provider_of(r["model"])
+        r["provider"] = provider_of(r["model"], registry)
         r["entity_label"] = ENTITY_LABELS.get(r["entity"], r["entity"])
     return rows
 

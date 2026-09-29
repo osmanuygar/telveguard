@@ -202,8 +202,11 @@ PROVIDER_COUNTRY = {"OpenAI": "ABD", "Anthropic": "ABD", "Google": "ABD", "Mistr
 TO_LEGAL = "Hukuk birimi belirleyecek"
 
 
-def build_verbis(cfg: Dict[str, Any], rows: List[Dict[str, Any]], retention: str) -> Dict[str, Any]:
-    """rows: ClickHouse'tan (entity, destination, provider, team, requests). Kategori başına bir satır."""
+def build_verbis(cfg: Dict[str, Any], rows: List[Dict[str, Any]], retention: str,
+                 provider_countries: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """rows: ClickHouse'tan (entity, destination, provider, team, requests). Kategori başına bir satır.
+    provider_countries: politikadaki `providers[].country` (ör. Azure bölgesi), tahminden önce gelir."""
+    countries = {**PROVIDER_COUNTRY, **(provider_countries or {})}
     systems = cfg.get("systems") or []
     by_cat: Dict[str, Dict[str, Any]] = {}
     for r in rows:
@@ -231,7 +234,7 @@ def build_verbis(cfg: Dict[str, Any], rows: List[Dict[str, Any]], retention: str
             "veri_konusu_kisi_gruplari": subjects or [TO_LEGAL],
             "alici_gruplari": ["Yapay zekâ hizmet sağlayıcıları (veri işleyen)"] if providers else ["Kurum içi"],
             "yurt_disina_aktarim": "Evet" if c["external"] else "Hayır",
-            "aktarilan_ulkeler": sorted({PROVIDER_COUNTRY.get(p, "Bilinmiyor - sözleşmeye bakın") for p in providers}),
+            "aktarilan_ulkeler": sorted({countries.get(p, "Bilinmiyor - sözleşmeye bakın") for p in providers}),
             "saglayicilar": providers,
             "aktarim_dayanagi_kvkk_9": TO_LEGAL + " (yeterlilik / standart sözleşme + 5 iş günü içinde Kurul'a "
                                         "bildirim / BCR / istisnai hal)" if c["external"] else "-",

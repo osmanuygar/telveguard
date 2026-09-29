@@ -87,7 +87,10 @@ models:
   enableTrNer: false
   enableLlmGuard: false
 
-extraEnv: []              # [{name: X, value: Y}]
+# Sağlayıcı anahtarları (politikadaki providers[].key_env) buradan Secret'tan verilir, ör.:
+#   - name: AZURE_OPENAI_KEY
+#     valueFrom: { secretKeyRef: { name: tg-sirlar, key: azure-openai-key } }
+extraEnv: []              # [{name: X, value: Y}] ya da valueFrom
 
 # ---------------- ağ ----------------
 service:

@@ -7,6 +7,38 @@ destinations:
   internal: ["local/", "vllm/", "qwen", "llama"]
   external: ["gpt-", "claude-", "gemini-"]
 
+# Model adına göre sağlayıcı (opsiyonel). Eşleşen sağlayıcının destination'ı yukarıdaki
+# önekten önce gelir. Eşleşme yoksa UPSTREAM_* ortam değişkenleri kullanılır.
+# Anahtar YAML'a yazılmaz: key_env, "_KEY" ile biten bir ortam değişkeninin adıdır.
+# type: openai (chat + responses) | azure (chat + responses) | anthropic (messages)
+# providers:
+#   - name: Azure OpenAI
+#     match: ["gpt-"]
+#     type: azure
+#     url: https://KAYNAK.openai.azure.com
+#     key_env: AZURE_OPENAI_KEY
+#     country: İsveç (AB)            # VERBİS / KVKK raporunda aktarım ülkesi
+#     # api_version: "2024-10-21"    # klasik API; o zaman deployments: {gpt-4o: uretim-gpt4o}
+#   - name: Google Gemini
+#     match: ["gemini-"]
+#     url: https://generativelanguage.googleapis.com/v1beta/openai
+#     key_env: GEMINI_API_KEY
+#     country: ABD
+#   - name: Mistral
+#     match: ["mistral-", "codestral-"]
+#     url: https://api.mistral.ai/v1
+#     key_env: MISTRAL_API_KEY
+#     country: Fransa (AB)
+#   - name: Anthropic
+#     match: ["claude-"]
+#     type: anthropic
+#     url: https://api.anthropic.com
+#     key_env: ANTHROPIC_API_KEY
+#     country: ABD
+#   - name: Kurum içi vLLM
+#     match: ["qwen", "llama"]
+#     url: http://vllm:8000/v1
+#     destination: internal
 rules:
   - name: prompt-injection-block
     when: { injection_score_gte: 0.85 }

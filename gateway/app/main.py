@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from . import compliance
 from . import shadow_ai
 from . import metrics
+from . import providers as providers_mod
 from . import xray as xray_mod
 from .audit import AuditSink
 from .auth import AuthError, Authenticator, Identity
@@ -43,7 +44,9 @@ from telveguard_core.policy import Context, Decision, PolicyEngine
 async def lifespan(app: FastAPI):
     app.state.pii = TrPiiEngine(enable_ner=os.getenv("ENABLE_TR_NER") == "1")
     app.state.injection = InjectionDetector()
-    app.state.policy = PolicyEngine(os.getenv("POLICY_PATH", "policies/default.yaml"))
+    policy_path = os.getenv("POLICY_PATH", "policies/default.yaml")
+    app.state.policy = PolicyEngine(policy_path)
+    app.state.providers = providers_mod.load(policy_path)
     app.state.audit = AuditSink()
     await app.state.audit.start()
     if not hasattr(app.state, "http"):  # testlerde MockTransport enjekte edilebilir
@@ -124,6 +127,8 @@ class Analysis:
     injection: InjectionResult
     ctx: Context
     decision: Decision
+    provider: Optional[providers_mod.Provider] = None
+    provider_error: Optional[str] = None
 
     @property
     def user(self) -> str:
@@ -145,7 +150,10 @@ class Analysis:
 def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT) -> Analysis:
     """Tarama + politika. Gerçek istek ve simülatör aynı yolu kullanır."""
     model = body.get("model", "") if isinstance(body.get("model"), str) else ""
-    destination = st.policy.destination_of(model)
+    # Eşleşen sağlayıcının hedefi önce gelir: veri gerçekte nereye gidiyorsa karar ona göre
+    provider, provider_error = st.providers.resolve(model, fmt.name)
+    routed = provider or st.providers.first(model)
+    destination = routed.destination if routed else st.policy.destination_of(model)
     parts = fmt.request_parts(body)
     full_text = "\n".join(p.text for p in parts if p.role in fmt.injection_roles)
     all_text = "\n".join(p.text for p in parts)
@@ -155,7 +163,7 @@ def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT
                   frozenset(identity.teams))
     decision = st.policy.evaluate(ctx)
     return Analysis(identity, fmt, model, destination, body, parts, full_text, all_text,
-                    entity_counts, injection, ctx, decision)
+                    entity_counts, injection, ctx, decision, provider, provider_error)
 
 
 def _auth_error(e: AuthError, fmt: ApiFormat = CHAT) -> JSONResponse:
@@ -305,7 +313,12 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
         resp.headers["Retry-After"] = str(exceeded.retry_after)
         return resp
 
-    upstream = fmt.upstream(destination, request.headers)
+    if a.provider_error:
+        await audit(prompt_tokens=0, completion_tokens=0, usage_known=1, est_cost_usd=0.0,
+                    upstream_status=400)
+        return fmt.error(400, f"Telveguard: {a.provider_error}", "no_upstream", "invalid_request_error")
+    upstream = (a.provider.endpoint(fmt.name, model, request.headers) if a.provider
+                else fmt.upstream(destination, request.headers))
     if upstream is None:
         await audit(prompt_tokens=0, completion_tokens=0, usage_known=1, est_cost_usd=0.0,
                     upstream_status=400)
@@ -414,7 +427,10 @@ async def messages_count_tokens(request: Request):
     a = _analyze(st, body, identity, MESSAGES)
     if a.decision.action == "block":
         return MESSAGES.error(403, f"Telveguard: {a.decision.reason}", "blocked")
-    upstream = MESSAGES.upstream(a.destination, request.headers, path="/v1/messages/count_tokens")
+    if a.provider_error:
+        return MESSAGES.error(400, f"Telveguard: {a.provider_error}", "no_upstream")
+    upstream = (a.provider.endpoint("count_tokens", a.model, request.headers) if a.provider
+                else MESSAGES.upstream(a.destination, request.headers, path="/v1/messages/count_tokens"))
     if upstream is None:
         return MESSAGES.error(400, "Bu model için Anthropic upstream'i tanımlı değil.", "no_upstream")
     _mask_parts(st, a.parts, a.decision, {})
@@ -461,6 +477,8 @@ async def policy_simulate(request: Request, format: str = "chat"):
         "teams": a.identity.teams,
         "model": a.model,
         "destination": a.destination,
+        "provider": a.provider.name if a.provider else None,
+        "provider_error": a.provider_error,
         "entities": dict(sorted(a.entity_counts.items())),
         "injection": {"score": a.injection.score, "engine": a.injection.engine,
                       "matched_rules": len(a.injection.matched)},
@@ -503,7 +521,8 @@ async def policy_info(request: Request):
                  "when": r.get("when", {}), "message": r.get("message", "")} for r in items]
     teams = sorted({t for r in pol.rules + pol.output_rules for t in (r.get("when") or {}).get("teams", [])})
     return {"default_action": pol.default_action, "mode": pol.mode, "destinations": pol.destinations,
-            "rules": rules(pol.rules), "output_rules": rules(pol.output_rules), "teams": teams}
+            "rules": rules(pol.rules), "output_rules": rules(pol.output_rules), "teams": teams,
+            "providers": request.app.state.providers.describe()}
 
 
 # ---------------- Röntgen + KVKK raporu ----------------
@@ -624,7 +643,7 @@ async def kvkk_transfer_report(request: Request, month: str, format: str = "csv"
     if err:
         return err
     try:
-        rows = await xray_mod.kvkk_transfer(ch, month)
+        rows = await xray_mod.kvkk_transfer(ch, month, request.app.state.providers)
     except xray_mod.ClickHouseError as e:
         return _openai_error(502, str(e), "clickhouse_error", "admin_error")
     if format == "json":
@@ -664,11 +683,13 @@ async def verbis_report(request: Request, days: int = 365, format: str = "json")
     if err:
         return err
     try:
-        rows = await xray_mod.verbis_rows(ch, days)
+        rows = await xray_mod.verbis_rows(ch, days, request.app.state.providers)
     except xray_mod.ClickHouseError as e:
         return _openai_error(502, str(e), "clickhouse_error", "admin_error")
     report = compliance.build_verbis(request.app.state.inventory, rows,
-                                     os.getenv("AUDIT_RETENTION", "2 yıl (denetim kaydı saklama süresi)"))
+                                     provider_countries=request.app.state.providers.countries(),
+                                     retention=os.getenv("AUDIT_RETENTION",
+                                                         "2 yıl (denetim kaydı saklama süresi)"))
     if format == "json":
         return report
     return Response(compliance.verbis_csv(report), media_type="text/csv; charset=utf-8", headers={

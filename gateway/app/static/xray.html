@@ -914,25 +914,31 @@ async function loadPolicyInfo() {
   policyInfo = await apiJson("/v1/policy/info");
   // Kurum içi hedef önekinden denenebilir model adı: "vllm/" -> "vllm/model"
   for (const p of policyInfo.destinations.internal || []) knownModels.add(/[\/-]$/.test(p) ? p + "model" : p);
+  for (const prov of policyInfo.providers || []) for (const m of prov.match) knownModels.add(/[\/-]$/.test(m) ? m + "model" : m);
   refreshDatalists(); updateDestHint();
   return policyInfo;
 }
-// Sunucudaki PolicyEngine.destination_of ile aynı: ilk eşleşen önek, yoksa yurt dışı (güvenli varsayılan)
+// Sunucuyla aynı sıra: önce eşleşen sağlayıcı (providers), sonra politikadaki önek, yoksa yurt dışı
+const providerOf = (model) => (policyInfo?.providers || []).find((p) => p.match.some((m) => model.startsWith(m)));
 function destinationOf(model) {
+  const prov = providerOf(model);
+  if (prov) return prov.destination;
   for (const [dest, prefixes] of Object.entries(policyInfo?.destinations || {}))
     if (prefixes.some((p) => model.startsWith(p))) return dest;
   return "external";
 }
 function internalModel() {
-  const p = (policyInfo?.destinations.internal || [])[0];
+  const prov = (policyInfo?.providers || []).find((x) => x.destination === "internal");
+  const p = prov ? prov.match[0] : (policyInfo?.destinations.internal || [])[0];
   return p ? (/[\/-]$/.test(p) ? p + "model" : p) : null;
 }
 function updateDestHint() {
   const model = $("sim-form").model.value.trim();
   if (!model || !policyInfo) { $("sim-dest").textContent = ""; return; }
-  $("sim-dest").textContent = destinationOf(model) === "internal"
+  const prov = providerOf(model);
+  $("sim-dest").textContent = (destinationOf(model) === "internal"
     ? "→ Kurum içi model: veri kurum dışına çıkmaz."
-    : "→ Yurt dışı model: kişisel veri aktarımı (KVKK md. 9) kurallarına tabi.";
+    : "→ Yurt dışı model: kişisel veri aktarımı (KVKK md. 9) kurallarına tabi.") + (prov ? ` Sağlayıcı: ${prov.name}.` : "");
 }
 
 // ---------- örnekler: değerler her seferinde üretilir (repoda sahte anahtar / geçerli numara durmasın) ----------
@@ -1014,8 +1020,11 @@ function renderSimulation(res, other) {
     el("div", { class: "icon", "aria-hidden": "true" }, a.icon),
     el("div", {}, el("div", { class: "title" }, verdictTitle(res)),
       el("div", { class: "why" }, d.reason || (d.rules.length ? "Kural: " + d.rules.join(", ") : "Hiçbir kural tetiklenmedi; varsayılan karar.")))));
-  const meta = [`${DEST_LABELS[res.destination]} · ${res.model}`, `ekip: ${res.teams.join(", ")}`];
+  const meta = [`${DEST_LABELS[res.destination]} · ${res.model}`, res.provider ? `sağlayıcı: ${res.provider}` : null,
+    `ekip: ${res.teams.join(", ")}`].filter(Boolean);
   out.push(el("div", { class: "compare" }, meta.join(" · ")));
+  if (res.provider_error) out.push(el("p", { class: "chip warn", style: "white-space:normal; margin-top:8px" },
+    "⚠ Gerçek istekte bu model bu API biçimiyle gönderilemez: " + res.provider_error));
   if (other?.res) {
     const oa = ACTION[other.res.decision.action];
     out.push(el("div", { class: "compare" }, `${DEST_LABELS[other.res.destination]} modelde (${other.model}) aynı istek: `,

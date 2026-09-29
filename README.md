@@ -43,6 +43,7 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 
 **Kurumsal işletim**
 - **Kimlik:** OIDC / JWT (Keycloak, Entra ID); header ile taklit edilemez.
+- **Sağlayıcılar:** model adına göre Azure OpenAI, Gemini, Mistral, Anthropic, kurum içi vLLM.
 - **Politika:** YAML; izin ver / uyar / maskele / engelle, gözlem modu ve simülatör.
 - **Kota:** ekip başına istek / dk ve aylık token / maliyet bütçesi.
 - **İşletim:** Prometheus metrikleri, OKD / OpenShift Helm chart'ı, air-gapped kurulum.
@@ -106,6 +107,43 @@ Biçim çevirisi yoktur: OpenAI biçimi OpenAI uyumlu upstream'e, Anthropic biç
 API'sine (`UPSTREAM_ANTHROPIC_URL`) gider. Anthropic biçimini kurum içi bir modele göndermek
 için Anthropic uyumlu bir kurum içi sunucu gerekir (`UPSTREAM_ANTHROPIC_INTERNAL_URL`).
 
+### Birden fazla sağlayıcı (Azure OpenAI, Gemini, Mistral, ...)
+
+Politika dosyasındaki `providers` bölümü, model adına göre hangi adrese ve hangi anahtarla
+gidileceğini belirler. Tanımlı değilse yukarıdaki `UPSTREAM_*` değişkenleri kullanılır.
+
+```yaml
+providers:
+  - name: Azure OpenAI
+    match: ["gpt-"]                  # model adı önekleri
+    type: azure                      # openai | azure | anthropic
+    url: https://KAYNAK.openai.azure.com
+    key_env: AZURE_OPENAI_KEY        # anahtar ortam değişkeninde; YAML'a yazılmaz
+    country: İsveç (AB)              # VERBİS / KVKK raporunda aktarım ülkesi
+  - name: Google Gemini
+    match: ["gemini-"]
+    url: https://generativelanguage.googleapis.com/v1beta/openai
+    key_env: GEMINI_API_KEY
+  - name: Kurum içi vLLM
+    match: ["qwen", "llama"]
+    url: http://vllm:8000/v1
+    destination: internal
+```
+
+| Tip | Kabul ettiği biçim | Örnekler |
+|---|---|---|
+| `openai` | chat, responses | OpenAI, Gemini, Mistral, DeepSeek, Groq, xAI, OpenRouter, vLLM, Ollama |
+| `azure` | chat, responses | Azure OpenAI; `api_version` yoksa v1 API, varsa `deployments` eşlemeli klasik API |
+| `anthropic` | messages | Anthropic, Anthropic uyumlu kurum içi sunucu |
+
+- Sağlayıcının `destination`'ı (varsayılan `external`) politikadaki öneklerden önce gelir: veri
+  gerçekte nereye gidiyorsa maskeleme kararı ona göre verilir.
+- Aynı önek için farklı tipte iki sağlayıcı tanımlanabilir (ör. `claude-` hem `anthropic` hem
+  OpenRouter); isteğin biçimine uyan seçilir. Uyan yoksa istek 400 ile reddedilir, hiçbir şey gönderilmez.
+- `key_env` yalnızca `_KEY` ile biten bir değişken adı olabilir: politika dosyası
+  `TELVEGUARD_ADMIN_TOKEN` gibi iç sırları bir dış adrese gönderemez.
+- KVKK aktarım raporu ve VERBİS taslağı sağlayıcı adını ve ülkesini bu tablodan alır.
+
 **Claude Code'u bağlamak:**
 
 ```bash
@@ -116,8 +154,14 @@ export ANTHROPIC_AUTH_TOKEN=<OIDC access token>     # AUTH_MODE=jwt
 Claude Code'u kurum içi modele bağlamak için biçim çevirisi gerekmez: vLLM `/v1/messages`'ı
 kendisi sunar, `UPSTREAM_ANTHROPIC_INTERNAL_URL=http://vllm:8000` yeterlidir.
 
-Cursor gibi istekleri kendi sunucuları üzerinden gönderen araçlar kurum içindeki bir gateway'e
-erişemez; tarayıcıdan kullanılan AI siteleri için [tarayıcı eklentisi](#gölge-ai-tarayıcı-eklentisi) vardır.
+**Masaüstü araçlar:**
+
+- **Cursor:** Kendi modelleri ve "OpenAI base URL" ayarı dahil istekleri Cursor'un sunucuları
+  üzerinden gider. Telveguard'ın internetten erişilebilir olması gerekir; kurum içi bir adres çalışmaz.
+- **Claude Desktop / ChatGPT masaüstü:** Kullanıcının kendi hesabıyla sağlayıcıya gider, taban
+  adres ayarı yoktur; sohbet metni Telveguard'dan geçmez. MCP araç trafiği
+  [ContextForge](#mcp--agent-trafiği-contextforge) üzerinden geçirilebilir.
+- Aynı sitelerin tarayıcı sürümleri için [tarayıcı eklentisi](#gölge-ai-tarayıcı-eklentisi) vardır.
 
 ## Uygulamanızı bağlamak
 
@@ -242,7 +286,7 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `OIDC_ADMIN_GROUP` | Bu gruptaki kullanıcılar yönetim uçlarına kendi JWT'leriyle erişir (ör. `telveguard-admin`) |
 | `REDIS_URL`, `REDIS_PASSWORD` | Kota sayacı (tüm pod / worker'lar için ortak) |
 | `WORKERS` | Pod başına uvicorn worker sayısı (metrikler worker'lar arasında birleştirilir) |
-| `UPSTREAM_INTERNAL_URL` / `UPSTREAM_EXTERNAL_URL` | Kurum içi ve yurt dışı LLM adresleri (OpenAI uyumlu) |
+| `UPSTREAM_INTERNAL_URL` / `UPSTREAM_EXTERNAL_URL` | Kurum içi ve yurt dışı LLM adresleri (OpenAI uyumlu); `providers` ile eşleşmeyen modeller için |
 | `UPSTREAM_INTERNAL_KEY` / `UPSTREAM_EXTERNAL_KEY` | Upstream API anahtarları |
 | `UPSTREAM_ANTHROPIC_URL`, `UPSTREAM_ANTHROPIC_KEY` | Anthropic biçimi için upstream (varsayılan `https://api.anthropic.com`) |
 | `UPSTREAM_ANTHROPIC_INTERNAL_URL`, `UPSTREAM_ANTHROPIC_INTERNAL_KEY` | Anthropic biçimini kabul eden kurum içi sunucu (opsiyonel) |
