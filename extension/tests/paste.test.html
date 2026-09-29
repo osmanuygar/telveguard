@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telveguard yapıştırma testi</title>
+<style>
+  body { font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 24px; background: #fcfcfb; color: #0b0b0b; }
+  textarea, [contenteditable] { display: block; width: 100%; min-height: 60px; margin: 8px 0 16px; padding: 8px;
+                                border: 1px solid #c3c2b7; border-radius: 8px; box-sizing: border-box; }
+</style>
+<script>
+  // chrome.runtime taklidi: gönderilen olaylar window.__sent'te; mod ?mode=block ile
+  window.__sent = [];
+  const mode = new URLSearchParams(location.search).get("mode") || "warn";
+  window.chrome = { runtime: { sendMessage(msg, cb) {
+    window.__sent.push(msg);
+    if (msg.type === "getConfig" && cb) cb({ mode, reportVisits: true, reporting: true });
+  } } };
+</script>
+</head>
+<body>
+<h1>Yapıştırma testi (mod: <span id="m"></span>)</h1>
+<label>Textarea <textarea id="ta"></textarea></label>
+<label>Contenteditable</label><div id="ce" contenteditable="true"></div>
+<script>document.getElementById("m").textContent = mode;</script>
+<script src="../src/detectors.js"></script>
+<script src="../src/content.js"></script>
+<script>
+  // Test yardımcısı: gerçek ClipboardEvent + DataTransfer ile yapıştır
+  window.pasteInto = (el, text) => {
+    el.focus();
+    const dt = new DataTransfer();
+    dt.setData("text/plain", text);
+    const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+    el.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  };
+</script>
+</body>
+</html>

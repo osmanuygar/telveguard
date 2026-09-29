@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Telveguard – Gölge AI koruması",
+  "version": "0.1.0",
+  "description": "AI sohbet sitelerine yapıştırılan kişisel veri ve sırları tespit eder; maskeler, uyarır ya da engeller. Metin tarayıcıdan çıkmaz.",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://telveguard.sirket.local/*"],
+  "background": { "service_worker": "src/background.js" },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://copilot.microsoft.com/*",
+        "https://chat.deepseek.com/*",
+        "https://www.perplexity.ai/*",
+        "https://perplexity.ai/*",
+        "https://chat.mistral.ai/*",
+        "https://grok.com/*",
+        "https://poe.com/*"
+      ],
+      "js": ["src/detectors.js", "src/content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "storage": { "managed_schema": "managed_schema.json" },
+  "action": { "default_popup": "popup.html", "default_title": "Telveguard" }
+}

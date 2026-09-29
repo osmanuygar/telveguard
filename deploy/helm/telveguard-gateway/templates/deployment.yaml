@@ -116,6 +116,7 @@ spec:
             {{- include "tg.secretEnv" (dict "env" "UPSTREAM_ANTHROPIC_INTERNAL_KEY" "secret" $secret "key" "upstream-anthropic-internal-key") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "CLICKHOUSE_PASSWORD" "secret" $secret "key" "clickhouse-password") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "REDIS_PASSWORD" "secret" $secret "key" "redis-password") | nindent 12 }}
+            {{- include "tg.secretEnv" (dict "env" "SHADOW_AI_TOKEN" "secret" $secret "key" "shadow-ai-token") | nindent 12 }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

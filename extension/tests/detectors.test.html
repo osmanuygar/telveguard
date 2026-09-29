@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telveguard JS tespit testi</title>
+<style>
+  body { font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 24px; background: #fcfcfb; color: #0b0b0b; }
+  pre { white-space: pre-wrap; background: #f0efec; padding: 12px; border-radius: 8px; }
+</style>
+</head>
+<body>
+<h1>JS motoru ↔ Python motoru</h1>
+<p id="result">Çalışıyor…</p>
+<pre id="details"></pre>
+<script src="../src/detectors.js"></script>
+<script src="detectors.test.js"></script>
+<script>
+  fetch("fixtures.json").then((r) => r.json()).then((fixtures) => {
+    const { total, failures } = TelveguardDetectorTests.run(TelveguardDetectors, fixtures);
+    document.getElementById("result").textContent = failures.length
+      ? `BAŞARISIZ: ${failures.length} / ${total}` : `JS motoru Python ile tutarlı: ${total} örnek`;
+    document.getElementById("details").textContent = JSON.stringify(failures, null, 1);
+    window.__result = { total, failures };
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Telveguard</title>
+<style>
+  body { font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 14px; width: 260px;
+         background: #fcfcfb; color: #0b0b0b; }
+  h1 { font-size: 15px; margin: 0 0 6px; }
+  dl { margin: 8px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
+  dt { color: #52514e; } dd { margin: 0; font-weight: 600; }
+  p { color: #52514e; margin: 8px 0 0; font-size: 12px; }
+  @media (prefers-color-scheme: dark) { body { background: #1a1a19; color: #fff; } dt, p { color: #c3c2b7; } }
+</style>
+</head>
+<body>
+<h1>Telveguard</h1>
+<dl>
+  <dt>Mod</dt><dd id="mode">–</dd>
+  <dt>Kayıt</dt><dd id="reporting">–</dd>
+  <dt>Bekleyen olay</dt><dd id="queue">–</dd>
+</dl>
+<p>AI sohbet sitelerine yapıştırılan kişisel veri ve sırlar bilgisayarınızda taranır; metin gönderilmez.</p>
+<script src="src/popup.js"></script>
+</body>
+</html>

@@ -203,7 +203,8 @@ const ENTITY_LABELS = { TCKN: "T.C. kimlik no", VKN: "Vergi kimlik no", IBAN_TR:
   LOCATION: "Konum", ORGANIZATION: "Kurum" };
 const entityLabel = (e) => ENTITY_LABELS[e] || (e.startsWith("SECRET_") ? "Sır: " + e.slice(7).toLowerCase().replace(/_/g, " ") : e);
 
-const FORMAT_LABELS = { chat: "OpenAI chat", responses: "OpenAI responses", messages: "Anthropic / Claude" };
+const FORMAT_LABELS = { chat: "OpenAI chat", responses: "OpenAI responses", messages: "Anthropic / Claude",
+  browser: "Tarayıcı (gölge AI)" };
 
 // İşlem serileri: sabit kategorik sıra (renk varlığa bağlı, sıralamaya değil)
 const ACTIONS = [

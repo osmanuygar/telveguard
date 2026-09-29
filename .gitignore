@@ -24,3 +24,8 @@ models/
 
 # Helm paketleri
 deploy/helm/**/*.tgz
+
+# Eklenti paketleri
+extension/*.crx
+extension/*.zip
+extension/*.pem

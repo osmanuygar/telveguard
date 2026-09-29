@@ -44,6 +44,9 @@ adres Telveguard'a çevrilir (Claude Code dahil).
   kayıtlarında görülüp beyan edilmemiş kullanımları ortaya çıkarır. **VERBİS taslağı** üretir.
 - **Ekip kota / hız sınırı:** ekip başına dakikalık istek ve aylık token / maliyet bütçesi;
   sayaç Redis'te, tüm pod'lar ortak görür. Aşımda 429 + `Retry-After`.
+- **Gölge AI tarayıcı eklentisi:** ChatGPT, Claude.ai, Gemini, Copilot gibi sitelere yapıştırılan
+  kişisel veri ve sırları tarayıcıda yakalar; maskeleyerek yapıştırma, uyarı ya da engelleme.
+  Metin tarayıcıdan çıkmaz; olaylar Röntgen'de görünür.
 - **Prometheus metrikleri:** `/metrics` (istek, maskeleme / engelleme, sızıntı, kota, gecikme, hatalar).
 - **MCP / agent koruması:** IBM ContextForge eklentisi; araç çıktısındaki kişisel veriyi
   maskeler, kişisel veri veya sırrın dış araçlara (Slack, e-posta, web) gönderilmesini engeller;
@@ -237,6 +240,7 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `KAFKA_BOOTSTRAP`, `KAFKA_AUDIT_TOPIC` | Denetim kaydı; boşsa olaylar stdout'a yazılır |
 | `AUDIT_STORE_MASKED=1` | Maskelenmiş prompt da saklansın (ham prompt hiçbir zaman saklanmaz) |
 | `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB` | Röntgen ve KVKK raporu için (yalnızca okuma yetkili kullanıcı önerilir) |
+| `SHADOW_AI_TOKEN` | Tarayıcı eklentisi olay token'ı; boşsa `/v1/shadow-ai/events` kapalı |
 | `TELVEGUARD_ADMIN_TOKEN` | Yönetim uçları (Röntgen, simülatör, rapor); **boşsa bu uçlar kapalıdır** |
 | `ENABLE_TR_NER=1`, `TR_NER_MODEL_PATH` | Türkçe kişi / kurum / yer adı tespiti (BERT, lokal model) |
 | `ENABLE_LLM_GUARD=1`, `LLM_GUARD_MODEL_PATH` | Ek injection sınıflandırıcı (LLM Guard); model lokal dizinden, internetsiz (`/models/prompt-injection`) |
@@ -294,6 +298,47 @@ systems:
 **Çıktılar taslaktır, hukuki tavsiye değildir;** nihai değerlendirme hukuk / uyum birimindedir.
 Dashboard'da "AI envanteri ve uyum" bölümü ve VERBİS CSV indirme düğmesi vardır.
 
+## Gölge AI: tarayıcı eklentisi
+
+Gateway'e bağlanmayan kullanım (çalışanın ChatGPT'ye doğrudan kod / müşteri verisi yapıştırması)
+için Chrome / Edge eklentisi: `extension/` (Manifest V3).
+
+- AI sohbet sitelerine **yapıştırılan** metin tarayıcıda taranır (Telveguard'ın tespit motorunun
+  JavaScript sürümü; Python motoruyla aynı sonucu verdiği her CI koşusunda test edilir).
+- **Uyar modu:** "Maskeleyerek yapıştır" (önerilen; değerler `[TCKN_1]` olur) / "Vazgeç" /
+  "Yine de yapıştır". **Engelle modu:** kişisel veri ya da sır içeren yapıştırma engellenir.
+- Telveguard'a yalnızca site, veri **türü** adetleri ve kullanıcının kararı gider; **metin asla
+  gönderilmez.** Olaylar denetim hattına `api_format=browser` olarak yazılır, Röntgen'de ve
+  envanterde ("beyan edilmemiş kullanım") kendiliğinden görünür.
+- AI sitesi **ziyaretlerini** kaydetmek opsiyoneldir ve varsayılan kapalıdır: çalışan izlemesidir,
+  açmadan önce çalışanları bilgilendirin (KVKK).
+
+Kurumda dağıtım:
+
+1. `extension/manifest.json` içindeki `host_permissions`'ı kendi Telveguard adresinizle değiştirip
+   paketleyin (Chrome Web Store'a özel yayın ya da kurum içi `.crx`).
+2. Gateway'e `SHADOW_AI_TOKEN` verin (Helm: secret'ta `shadow-ai-token`).
+3. MDM (Intune, GPO, Jamf) ile zorunlu kurulum ve yapılandırma:
+
+```json
+{
+  "ExtensionSettings": {
+    "<eklenti-id>": { "installation_mode": "force_installed", "update_url": "<güncelleme adresi>" }
+  },
+  "3rdparty": { "extensions": { "<eklenti-id>": {
+    "telveguardUrl": "https://telveguard.sirket.local",
+    "reportToken": "<SHADOW_AI_TOKEN>",
+    "mode": "warn",
+    "user": "${user_email}",
+    "team": "analitik",
+    "reportVisits": false
+  } } }
+}
+```
+
+Ayar şeması: `extension/managed_schema.json`. MDM yapılandırması yoksa eklenti yalnızca yerel
+koruma yapar (olay göndermez). Kullanıcı / ekip bilgisi MDM'den gelir; JWT gibi doğrulanmaz.
+
 ## Yönetim uçları
 
 İki yoldan biriyle açılır: `OIDC_ADMIN_GROUP` grubundaki kullanıcının **kendi JWT'si** (önerilen;
@@ -308,6 +353,9 @@ baktığı izlenebilir.
 | `GET /v1/reports/kvkk-transfer?month=2026-09` | KVKK yurt dışı aktarım raporu (CSV; `&format=json` da olur) |
 | `GET /v1/inventory?days=90` | AI envanteri: beyan edilen sistemler, risk sınıfı, yükümlülükler, beyan edilmemiş kullanımlar |
 | `GET /v1/reports/verbis?format=csv\|json` | VERBİS başlıklarına eşlenmiş taslak |
+
+Tarayıcı eklentisi olayları ayrı bir uçtan gelir: `POST /v1/shadow-ai/events`
+(`Authorization: Bearer <SHADOW_AI_TOKEN>`; tanımlı değilse kapalı).
 | `POST /v1/policy/simulate?format=chat\|responses\|messages` | Bir isteğe verilecek karar ve modele gidecek maskeli gövde |
 
 ## MCP / agent trafiği (ContextForge)
@@ -343,7 +391,11 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r gateway/requirements.txt pytest pytest-asyncio cpex \
     -e packages/telveguard-core -e packages/telveguard-contextforge
 pytest -q
+node extension/tests/detectors.test.js      # eklentinin JS motoru == Python motoru
 ```
+
+Python motorunda tespit değişirse eklentinin karşılaştırma verisini yenileyin:
+`REGENERATE_FIXTURES=1 pytest tests/test_extension_parity.py`.
 
 Uçtan uca testler gerçek Kafka, ClickHouse ve ContextForge'a karşı koşar (ortam yoksa atlanır):
 
@@ -361,6 +413,7 @@ packages/telveguard-core/        Tespit motoru: Türkçe PII, sırlar, injection
 packages/telveguard-contextforge/ ContextForge eklentisi
 contextforge/                    ContextForge imajı + eklenti ayarları
 deploy/helm/telveguard-gateway/  OKD / OpenShift Helm chart'ı
+extension/                       Gölge AI tarayıcı eklentisi (Chrome / Edge, Manifest V3)
 clickhouse/init.sql              Denetim şeması
 policies/default.yaml            Örnek KVKK politikası + fiyat tablosu
 docs/FORK_STRATEGY.md            ContextForge'u neden ve nasıl kullanıyoruz
@@ -397,7 +450,7 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
    doğrulama, denetim kaydı, Röntgen, KVKK aktarım raporu, politika gözlem modu ve simülatörü,
    Prometheus metrikleri, OKD Helm chart'ı.
 2. **Faz 2:** ~~ekip kota / hız sınırı~~, ~~MCP araç izin listesi ve agent kimliği~~, ~~yönetimde
-   OIDC rolü~~, ~~LLM Guard lokal model~~ (tamamlandı); gölge AI tespiti için tarayıcı eklentisi.
+   OIDC rolü~~, ~~LLM Guard lokal model~~, ~~gölge AI tarayıcı eklentisi~~ (tamamlandı).
    Claude Code'u kurum içi modele bağlamak için çeviri gerekmiyor: vLLM `/v1/messages`'ı kendisi
    sunuyor, `UPSTREAM_ANTHROPIC_INTERNAL_URL=http://vllm:8000` yeterli.
 3. **Faz 3:** ~~AI envanteri, EU AI Act risk sınıflandırması, VERBİS taslağı~~ (tamamlandı).

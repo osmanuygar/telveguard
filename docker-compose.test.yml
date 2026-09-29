@@ -17,6 +17,7 @@ services:
       UPSTREAM_ANTHROPIC_KEY: e2e-anthropic-key
       AUDIT_STORE_MASKED: "1"
       TELVEGUARD_ADMIN_TOKEN: e2e-admin-token   # yalnızca lokal test
+      SHADOW_AI_TOKEN: e2e-extension-token      # tarayıcı eklentisi olayları (yalnızca lokal test)
     depends_on:
       mock-llm: { condition: service_started }
 

@@ -64,6 +64,8 @@ services:
       # header: geliştirme (kimlik doğrulanmaz); üretimde jwt + OIDC_ISSUER / OIDC_AUDIENCE
       AUTH_MODE: ${AUTH_MODE:-header}
       REDIS_URL: redis://redis:6379/0
+      # Tarayıcı eklentisi (gölge AI) olay token'ı; boşsa /v1/shadow-ai/events kapalı
+      SHADOW_AI_TOKEN: ${SHADOW_AI_TOKEN:-}
       # Boşsa yönetim uçları (/v1/xray, /v1/policy/simulate, raporlar) kapalıdır
       TELVEGUARD_ADMIN_TOKEN: ${TELVEGUARD_ADMIN_TOKEN:-}
     volumes:

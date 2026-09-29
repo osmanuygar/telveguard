@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "telveguardUrl": {
+      "title": "Telveguard adresi",
+      "description": "Olayların gönderileceği gateway (ör. https://telveguard.sirket.local). manifest.json host_permissions ile aynı köken olmalı. Boşsa olay gönderilmez; koruma yine çalışır.",
+      "type": "string"
+    },
+    "reportToken": {
+      "title": "Olay token'ı",
+      "description": "Gateway'deki SHADOW_AI_TOKEN.",
+      "type": "string"
+    },
+    "mode": {
+      "title": "Mod",
+      "description": "warn: kullanıcıya maskeleme / vazgeçme / yine de yapıştırma seçeneği sunar. block: kişisel veri ya da sır içeren yapıştırmayı engeller.",
+      "type": "string",
+      "enum": ["warn", "block"]
+    },
+    "user": { "title": "Kullanıcı", "description": "Denetim kaydında görünecek kullanıcı (ör. e-posta; MDM değişkeniyle doldurulur).", "type": "string" },
+    "team": { "title": "Ekip", "type": "string" },
+    "reportVisits": {
+      "title": "AI sitesi ziyaretlerini kaydet",
+      "description": "KVKK: çalışan izlemesidir; açmadan önce çalışanları bilgilendirin. Varsayılan: kapalı.",
+      "type": "boolean"
+    }
+  }
+}

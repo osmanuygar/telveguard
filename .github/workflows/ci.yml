@@ -37,3 +37,5 @@ jobs:
               -e packages/telveguard-core -e packages/telveguard-contextforge
       - name: Testler
         run: pytest -q -rs
+      - name: Tarayıcı eklentisi tespit motoru (JS == Python)
+        run: node extension/tests/detectors.test.js

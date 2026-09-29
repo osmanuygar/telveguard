@@ -200,3 +200,19 @@ def test_inventory_and_verbis_against_real_clickhouse():
     kimlik = next(r for r in rep.json()["rows"] if r["veri_kategorisi"] == "Kimlik")
     assert "TCKN" in kimlik["tespit_edilen_turler"] and kimlik["yurt_disina_aktarim"] == "Evet"
     assert "Anthropic" in kimlik["saglayicilar"] and "ABD" in kimlik["aktarilan_ulkeler"]
+
+
+def test_browser_extension_events_reach_xray():
+    """Eklenti olayı -> gateway -> Kafka -> ClickHouse -> Röntgen (api_format=browser)."""
+    team = f"golge{uuid.uuid4().hex[:6]}"
+    r = httpx.post(f"{GATEWAY}/v1/shadow-ai/events", timeout=10,
+                   headers={"Authorization": "Bearer " + os.getenv("TELVEGUARD_E2E_EXTENSION_TOKEN", "e2e-extension-token")},
+                   json={"events": [
+                       {"site": "chatgpt.com", "action": "masked", "entities": {"TCKN": 1}, "user": "ayse", "team": team},
+                       {"site": "claude.ai", "action": "allowed_override", "entities": {"SECRET_AWS_KEY": 1},
+                        "user": "ayse", "team": team}]})
+    assert r.status_code == 200 and r.json() == {"accepted": 2}
+    d = _xray(team, 2)
+    assert {m["model"] for m in d["by_model"]} == {"chatgpt.com", "claude.ai"}
+    assert [f["api_format"] for f in d["by_format"]] == ["browser"]
+    assert int(d["summary"]["masked"]) == 1 and int(d["summary"]["secret_requests"]) == 1

@@ -25,6 +25,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from . import compliance
+from . import shadow_ai
 from . import metrics
 from . import xray as xray_mod
 from .audit import AuditSink
@@ -568,3 +569,26 @@ async def verbis_report(request: Request, days: int = 365, format: str = "json")
         return report
     return Response(compliance.verbis_csv(report), media_type="text/csv; charset=utf-8", headers={
         "Content-Disposition": 'attachment; filename="verbis-taslak.csv"'})
+
+
+# ---------------- gölge AI (tarayıcı eklentisi) ----------------
+
+@app.post("/v1/shadow-ai/events")
+async def shadow_ai_events(request: Request):
+    """Tarayıcı eklentisinden olay toplu gönderimi. Metin YOK: site, veri türleri, karar.
+    SHADOW_AI_TOKEN (MDM ile eklentiye dağıtılır) ile korunur; tanımlı değilse kapalı."""
+    expected = os.getenv("SHADOW_AI_TOKEN", "")
+    if not expected:
+        return _openai_error(404, "Gölge AI toplama kapalı (SHADOW_AI_TOKEN tanımlı değil).",
+                             "shadow_ai_disabled", "admin_error")
+    header = request.headers.get("authorization", "")
+    if not shadow_ai.check_token(header[7:].strip() if header.lower().startswith("bearer ") else None, expected):
+        return _openai_error(401, "Geçersiz eklenti token'ı.", "unauthorized", "authentication_error")
+    try:
+        batch = shadow_ai.ShadowBatch.model_validate(await request.json())
+    except ValueError as e:
+        return _openai_error(400, f"Geçersiz olay: {str(e)[:300]}", "invalid_request", "invalid_request_error")
+    for event in batch.events:
+        await request.app.state.audit.emit(shadow_ai.to_audit_event(event))
+        metrics.SHADOW_AI_EVENTS.labels(event.action).inc()
+    return {"accepted": len(batch.events)}
