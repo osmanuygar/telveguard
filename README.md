@@ -163,27 +163,134 @@ kendisi sunar, `UPSTREAM_ANTHROPIC_INTERNAL_URL=http://vllm:8000` yeterlidir.
   [ContextForge](#mcp--agent-trafiği-contextforge) üzerinden geçirilebilir.
 - Aynı sitelerin tarayıcı sürümleri için [tarayıcı eklentisi](#gölge-ai-tarayıcı-eklentisi) vardır.
 
-## Uygulamanızı bağlamak
+## Kendi ürününüze entegrasyon
 
-Üretimde (`AUTH_MODE=jwt`) uygulama, kimlik sağlayıcınızdan aldığı JWT'yi `api_key` olarak verir;
-OpenAI SDK'sı bunu zaten `Authorization: Bearer` olarak gönderir:
+Telveguard, OpenAI ve Anthropic API'lerinin kendisi gibi davranır. Ürününüzün kodu değişmez;
+SDK'nın taban adresini Telveguard'a çevirmeniz yeterlidir. Sağlayıcı anahtarları Telveguard'da
+durur, ürününüz yalnızca kendi kimliğini (JWT) gönderir.
+
+### 1. Taban adresi çevirin
+
+**Python (OpenAI SDK):**
 
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="https://telveguard.sirket.local/v1", api_key=oidc_access_token)
+client = OpenAI(base_url="https://telveguard.sirket.local/v1", api_key=token)
+resp = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "TC 10000000146 olan müşterinin şikâyetini özetle"}],
+)
+print(resp.choices[0].message.content)   # model [TCKN_1] gördü; siz gerçek değeri görürsünüz
 ```
 
-Kullanıcı `preferred_username`, ekipler `groups` claim'inden okunur (değiştirilebilir).
-`OIDC_TEAM_PREFIX=telveguard-` ile yalnızca `telveguard-analitik` gibi gruplar ekip sayılır.
-Kullanıcı birden fazla ekipteyse ekip kuralları **herhangi bir** ekibi eşleşince uygulanır;
-"stajyer" kısıtından başka bir gruba da üye olarak kaçılamaz.
+**TypeScript (OpenAI SDK):**
+
+```ts
+import OpenAI from "openai";
+
+const client = new OpenAI({ baseURL: "https://telveguard.sirket.local/v1", apiKey: token });
+```
+
+**Python (Anthropic SDK):** taban adreste `/v1` yoktur.
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(base_url="https://telveguard.sirket.local", auth_token=token)
+```
+
+**LangChain / LlamaIndex / diğer araçlar:** OpenAI uyumlu her istemci aynı şekilde bağlanır
+(`ChatOpenAI(base_url=..., api_key=token)`). Ortam değişkeni okuyan araçlar için
+`OPENAI_BASE_URL=https://telveguard.sirket.local/v1`, `ANTHROPIC_BASE_URL=https://telveguard.sirket.local`.
+
+Hangi modelin hangi sağlayıcıya gideceği politikadadır (`destinations`, `providers`); ürününüz
+yalnızca model adını seçer.
+
+### 2. Kimlik
+
+Üretimde (`AUTH_MODE=jwt`) her istek kimlik sağlayıcınızın (Keycloak, Entra ID) verdiği bir JWT
+taşır; Telveguard imzayı, `iss`, `aud` ve süreyi doğrular. İki yol vardır:
+
+| Senaryo | Token | Denetim kaydında görünen |
+|---|---|---|
+| Kullanıcı adına çalışan uygulama (iç araç, asistan) | Kullanıcının kendi access token'ı | Kullanıcı ve ekipleri |
+| Arka uç servisi / batch / agent | Servis hesabı token'ı (`client_credentials`) | Servis hesabı ve grupları |
+
+- Kullanıcı `preferred_username` (yoksa `sub`), ekipler `groups` claim'inden okunur
+  (`OIDC_USER_CLAIM`, `OIDC_TEAM_CLAIM`). `OIDC_TEAM_PREFIX=telveguard-` ile yalnızca
+  `telveguard-analitik` gibi gruplar ekip sayılır.
+- Kullanıcı birden fazla ekipteyse ekip kuralları **herhangi bir** ekip eşleşince uygulanır;
+  "stajyer" kısıtından başka bir gruba üye olarak kaçılamaz.
+- Üretimde header'la verilen kimlik yok sayılır: bir servis, token'ı dışında başka bir
+  kullanıcıyı taklit edemez. Son kullanıcı bazında kayıt istiyorsanız kullanıcının token'ını
+  iletin (ya da token exchange ile kullanıcı adına token alın).
+- Token'ın süresi kısa olabilir; SDK istemcisini token yenilendiğinde yeniden oluşturun ya da
+  `api_key`'i her istekten önce güncel token'la verin.
 
 Geliştirme ortamında (`AUTH_MODE=header`, doğrulama yok) kimlik header'la verilir:
 `default_headers={"x-telveguard-user": "ayse", "x-telveguard-team": "analitik"}`.
 
-Model adı hedefi belirler (`policies/default.yaml` → `destinations`): `vllm/`, `local/`, `qwen`,
-`llama` kurum içi; `gpt-`, `claude-`, `gemini-` ve tanınmayan her model yurt dışı sayılır.
+### 3. Telveguard'ın cevaplarını ele alın
+
+Hatalar istemcinin kendi API biçimindedir; SDK'lar bunları bilinen hata sınıflarına çevirir.
+Telveguard'a özgü neden `code` alanındadır (Anthropic biçiminde `telveguard_code`).
+
+| HTTP | `code` | Ne oldu | Ürünün yapması gereken |
+|---|---|---|---|
+| 403 | `blocked` | Politika isteği engelledi (injection, ekip kuralı) | Kullanıcıya `message`'ı gösterin; tekrar denemeyin |
+| 403 | `output_blocked` | Model cevabı sızıntı içerdiği için engellendi | Kullanıcıya genel bir hata gösterin |
+| 429 | `quota_exceeded` | Ekip kotası doldu | `Retry-After` kadar bekleyin (SDK'lar kendisi yeniden dener) |
+| 400 | `no_upstream` | Model bu API biçimiyle kullanılamıyor | Yapılandırma hatası: model adını ya da biçimi düzeltin |
+| 401 | `expired`, `invalid`, ... | Token geçersiz | Token'ı yenileyin |
+| 502 / 503 | `upstream_unreachable`, `quota_unavailable` | Sağlayıcıya ya da kota sayacına ulaşılamadı | Geçici; yeniden deneyin |
+
+```python
+import openai
+
+try:
+    resp = client.chat.completions.create(model="gpt-4o", messages=messages)
+except openai.PermissionDeniedError as e:           # 403
+    if e.code == "blocked":                          # e.body: {"message", "type", "code"}
+        return "Bu istek kurum politikası gereği gönderilemedi: " + e.body["message"]
+    raise
+except openai.RateLimitError:                        # 429 (SDK Retry-After'a göre zaten denedi)
+    return "Ekibinizin AI kotası doldu, biraz sonra tekrar deneyin."
+```
+
+### 4. Bilmeniz gereken davranışlar
+
+- **Maskeleme görünmez:** Yurt dışı modele `TC 1234...` yerine `[TCKN_1]` gider, cevaptaki
+  `[TCKN_1]` gerçek değere geri çevrilir. Ürününüz fark etmez; araç çağrısı argümanları da
+  geri çevrilir (model maskeli değeri bir fonksiyona verirse fonksiyonunuz gerçek değeri alır).
+- **Çıktı koruması:** Model girdide olmayan bir kişisel veri ya da sır üretirse cevapta
+  `[GİZLENDİ:TCKN]` görünür (geri çevrilmez) ya da cevap 403 `output_blocked` ile döner.
+- **Streaming:** Maskeleme ya da çıktı kuralı olan isteklerde cevap Telveguard'da tamponlanıp
+  stream biçiminde gönderilir: istemci kodu aynı kalır, ilk parça daha geç gelir.
+- **Her şey taranır:** system prompt, RAG / web / dosya içerikleri, araç sonuçları. Bir belgeye
+  gizlenmiş injection, isteğin tamamını engelleyebilir; RAG kullanan ürünler 403 `blocked`'u
+  ele almalıdır.
+- **Model adı hedefi belirler:** Aynı istek `qwen` ile kurum içine olduğu gibi, `gpt-4o` ile yurt
+  dışına maskeli gider. Hassas iş akışlarında kurum içi model seçmek maskelemeye gerek bırakmaz.
+
+### 5. Politikayı testlerinizde doğrulayın
+
+`/v1/policy/simulate` bir isteğin ne olacağını modele göndermeden söyler. Ürününüzün kritik
+prompt'larını CI'da bununla test edebilirsiniz (yönetici token'ı gerekir):
+
+```python
+import httpx
+
+def test_musteri_ozeti_yurt_disina_maskeli_gider():
+    r = httpx.post(f"{TELVEGUARD}/v1/policy/simulate",
+                   headers={"Authorization": f"Bearer {ADMIN_TOKEN}", "x-telveguard-team": "musteri-hizmetleri"},
+                   json={"model": "gpt-4o", "messages": [{"role": "user", "content": "TC 10000000146 özetle"}]})
+    body = r.json()
+    assert body["decision"]["action"] == "mask"
+    assert "10000000146" not in str(body["upstream_body"])
+```
+
+Aynı denemeyi elle yapmak için yönetim konsolundaki **Politika deneme** ekranı vardır.
 
 ## Politika
 
