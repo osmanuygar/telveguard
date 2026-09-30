@@ -1,11 +1,15 @@
 # Değişiklik günlüğü
 
-## Yayımlanmamış
+## 0.2.1 — 2026-09-30
+
+PyPI paketlerinde (telveguard-core, telveguard-contextforge) kod değişikliği yoktur; sürüm
+numarası diğer bileşenlerle birlikte güncellendi. Yenilikler gateway, Helm chart ve eklentidedir.
 
 - Yönetim konsolu: Olaylar (denetim kaydı gezgini, Röntgen'den tıklayarak geçiş) ve Politika deneme ekranı.
 - Sağlayıcı yönlendirmesi (`providers`): Azure OpenAI, Gemini, Mistral, Anthropic, birden fazla
   kurum içi sunucu; KVKK / VERBİS raporunda sağlayıcı adı ve ülkesi.
 - Tarayıcı eklentisi: gönderim anında kontrol (Enter / gönder düğmesi; elle yazılan metin de).
+- README: kendi ürününüze entegrasyon rehberi (SDK'lar, kimlik, hata kodları, CI'da politika testi).
 
 ## 0.2.0 — 2026-09-29
 

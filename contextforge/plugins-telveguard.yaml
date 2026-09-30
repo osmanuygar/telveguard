@@ -4,7 +4,7 @@ plugins:
   - name: "TelveguardPlugin"
     kind: "telveguard_contextforge.TelveguardPlugin"
     description: "Türkçe PII + prompt injection koruması"
-    version: "0.2.0"
+    version: "0.2.1"
     author: "Telveguard"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["security", "pii", "kvkk", "turkish", "prompt-injection"]

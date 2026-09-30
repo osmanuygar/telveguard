@@ -11,4 +11,4 @@ from .policy import Context, Decision, PolicyEngine
 __all__ = ["TrPiiEngine", "Finding", "MaskResult", "InjectionDetector",
            "InjectionResult", "PolicyEngine", "Context", "Decision",
            "entity_matches", "matching_entities"]
-__version__ = "0.2.0"
+__version__ = "0.2.1"

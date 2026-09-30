@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Telveguard – Gölge AI koruması",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "AI sohbet sitelerine yapıştırılan kişisel veri ve sırları tespit eder; maskeler, uyarır ya da engeller. Metin tarayıcıdan çıkmaz.",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "alarms"],

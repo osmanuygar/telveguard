@@ -1,7 +1,7 @@
 # PyPI yayını: Trusted Publishing (OIDC) - repoda / GitHub secret'larında PyPI token'ı YOK.
 #
 # Yayın:  paketlerin sürümünü güncelleyin (pyproject.toml, __init__.py, plugin-manifest.yaml),
-#         commit'leyin, sonra:  git tag v0.2.0 && git push origin v0.2.0
+#         commit'leyin, sonra:  git tag v0.2.1 && git push origin v0.2.1
 #
 # Tek seferlik kurulum:
 #   1) PyPI -> her proje (telveguard-core, telveguard-contextforge) -> Publishing -> Add trusted publisher:

@@ -2,7 +2,7 @@ apiVersion: v2
 name: telveguard-gateway
 description: Telveguard LLM Gateway - Türkçe PII maskeleme, prompt injection tespiti, KVKK denetim kaydı (OKD / OpenShift uyumlu)
 type: application
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.2.1
+appVersion: "0.2.1"
 kubeVersion: ">=1.25.0-0"
 keywords: [ai-security, llm-gateway, pii, kvkk, openshift]
