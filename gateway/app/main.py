@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI):
 
 
 admin_log = logging.getLogger("telveguard.admin")
-app = FastAPI(title="Telveguard Gateway", version="0.2.1", lifespan=lifespan)
+app = FastAPI(title="Telveguard Gateway", version="0.3.0", lifespan=lifespan)
 
 
 # ---------------- yardımcılar ----------------

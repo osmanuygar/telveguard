@@ -1,8 +1,26 @@
 # Değişiklik günlüğü
 
-## Yayımlanmamış
+## 0.3.0 — 2026-10-05
 
-### Gateway (Docker imajı / Helm chart)
+PyPI paketlerinde (telveguard-core, telveguard-contextforge) kod değişikliği yoktur; sürüm
+numarası diğer bileşenlerle birlikte güncellendi. Yenilikler gateway, Helm chart ve Docker imajındadır.
+
+### Yükseltme notları
+
+- **ClickHouse şeması değişti.** Mevcut kurulumda gateway'i güncellemeden önce ya da sonra,
+  yazma yetkili kullanıcıyla bir kez çalıştırın (yeni kurulumda `init.sql` zaten içerir):
+  `clickhouse-client --multiquery < clickhouse/migrations/0.3.0-subject-hashes.sql`.
+  Dosyadaki `kafka_broker_list` / topic / group değerlerini kendi `audit_queue`'nuzla aynı yapın.
+- **Docker imajı ~110 MB büyüdü** (OCR için Tesseract, Türkçe + İngilizce). Air-gapped ortamda
+  imajı derlerken apt deposu iç aynadan kullanılmalı.
+- **Varsayılan politikada yeni bölümler:** `attachments` (taranamayan ek: `alert`), `notify`
+  (adres ortam değişkeni boşsa kanallar kapalı) ve örnek terimlerle `dictionary` +
+  `kurum-terimleri-yurtdisi-maskele`. Kendi politikanızı kullanıyorsanız bu bölümleri ekleyin;
+  `dictionary` örneklerini kendi terimlerinizle değiştirin.
+- İlgili kişi araması için `TELVEGUARD_SUBJECT_HASH_KEY` (Helm: `secrets.subjectHashKey`)
+  tanımlanmalı; yalnızca tanımlandıktan sonraki istekler aranabilir.
+
+### Gateway (Docker imajı / Helm chart 0.3.0)
 
 - Anlık bildirim (`notify`): engellenen istek, sızan sır, kota aşımı, gölge AI uyarısı Slack,
   Microsoft Teams (Workflows, Adaptive Card) ya da genel webhook'a (SIEM). Kanal başına koşul

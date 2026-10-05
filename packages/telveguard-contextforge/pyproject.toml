@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "telveguard-contextforge"
-version = "0.2.1"
+version = "0.3.0"
 description = "Telveguard eklentisi: IBM ContextForge için Türkçe PII, sır ve prompt injection koruması"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,7 +18,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Security",
 ]
-dependencies = ["telveguard-core>=0.2.1", "cpex>=0.1.4"]
+dependencies = ["telveguard-core>=0.3.0", "cpex>=0.1.4"]
 
 [project.urls]
 Homepage = "https://github.com/osmanuygar/telveguard"

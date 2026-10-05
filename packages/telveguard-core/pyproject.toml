@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "telveguard-core"
-version = "0.2.1"
+version = "0.3.0"
 description = "Türkçe PII ve sır tespiti/maskeleme, prompt injection tespiti ve YAML politika motoru"
 readme = "README.md"
 requires-python = ">=3.10"

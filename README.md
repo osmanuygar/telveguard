@@ -403,7 +403,7 @@ Helm chart gateway'i kurar; Kafka ve ClickHouse kurumdaki mevcut kümelerdir
 (ClickHouse şeması: `clickhouse/init.sql`, bir kez; sürüm yükseltirken `clickhouse/migrations/`).
 
 ```bash
-docker build -f gateway/Dockerfile -t harbor.sirket.local/telveguard/gateway:0.2.1 .
+docker build -f gateway/Dockerfile -t harbor.sirket.local/telveguard/gateway:0.3.0 .
 
 oc create secret generic telveguard-sirlar -n ai-guvenlik \
   --from-literal=admin-token=... --from-literal=upstream-external-key=...
