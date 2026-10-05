@@ -5,6 +5,8 @@ pyyaml>=6.0
 aiokafka>=0.11
 pyjwt[crypto]>=2.8        # AUTH_MODE=jwt (OIDC)
 prometheus-client>=0.20   # /metrics
+pillow>=10.1              # ek tarama: görsel açma / karartma
+pypdfium2>=4.30           # ek tarama: PDF metin katmanı ve sayfa görüntüsü
 # Opsiyonel (ENABLE_TR_NER=1 / ENABLE_LLM_GUARD=1):
 # transformers>=4.44
 # torch  (CPU wheel yeterli)

@@ -1,6 +1,11 @@
 # Air-gapped ortamda base imajı Harbor proxy-cache'ten çekin:
 #   FROM harbor.sirket.local/dockerhub-proxy/library/python:3.12-slim
 FROM python:3.12-slim
+# Ek tarama: görsel / taranmış PDF için OCR (Türkçe + İngilizce). Air-gapped ortamda apt
+# deposunu iç aynadan (Nexus / Artifactory) kullanın.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-tur tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
 COPY packages/telveguard-core /tmp/telveguard-core
 COPY gateway/requirements.txt .

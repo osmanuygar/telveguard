@@ -28,6 +28,8 @@ SHADOW_AI_EVENTS = Counter("telveguard_shadow_ai_events", "Tarayıcı eklentisi 
                            ["action"])  # blocked | masked | cancelled | allowed_override | visit
 NOTIFICATIONS = Counter("telveguard_notifications", "Slack / Teams / webhook bildirimleri",
                         ["channel_type", "result"])  # result: sent | failed | suppressed | dropped
+ATTACHMENTS = Counter("telveguard_attachments", "Taranan ekler (görsel, PDF, dosya)",
+                      ["kind", "result"])  # kind: image | pdf | text | other ; result: scanned | cached | unscannable | redacted
 QUOTA_BACKEND_ERRORS = Counter("telveguard_quota_backend_errors", "Kota sayacına (Redis) ulaşılamayan işlemler")
 
 _BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120)
@@ -36,6 +38,8 @@ REQUEST_SECONDS = Histogram("telveguard_request_duration_seconds", "Uçtan uca i
 SCAN_SECONDS = Histogram("telveguard_scan_duration_seconds",
                          "Tarama + politika süresi (gateway'in eklediği gecikme)",
                          buckets=(0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25))
+ATTACHMENT_SCAN_SECONDS = Histogram("telveguard_attachment_scan_seconds", "Ek başına tarama (OCR / PDF) süresi",
+                                    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30))
 UPSTREAM_SECONDS = Histogram("telveguard_upstream_duration_seconds", "Upstream LLM cevap süresi",
                              ["destination"], buckets=_BUCKETS)
 

@@ -29,6 +29,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
+      - name: OCR (ek tarama testi gerçek Tesseract'la koşsun)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-tur
       - name: Bağımlılıklar
         run: |
           python -m pip install --upgrade pip

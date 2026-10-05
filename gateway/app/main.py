@@ -18,7 +18,7 @@ import time
 import uuid
 from collections import Counter
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Dict, List, Optional, Set
 
@@ -26,6 +26,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
+from . import attachments as attachments_mod
 from . import compliance
 from . import shadow_ai
 from . import metrics
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI):
     policy_path = os.getenv("POLICY_PATH", "policies/default.yaml")
     app.state.policy = PolicyEngine(policy_path)
     app.state.providers = providers_mod.load(policy_path)
+    app.state.attachments = attachments_mod.load(policy_path)
     app.state.audit = AuditSink()
     await app.state.audit.start()
     if not hasattr(app.state, "http"):  # testlerde MockTransport enjekte edilebilir
@@ -133,6 +135,7 @@ class Analysis:
     decision: Decision
     provider: Optional[providers_mod.Provider] = None
     provider_error: Optional[str] = None
+    scans: List[attachments_mod.Scan] = field(default_factory=list)   # görsel / PDF ekleri
 
     @property
     def user(self) -> str:
@@ -151,7 +154,14 @@ class Analysis:
         return self.body.get("messages", [])
 
 
-def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT) -> Analysis:
+async def _scan_analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT) -> Analysis:
+    """Ekleri (görsel / PDF) tarar, sonra metinle birlikte politikadan geçirir."""
+    scans = await st.attachments.scan(fmt.request_attachments(body))
+    return _analyze(st, body, identity, fmt, scans)
+
+
+def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT,
+             scans: List[attachments_mod.Scan] = ()) -> Analysis:
     """Tarama + politika. Gerçek istek ve simülatör aynı yolu kullanır."""
     model = body.get("model", "") if isinstance(body.get("model"), str) else ""
     # Eşleşen sağlayıcının hedefi önce gelir: veri gerçekte nereye gidiyorsa karar ona göre
@@ -159,15 +169,18 @@ def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT
     routed = provider or st.providers.first(model)
     destination = routed.destination if routed else st.policy.destination_of(model)
     parts = fmt.request_parts(body)
-    full_text = "\n".join(p.text for p in parts if p.role in fmt.injection_roles)
-    all_text = "\n".join(p.text for p in parts)
+    # Eklerden okunan metin de taranır: görsele gömülü injection ("visual prompt injection") dahil
+    full_text = "\n".join([p.text for p in parts if p.role in fmt.injection_roles]
+                          + [s.text for s in scans if s.text and s.att.role in fmt.injection_roles])
+    all_text = "\n".join([p.text for p in parts] + [s.text for s in scans if s.text])
     entity_counts = Counter(f.entity for f in st.pii.analyze(all_text))
     injection = st.injection.scan(full_text)
     ctx = Context(identity.team, model, destination, set(entity_counts), injection.score,
                   frozenset(identity.teams))
     decision = st.policy.evaluate(ctx)
+    st.attachments.apply_unscannable(decision, list(scans), destination)
     return Analysis(identity, fmt, model, destination, body, parts, full_text, all_text,
-                    entity_counts, injection, ctx, decision, provider, provider_error)
+                    entity_counts, injection, ctx, decision, provider, provider_error, list(scans))
 
 
 async def _emit(st, ev: dict):
@@ -209,14 +222,16 @@ def _usage_fields(st, fmt: ApiFormat, model: str, resp: Optional[dict]) -> Dict[
             "est_cost_usd": st.policy.estimate_cost_usd(model, effective_pt, ct) if known else None}
 
 
-def _mask_parts(st, parts: List[Part], decision: Decision, vault: Dict[str, str]) -> Optional[str]:
-    """Karar maskeleme gerektiriyorsa tüm parçaları (system ve araç argümanları dahil) yerinde
-    maskeler; denetim için maskeli metni döndürür."""
+def _mask_parts(st, parts: List[Part], decision: Decision, vault: Dict[str, str],
+                scans: List[attachments_mod.Scan] = ()) -> Optional[str]:
+    """Karar maskeleme gerektiriyorsa tüm parçaları (system ve araç argümanları dahil) ve ekleri
+    (görsel karartma, PDF -> maskeli metin) yerinde maskeler; denetim için maskeli metni döndürür."""
     if decision.action != "mask" or not decision.mask_entities:
         return None
     for p in parts:
         p.set(st.pii.mask(p.text, list(decision.mask_entities), vault).text)
-    return "\n".join(p.text for p in parts)
+    notes = st.attachments.mask(st.pii, list(scans), decision.mask_entities, vault)
+    return "\n".join([p.text for p in parts] + notes)
 
 
 async def _read_body(request: Request, fmt: ApiFormat):
@@ -281,7 +296,7 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
 
     # 1-2) Tarama + politika
     t_scan = time.perf_counter()
-    a = _analyze(st, body, identity, fmt)
+    a = await _scan_analyze(st, body, identity, fmt)
     metrics.SCAN_SECONDS.observe(time.perf_counter() - t_scan)
     model, destination, decision = a.model, a.destination, a.decision
     request.state.destination = destination
@@ -338,7 +353,7 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
 
     # 3) Maskeleme (tüm konuşma boyunca ortak vault -> tutarlı yer tutucular)
     vault: Dict[str, str] = {}
-    masked_prompt = _mask_parts(st, a.parts, decision, vault)
+    masked_prompt = _mask_parts(st, a.parts, decision, vault, a.scans)
 
     wants_stream = bool(body.get("stream"))
     # Maskeleme ya da çıktı kuralı varsa stream tamponlanır: yer tutucular parça sınırında
@@ -434,7 +449,7 @@ async def messages_count_tokens(request: Request):
     body, err = await _read_body(request, MESSAGES)
     if err:
         return err
-    a = _analyze(st, body, identity, MESSAGES)
+    a = await _scan_analyze(st, body, identity, MESSAGES)
     if a.decision.action == "block":
         return MESSAGES.error(403, f"Telveguard: {a.decision.reason}", "blocked")
     if a.provider_error:
@@ -443,7 +458,7 @@ async def messages_count_tokens(request: Request):
                 else MESSAGES.upstream(a.destination, request.headers, path="/v1/messages/count_tokens"))
     if upstream is None:
         return MESSAGES.error(400, "Bu model için Anthropic upstream'i tanımlı değil.", "no_upstream")
-    _mask_parts(st, a.parts, a.decision, {})
+    _mask_parts(st, a.parts, a.decision, {}, a.scans)
     try:
         resp = await st.http.post(upstream[0], json=body, headers=upstream[1])
     except httpx.HTTPError:
@@ -473,10 +488,10 @@ async def policy_simulate(request: Request, format: str = "chat"):
     h = request.headers
     teams = [t.strip() for t in h.get("x-telveguard-team", "default").split(",") if t.strip()]
     identity = Identity(h.get("x-telveguard-user", "simulate"), teams or ["default"], "simulate")
-    a = _analyze(request.app.state, body, identity, fmt)
+    a = await _scan_analyze(request.app.state, body, identity, fmt)
     d = a.decision
     originals = [p.text for p in a.parts]
-    _mask_parts(request.app.state, a.parts, d, {})
+    _mask_parts(request.app.state, a.parts, d, {}, a.scans)
     blocked = d.action == "block"
     parts = [{"role": p.role, "segments": _segments(request.app.state, text),
               "sent": None if blocked else p.text}
@@ -502,6 +517,10 @@ async def policy_simulate(request: Request, format: str = "chat"):
         "upstream_body": None if blocked else body,
         # Arayüz için: metin, tespit edilen değerler ayrı bölüm olarak (offset yok: JS UTF-16 sayar)
         "parts": parts,
+        # Ekler: okunan metin (işaretli), taranamayanların nedeni, maskelendiyse nasıl
+        "attachments": [{**sc.summary(), "redacted": sc.redacted,
+                         "segments": _segments(request.app.state, sc.text) if sc.text else []}
+                        for sc in a.scans],
     }
 
 

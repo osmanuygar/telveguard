@@ -30,6 +30,8 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 - **Sırlar:** AWS, GitHub, OpenAI, Anthropic, Slack, Google, Stripe anahtarları, JWT, private key,
   parolalı bağlantı dizeleri, `şifre: ...`.
 - **Prompt injection:** Türkçe ve İngilizce, araç çıktılarına ve web içeriğine gizlenmiş saldırılar dahil.
+- **Görsel ve PDF ekleri:** OCR (Türkçe + İngilizce) ve PDF metniyle taranır; kimlik fotoğrafı,
+  dekont, ekran görüntüsündeki veri karartılır. Claude Code'un okuduğu görsel / PDF'ler dahil.
 - **Çıktı koruması:** model cevabında girdide olmayan bir kişisel veri veya sır üretirse gizlenir.
 - **MCP / agent:** ContextForge eklentisi; araç çıktısı maskeleme, dış araçlara sızdırma engeli, araç izin listesi.
 - **Gölge AI:** tarayıcı eklentisi ChatGPT, Claude.ai, Gemini'ye yapıştırılan veriyi yerelde maskeler.
@@ -433,10 +435,43 @@ model ve ekip adı istemci kontrolünde olduğu için etiket yapılmaz, bu kır�
 | `telveguard_request_duration_seconds`, `telveguard_upstream_duration_seconds` | Uçtan uca ve LLM süresi |
 | `telveguard_quota_exceeded_total{kind}`, `telveguard_quota_backend_errors_total` | Kota aşımları ve sayaç (Redis) hataları |
 | `telveguard_shadow_ai_events_total{action}` | Tarayıcı eklentisi olayları |
+| `telveguard_attachments_total{kind,result}`, `telveguard_attachment_scan_seconds` | Ekler (`image`, `pdf`, `text`): taranan, önbellekten, taranamayan, karartılan; OCR / PDF süresi |
 | `telveguard_notifications_total{channel_type,result}` | Bildirimler: `sent`, `failed`, `suppressed` (tekrar bastırma), `dropped` (kuyruk dolu) |
 | `telveguard_upstream_errors_total`, `telveguard_audit_failures_total`, `telveguard_auth_failures_total{reason}` | Hatalar |
 
 </details>
+
+## Görsel ve PDF ekleri
+
+Mesajdaki görseller ve dosyalar da taranır: OpenAI `image_url` / `file`, Responses
+`input_image` / `input_file`, Anthropic `image` / `document` (araç sonuçları içindekiler dahil:
+Claude Code'un okuduğu ekran görüntüsü ve PDF'ler). Okunan metindeki veri türleri mesaj
+metniyle birleşir ve aynı kurallardan geçer; görsele gizlenmiş injection da yakalanır.
+
+| Ek | Nasıl okunur | Maskeleme gerekirse modele giden |
+|---|---|---|
+| Görsel (PNG, JPEG, GIF, WEBP) | Tesseract OCR (`tur+eng`) | Aynı görsel; veri bulunan alan siyahla kapatılır, üstüne `[TCKN_1]` yazılır. EXIF (konum) silinir |
+| PDF | Metin katmanı (pdfium); taranmış sayfa ve sayfadaki görseller OCR | PDF'in **maskeli metni** (görseller ve düzen aktarılmaz) |
+| Metin dosyası (txt, csv, json, md, ...) | UTF-8 | Maskeli metin |
+
+Model yer tutucuyu cevapta kullanırsa kullanıcıya gerçek değer döner. Kurum içi modele giden ek
+politika maskeleme istemedikçe değiştirilmez. Aynı görsel tekrar gelirse (Claude Code her turda
+konuşmayı yeniden gönderir) OCR yeniden yapılmaz; sonuç içerik özetine göre bellekte tutulur.
+
+```yaml
+attachments:
+  ocr: true
+  max_bytes: 20000000           # bundan büyük ek taranamaz sayılır
+  max_pages: 30
+  unscannable: alert            # allow | alert | block
+```
+
+**Taranamayan ek:** uzak adres (`https://...`) ya da `file_id` (içeriği gateway görmez), şifreli /
+bozuk PDF, desteklenmeyen tür (docx, ses), sınırı aşan boyut, OCR kapalıyken görsel. Yalnızca yurt
+dışı hedefte `unscannable` uygulanır; kayda `ek-taranamadi` kuralı düşer (bildirim için
+`rules: ["ek-taranamadi"]`). Varsayılan `alert`: önce ne kadar olduğunu Röntgen'de görüp sonra
+`block`'a geçin. Politika deneme ucu (`/v1/policy/simulate`) eklerden okunan metni ve neyin
+maskeleneceğini `attachments` alanında gösterir.
 
 ## Anlık bildirim (Slack, Teams, webhook)
 
@@ -671,6 +706,9 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 - ContextForge araç izin listesinde **ekip** kuralları, ContextForge'un kimlik bilgisinde ekip
   olmasına bağlıdır (ContextForge ekip / SSO grup eşlemesi). Kullanıcı ve `"*"` kuralları her
   durumda çalışır.
+- Ek taramada OCR'ın okuyamadığı veri (el yazısı, çok düşük çözünürlük, eğik fotoğraf) yakalanmaz.
+  Kimlik / dekont fotoğrafı yüklenen ekipler için `unscannable: block` ile birlikte görsel
+  eklerini tamamen engelleyen bir ekip kuralı düşünün. OCR görsel başına ~0,5-2 sn ekler.
 - Kota, maskesiz gerçek streaming isteklerinde yalnızca istek sayısını sayar (token bilgisi gelmez).
 - ContextForge'da yer tutucu numaraları (`[TCKN_1]`) tek araç çağrısı içinde tutarlıdır,
   çağrılar arasında değil.

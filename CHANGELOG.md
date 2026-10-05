@@ -11,6 +11,16 @@
   Gönderim arka plandadır, isteği bekletmez.
 - `POST /v1/notify/test` (kanallara deneme mesajı), `telveguard_notifications_total` metriği.
 - Yönetim konsolu: `#olaylar?event=<id>` bağlantısı tek olayı açar (bildirimlerdeki "Konsolda aç").
+- Görsel ve PDF ekleri taranır (`attachments`): görseller Tesseract OCR (`tur+eng`), PDF'ler metin
+  katmanı + taranmış sayfa / gömülü görsel OCR'ı; metin dosyaları. Bulunan veri türleri aynı
+  kurallardan geçer, görsele gizli injection da yakalanır. Maskeleme: görselde alan karartılır
+  (üstüne yer tutucu, EXIF silinir), PDF modele maskeli metni olarak gider. Üç API biçimi ve
+  Claude Code araç sonuçlarındaki görsel / PDF'ler dahil.
+- Taranamayan ek (uzak adres, file_id, şifreli PDF, desteklenmeyen tür): yurt dışı hedefte
+  `unscannable: allow | alert | block`, kayıtta `ek-taranamadi` kuralı.
+- `telveguard_attachments_total`, `telveguard_attachment_scan_seconds` metrikleri; simülatör
+  cevabında `attachments`.
+- Docker imajına Tesseract (Türkçe + İngilizce) eklendi (~110 MB); `pillow`, `pypdfium2` bağımlılıkları.
 
 ## 0.2.1 — 2026-09-30
 

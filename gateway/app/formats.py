@@ -13,7 +13,12 @@ Format çevirisi YOKTUR: her biçim kendi türündeki upstream'e gider.
 argümanları JSON ise ayrıştırılıp YAPRAK string'ler ayrı parça olur: maskeli bir private key
 geri açılırken satır sonları JSON'u bozmasın. Anthropic "thinking" blokları imzalıdır;
 içeriği değişirse sonraki turda API reddeder, bu yüzden dokunulmaz.
+
+"Attachment": metin olmayan ek (görsel, PDF, dosya). Gövdedeki yeri ve kendi biçiminde
+nasıl değiştirileceği burada; tarama ve maskeleme attachments.py'de.
 """
+import base64
+import binascii
 import json
 import os
 from dataclasses import dataclass
@@ -52,6 +57,86 @@ class Part:
     @property
     def text(self) -> str:
         return self.get()
+
+
+@dataclass
+class Attachment:
+    """Metin olmayan ek. data None ise gateway içeriği göremez (uzak adres, file_id): taranamaz."""
+    role: str
+    media_type: str            # image/png, application/pdf, text/plain, ... ("" = bilinmiyor)
+    data: Optional[bytes]
+    name: str
+    unscannable_reason: str    # data None ise neden ("uzak adres", "file_id", ...)
+    set_image: Callable[[bytes, str], None]    # karartılmış görseli yerine koy (bayt, tür)
+    set_text: Callable[[str], None]            # eki maskeli metniyle değiştir
+
+
+def _decode(b64: Any) -> Optional[bytes]:
+    if not isinstance(b64, str):
+        return None
+    try:
+        return base64.b64decode(b64, validate=False)
+    except (ValueError, binascii.Error):
+        return None
+
+
+def _data_url(url: Any) -> Tuple[str, Optional[bytes]]:
+    """data:<tür>;base64,<veri> -> (tür, bayt). Data URL değilse ("", None)."""
+    if not isinstance(url, str) or not url.startswith("data:") or ";base64," not in url[:200]:
+        return "", None
+    head, _, payload = url.partition(",")
+    return head[5:].split(";")[0].lower(), _decode(payload)
+
+
+def _no_image(*_) -> None:
+    """Dosya alanına görsel geri konamaz: çağıran metne çevirir (set_text)."""
+    raise NotImplementedError
+
+
+def _remote(role: str, media_type: str, name: str, reason: str) -> Attachment:
+    def _no(*_):
+        raise RuntimeError("taranamayan ek değiştirilemez")
+    return Attachment(role, media_type, None, name, reason, _no, _no)
+
+
+def _openai_attachment(p: Dict[str, Any], role: str, chat: bool) -> Optional[Attachment]:
+    """Chat: image_url / file / input_audio; Responses: input_image / input_file."""
+    t = p.get("type")
+    text_type = "text" if chat else "input_text"
+
+    def replace_with_text(text: str) -> None:
+        p.clear()
+        p.update({"type": text_type, "text": text})
+
+    if t in ("image_url", "input_image"):
+        holder, key = (p.get("image_url"), "url") if t == "image_url" else (p, "image_url")
+        url = holder.get(key) if isinstance(holder, dict) else None
+        if not isinstance(url, str):
+            return _remote(role, "image/*", "görsel", "file_id") if p.get("file_id") else None
+        mt, data = _data_url(url)
+        if data is None:
+            return _remote(role, mt or "image/*", "görsel", "uzak adres")
+
+        def set_image(b: bytes, media_type: str) -> None:
+            holder[key] = f"data:{media_type};base64,{base64.b64encode(b).decode()}"
+        return Attachment(role, mt, data, "görsel", "", set_image, replace_with_text)
+
+    if t in ("file", "input_file"):
+        f = p.get("file") if t == "file" else p
+        if not isinstance(f, dict):
+            return None
+        name = str(f.get("filename") or "dosya")
+        if not isinstance(f.get("file_data"), str):
+            return _remote(role, "", name, "uzak adres" if f.get("file_url") else "file_id")
+        mt, data = _data_url(f["file_data"])
+        if data is None:  # bazı istemciler önek olmadan gönderir
+            data = _decode(f["file_data"])
+        return Attachment(role, mt, data, name, "" if data is not None else "çözülemedi",
+                          _no_image, replace_with_text)
+
+    if t == "input_audio":
+        return _remote(role, "audio/*", "ses", "ses kaydı")
+    return None
 
 
 def _key(container: Any, key: Any, role: str) -> Part:
@@ -111,6 +196,9 @@ class ApiFormat:
     def response_parts(self, resp: Dict[str, Any]) -> List[Part]:
         raise NotImplementedError
 
+    def request_attachments(self, body: Dict[str, Any]) -> List[Attachment]:
+        return []
+
     def upstream(self, destination: str, headers) -> Optional[Tuple[str, Dict[str, str]]]:
         raise NotImplementedError
 
@@ -150,6 +238,15 @@ class OpenAIChat(ApiFormat):
             for call in msg.get("tool_calls") or []:
                 parts.extend(_json_string(call.get("function") or {}, "arguments", role))
         return parts
+
+    def request_attachments(self, body):
+        out: List[Attachment] = []
+        for msg in body.get("messages", []):
+            if isinstance(msg, dict) and isinstance(msg.get("content"), list):
+                role = "tool" if msg.get("role") in ("tool", "function") else msg.get("role", "user")
+                out.extend(a for p in msg["content"] if isinstance(p, dict)
+                           for a in [_openai_attachment(p, role, chat=True)] if a)
+        return out
 
     def response_parts(self, resp):
         parts: List[Part] = []
@@ -222,9 +319,29 @@ class OpenAIResponses(OpenAIChat):
                 if isinstance(item.get("output"), str):
                     parts.append(_key(item, "output", "tool"))
                 elif isinstance(item.get("output"), list):
-                    parts.extend(_leaves(item["output"], "tool"))
+                    parts.extend(p for o in item["output"]
+                                 if not (isinstance(o, dict) and o.get("type") in ("input_image", "input_file"))
+                                 for p in _leaves([o], "tool"))
             # reasoning vb.: dokunulmaz
         return parts
+
+    def request_attachments(self, body):
+        out: List[Attachment] = []
+        if not isinstance(body.get("input"), list):
+            return out
+        for item in body["input"]:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "function_call_output" and isinstance(item.get("output"), list):
+                blocks, role = item["output"], "tool"
+            elif isinstance(item.get("content"), list):
+                role = item.get("role", "user")
+                blocks, role = item["content"], ("system" if role == "developer" else role)
+            else:
+                continue
+            out.extend(a for p in blocks if isinstance(p, dict)
+                       for a in [_openai_attachment(p, role, chat=False)] if a)
+        return out
 
     def response_parts(self, resp):
         parts: List[Part] = []
@@ -319,8 +436,54 @@ class AnthropicMessages(ApiFormat):
                 parts.extend(_leaves(b.get("input") or {}, "assistant"))
             elif t == "document" and (b.get("source") or {}).get("type") == "text":
                 parts.append(_key(b["source"], "data", role))
-            # thinking / redacted_thinking: imzalı, dokunulmaz. image / base64 belge: metin değil.
+            elif t == "document" and (b.get("source") or {}).get("type") == "content":
+                parts.extend(AnthropicMessages._blocks(b["source"].get("content") or [], role))
+            # thinking / redacted_thinking: imzalı, dokunulmaz. image / base64 belge: request_attachments
         return parts
+
+    @staticmethod
+    def _attachments(blocks: List[Any], role: str) -> List[Attachment]:
+        out: List[Attachment] = []
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            t, src = b.get("type"), b.get("source")
+            if t == "tool_result" and isinstance(b.get("content"), list):
+                out.extend(AnthropicMessages._attachments(b["content"], "tool"))
+                continue
+            if t == "document" and isinstance(src, dict) and src.get("type") == "content":
+                out.extend(AnthropicMessages._attachments(src.get("content") or [], role))
+                continue
+            if t not in ("image", "document") or not isinstance(src, dict) or src.get("type") == "text":
+                continue
+            name = str(b.get("title") or ("görsel" if t == "image" else "belge"))
+            if src.get("type") != "base64":
+                out.append(_remote(role, src.get("media_type", ""), name,
+                                   "uzak adres" if src.get("type") == "url" else "file_id"))
+                continue
+            data = _decode(src.get("data"))
+
+            def set_image(b_: bytes, media_type: str, s=src) -> None:
+                s.update({"media_type": media_type, "data": base64.b64encode(b_).decode()})
+
+            def set_text(text: str, blk=b) -> None:
+                # Görsel ya da PDF: metin belgesine dönüşür (başlık, önbellek ayarı korunur)
+                keep = {k: v for k, v in blk.items() if k in ("title", "cache_control", "context")}
+                blk.clear()
+                blk.update({"type": "document", **keep,
+                            "source": {"type": "text", "media_type": "text/plain", "data": text}})
+            out.append(Attachment(role, str(src.get("media_type", "")).lower(), data, name,
+                                  "" if data is not None else "çözülemedi", set_image, set_text))
+        return out
+
+    def request_attachments(self, body):
+        out: List[Attachment] = []
+        if isinstance(body.get("system"), list):
+            out.extend(self._attachments(body["system"], "system"))
+        for msg in body.get("messages", []):
+            if isinstance(msg, dict) and isinstance(msg.get("content"), list):
+                out.extend(self._attachments(msg["content"], msg.get("role", "user")))
+        return out
 
     def request_parts(self, body):
         parts: List[Part] = []

@@ -92,6 +92,17 @@ output_rules:
     action: mask
     mode: monitor
 
+# Ekler: görseller (OCR, Türkçe + İngilizce) ve PDF'ler taranır; bulunan veri türleri metinle
+# aynı kurallardan geçer. Maskeleme gerekirse görselde ilgili alan karartılır (üstüne [TCKN_1]
+# yazılır), PDF / metin dosyası modele maskeli metni olarak gider.
+# Taranamayan ek (uzak adres, file_id, şifreli PDF, desteklenmeyen tür, boyut sınırı):
+# yalnızca yurt dışı hedefte unscannable uygulanır ve "ek-taranamadi" kuralı kayda geçer.
+attachments:
+  ocr: true
+  max_bytes: 20000000           # 20 MB
+  max_pages: 30
+  unscannable: alert            # allow | alert | block (önce alert ile ne kadar olduğunu görün)
+
 # Anlık bildirim: Slack / Microsoft Teams / genel webhook (SIEM). Adres YAML'a yazılmaz:
 # url_env, "_WEBHOOK_URL" ile biten ortam değişkeninin adıdır; değişken boşsa kanal kapalıdır.
 # Koşullar: actions, rules (joker), entity_in, teams, sources (gateway | browser). Hepsi sağlanmalı.
