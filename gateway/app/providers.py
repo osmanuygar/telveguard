@@ -4,7 +4,7 @@ Model adına göre sağlayıcı yönlendirmesi (politika dosyasındaki `provider
     providers:
       - name: Google Gemini
         match: ["gemini-"]                 # model adı önekleri
-        type: openai                       # openai | azure | anthropic
+        type: openai                       # openai | azure (chat, responses, embeddings) | anthropic
         url: https://generativelanguage.googleapis.com/v1beta/openai
         key_env: GEMINI_API_KEY            # anahtar ortam değişkeninden okunur, YAML'a yazılmaz
         destination: external              # internal | external (KVKK md. 9)
@@ -31,7 +31,8 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 log = logging.getLogger("telveguard.providers")
 
-TYPES = {"openai": {"chat", "responses"}, "azure": {"chat", "responses"}, "anthropic": {"messages"}}
+TYPES = {"openai": {"chat", "responses", "embeddings"}, "azure": {"chat", "responses", "embeddings"},
+         "anthropic": {"messages"}}
 DESTINATIONS = {"internal", "external"}
 ANTHROPIC_VERSION = "2023-06-01"
 # Politika dosyası yalnızca *_KEY adlı değişkenleri isteyebilir: yanlış / kötü niyetli bir
@@ -40,7 +41,7 @@ KEY_ENV_RX = re.compile(r"^[A-Z][A-Z0-9_]*_KEY$")
 
 # İstek biçimi -> sağlayıcı tipine göre yol
 _PATHS = {
-    "openai": {"chat": "/chat/completions", "responses": "/responses"},
+    "openai": {"chat": "/chat/completions", "responses": "/responses", "embeddings": "/embeddings"},
     "anthropic": {"messages": "/v1/messages", "count_tokens": "/v1/messages/count_tokens"},
 }
 
@@ -90,7 +91,8 @@ class Provider:
         if kind == "responses":
             return f"{base}/openai/responses?api-version={self.api_version}", h
         deployment = self.deployments.get(model, model)
-        return f"{base}/openai/deployments/{deployment}/chat/completions?api-version={self.api_version}", h
+        op = "embeddings" if kind == "embeddings" else "chat/completions"
+        return f"{base}/openai/deployments/{deployment}/{op}?api-version={self.api_version}", h
 
 
 class ProviderError(ValueError):

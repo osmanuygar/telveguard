@@ -372,7 +372,7 @@ const entityLabel = (e) => ENTITY_LABELS[e] || (e.startsWith("SECRET_") ? "Sır:
 const isSecret = (e) => e.startsWith("SECRET_");
 
 const FORMAT_LABELS = { chat: "OpenAI chat", responses: "OpenAI responses", messages: "Anthropic / Claude",
-  browser: "Tarayıcı (gölge AI)" };
+  embeddings: "Embeddings (RAG)", browser: "Tarayıcı (gölge AI)" };
 const DEST_LABELS = { internal: "Kurum içi", external: "Yurt dışı" };
 
 // İşlem serileri: sabit kategorik sıra (renk varlığa bağlı, sıralamaya değil). Simge + etiket her zaman yanında.

@@ -46,6 +46,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"input_tokens": len(json.dumps(body).split())})
         if self.path.endswith("/v1/messages"):
             return self._json(self._anthropic(body, model))
+        if self.path.endswith("/embeddings"):
+            return self._json(self._embeddings(body, model))
         if self.path.endswith("/responses"):
             return self._json(self._responses(body, model))
         return self._json(self._chat(body, model))
@@ -70,6 +72,14 @@ class Handler(BaseHTTPRequestHandler):
                 "stop_sequence": None,
                 "usage": {"input_tokens": len(json.dumps(body).split()), "output_tokens": 5},
                 "mock_received_system": body.get("system"), "mock_received_last": last}
+
+    def _embeddings(self, body, model):
+        inp = body["input"] if isinstance(body["input"], list) else [body["input"]]
+        return {"object": "list", "model": model,
+                "data": [{"object": "embedding", "index": i, "embedding": [0.1, 0.2, 0.3]} for i in range(len(inp))],
+                "usage": {"prompt_tokens": sum(len(str(x).split()) for x in inp),
+                          "total_tokens": sum(len(str(x).split()) for x in inp)},
+                "mock_received_input": body["input"], "mock_received_keys": sorted(body)}
 
     def _responses(self, body, model):
         inp = body.get("input")

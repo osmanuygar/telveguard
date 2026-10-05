@@ -165,3 +165,6 @@ pricing:
   # Diğer sağlayıcılar: kendi sözleşme fiyatlarınızla doldurun
   # - { match: "gpt-4o", input: ..., output: ... }
   # - { match: "gemini-", input: ..., output: ... }
+  # Embedding modelleri (yalnızca girdi token'ı)
+  # - { match: "text-embedding-3-small", input: ..., output: 0 }
+  # - { match: "text-embedding-3-large", input: ..., output: 0 }

@@ -6,6 +6,7 @@ metin nerede, upstream nereye, token kullanımı nasıl okunur, hata ve stream n
   chat      OpenAI  POST /v1/chat/completions   (OpenAI SDK, LangChain, Open WebUI, ...)
   responses OpenAI  POST /v1/responses          (OpenAI Responses API, Codex CLI)
   messages  Anthropic POST /v1/messages         (Claude SDK, Claude Code)
+  embeddings OpenAI POST /v1/embeddings         (RAG / vektör veritabanı indeksleme)
 
 Format çevirisi YOKTUR: her biçim kendi türündeki upstream'e gider.
 
@@ -186,6 +187,7 @@ def _sse(event: Optional[str], data: dict) -> bytes:
 class ApiFormat:
     name = ""
     injection_roles = {"user", "tool"}  # system / assistant uygulamanın kendi metni sayılır
+    streams = True                      # stream parametresi var mı (embeddings: yok)
 
     def validate(self, body: Dict[str, Any]) -> Optional[str]:
         raise NotImplementedError
@@ -403,6 +405,57 @@ class OpenAIResponses(OpenAIChat):
         yield ev({"type": "response.completed", "response": resp})
 
 
+class OpenAIEmbeddings(OpenAIChat):
+    """input: metin, metin listesi ya da token dizisi. Cevap vektördür: geri açılacak ya da
+    taranacak metin yoktur. Injection taranmaz: embedding modeli talimat izlemez; güvenlik
+    belgesi gibi "talimatları yok say" geçen metinlerin indekslenmesi engellenmesin. Belge
+    sonradan sohbete getirildiğinde (RAG) zaten taranır."""
+    name = "embeddings"
+    injection_roles: set = set()
+    streams = False
+    MAX_INPUTS = 2048
+
+    @staticmethod
+    def _is_tokens(x: Any) -> bool:
+        return isinstance(x, list) and all(isinstance(t, int) and not isinstance(t, bool) for t in x)
+
+    def validate(self, body):
+        inp = body.get("input")
+        if isinstance(inp, str) or self._is_tokens(inp) and inp:
+            return None
+        if isinstance(inp, list) and inp and len(inp) <= self.MAX_INPUTS and \
+                (all(isinstance(x, str) for x in inp) or all(self._is_tokens(x) for x in inp)):
+            return None
+        return f"'input' bir metin, en fazla {self.MAX_INPUTS} metinlik liste ya da token dizisi olmalı."
+
+    def request_parts(self, body):
+        inp = body.get("input")
+        if isinstance(inp, str):
+            return [_key(body, "input", "user")]
+        if isinstance(inp, list):
+            return [_key(inp, i, "user") for i, x in enumerate(inp) if isinstance(x, str)]
+        return []
+
+    def request_attachments(self, body):
+        # Token dizisi metne çevrilemez (sağlayıcının tokenizer'ı gerekir): taranamaz
+        inp = body.get("input")
+        if self._is_tokens(inp) or isinstance(inp, list) and inp and self._is_tokens(inp[0]):
+            return [_remote("user", "", "token dizisi", "metin yerine token dizisi")]
+        return []
+
+    def response_parts(self, resp):
+        return []
+
+    def upstream(self, destination, headers):
+        url, h = OpenAIChat.upstream(self, destination, headers)
+        return url.rsplit("/chat/completions", 1)[0] + "/embeddings", h
+
+    def usage(self, resp):
+        u = (resp or {}).get("usage") or {}
+        pt = int(u.get("prompt_tokens") or u.get("total_tokens") or 0)
+        return pt, 0, pt, bool(u)
+
+
 _ANTHROPIC_ERRORS = {400: "invalid_request_error", 401: "authentication_error", 403: "permission_error",
                      404: "not_found_error", 413: "request_too_large", 429: "rate_limit_error"}
 
@@ -570,5 +623,5 @@ class AnthropicMessages(ApiFormat):
         yield _sse("message_stop", {"type": "message_stop"})
 
 
-CHAT, RESPONSES, MESSAGES = OpenAIChat(), OpenAIResponses(), AnthropicMessages()
-FORMATS = {f.name: f for f in (CHAT, RESPONSES, MESSAGES)}
+CHAT, RESPONSES, MESSAGES, EMBEDDINGS = OpenAIChat(), OpenAIResponses(), AnthropicMessages(), OpenAIEmbeddings()
+FORMATS = {f.name: f for f in (CHAT, RESPONSES, MESSAGES, EMBEDDINGS)}

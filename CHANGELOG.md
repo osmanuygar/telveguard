@@ -20,6 +20,10 @@
   `unscannable: allow | alert | block`, kayıtta `ek-taranamadi` kuralı.
 - `telveguard_attachments_total`, `telveguard_attachment_scan_seconds` metrikleri; simülatör
   cevabında `attachments`.
+- `POST /v1/embeddings` (OpenAI biçimi): RAG indeksleme trafiğinde kişisel veri maskeleme, politika,
+  kota, denetim kaydı ve Röntgen'de ayrı kırılım. Injection taranmaz (embedding modeli talimat
+  izlemez); token dizisi girdisi taranamaz sayılır. Sağlayıcı tipleri `openai` ve `azure`
+  (klasik `deployments` dahil) embeddings'i yönlendirir; simülatörde `?format=embeddings`.
 - Docker imajına Tesseract (Türkçe + İngilizce) eklendi (~110 MB); `pillow`, `pypdfium2` bağımlılıkları.
 
 ## 0.2.1 — 2026-09-30

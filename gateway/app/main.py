@@ -36,7 +36,7 @@ from . import xray as xray_mod
 from .audit import AuditSink
 from .auth import AuthError, Authenticator, Identity
 from .quota import QuotaBackendError, QuotaManager
-from .formats import CHAT, FORMATS, MESSAGES, RESPONSES, UPSTREAM_KEYS, UPSTREAMS, ApiFormat, Part  # noqa: F401
+from .formats import CHAT, EMBEDDINGS, FORMATS, MESSAGES, RESPONSES, UPSTREAM_KEYS, UPSTREAMS, ApiFormat, Part  # noqa: F401
 from telveguard_core.detectors.injection import InjectionDetector, InjectionResult
 from telveguard_core.pii.engine import TrPiiEngine
 from telveguard_core.policy import Context, Decision, PolicyEngine
@@ -274,6 +274,11 @@ async def messages(request: Request):
     return await _timed(request, MESSAGES)
 
 
+@app.post("/v1/embeddings")
+async def embeddings(request: Request):
+    return await _timed(request, EMBEDDINGS)
+
+
 async def _timed(request: Request, fmt: ApiFormat):
     t0 = time.perf_counter()
     request.state.destination = "none"  # kimlik / gövde hatasında (sınırlı etiket)
@@ -309,7 +314,8 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
     async def audit(masked_prompt=None, upstream_status=None, **extra):
         ev = st.audit.build_event(
             user=a.user, team=a.team, model=model, destination=destination, decision=decision,
-            entities=a.entities, injection=a.injection, prompt=a.full_text,
+            entities=a.entities, injection=a.injection,
+            prompt=a.full_text if fmt.injection_roles else a.all_text,   # embeddings: tüm girdi
             masked_prompt=masked_prompt, latency_ms=(time.perf_counter() - t0) * 1000,
             upstream_status=upstream_status,
         )
@@ -379,7 +385,8 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
         return StreamingResponse(relay(), status_code=resp.status_code,
                                  media_type=resp.headers.get("content-type", "text/event-stream"))
 
-    body["stream"] = False
+    if fmt.streams:
+        body["stream"] = False
     t_up = time.perf_counter()
     try:
         resp = await st.http.post(url, json=body, headers=headers)
@@ -471,12 +478,12 @@ async def messages_count_tokens(request: Request):
 @app.post("/v1/policy/simulate")
 async def policy_simulate(request: Request, format: str = "chat"):
     """Bir isteğin politikadan nasıl geçeceğini gösterir; upstream'e gitmez, denetime yazılmaz.
-    Gövde ilgili API'ninkiyle aynıdır (?format=chat|responses|messages)."""
+    Gövde ilgili API'ninkiyle aynıdır (?format=chat|responses|messages|embeddings)."""
     if err := await _require_admin(request):
         return err
     fmt = FORMATS.get(format)
     if fmt is None:
-        return _openai_error(400, "format chat, responses ya da messages olmalı.", "invalid_request",
+        return _openai_error(400, "format chat, responses, messages ya da embeddings olmalı.", "invalid_request",
                              "invalid_request_error")
     body, err = await _read_body(request, fmt)
     if err:

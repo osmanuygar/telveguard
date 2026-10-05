@@ -99,12 +99,21 @@ Kapatmak için: `docker compose -f docker-compose.yml -f docker-compose.test.yml
 | `POST /v1/chat/completions` | OpenAI Chat | OpenAI SDK, LangChain, LlamaIndex, Open WebUI, LibreChat, Continue, Aider | `http://telveguard:8080/v1` |
 | `POST /v1/responses` | OpenAI Responses | OpenAI SDK (`client.responses`), Codex CLI | `http://telveguard:8080/v1` |
 | `POST /v1/messages` (+ `/count_tokens`) | Anthropic Messages | Claude SDK, **Claude Code**, Cline / Roo (Anthropic modu) | `http://telveguard:8080` |
+| `POST /v1/embeddings` | OpenAI Embeddings | RAG indeksleme: LangChain, LlamaIndex, vektör veritabanı yükleyicileri | `http://telveguard:8080/v1` |
 
-Üçünde de aynı koruma çalışır: kimlik, Türkçe PII ve sır maskeleme, injection engelleme,
+Hepsinde aynı koruma çalışır: kimlik, Türkçe PII ve sır maskeleme, injection engelleme,
 politika, çıktı koruması, denetim kaydı, Röntgen ve metrikler. Taranan yerler yalnızca
 mesajlar değildir: system prompt, araç sonuçları (dosya içerikleri, web sayfaları — dolaylı
 injection dahil) ve araç çağrısı argümanları da taranır. Model, maskeli bir sırrı araç
 çağrısıyla dosyaya yazarsa (Claude Code) istemciye giden çağrıda gerçek değer geri konur.
+
+**Embeddings:** RAG için belgeler vektöre çevrilirken kişisel veri yurt dışı modele maskeli
+gider (`Müşteri [TCKN_1] ...`); vektör veritabanına da maskeli metnin vektörü yazılır. Aynı
+istekteki belgelerde aynı değer aynı yer tutucuyu alır. Injection taranmaz: embedding modeli
+talimat izlemez, "talimatları yok say" geçen bir güvenlik belgesinin indekslenmesi engellenmesin;
+belge sonradan sohbete getirildiğinde zaten taranır. Bir belge engelleme kuralına takılırsa
+istekteki tüm liste reddedilir. Token dizisi (`input: [101, 2023, ...]`) metne çevrilemediği
+için taranamaz sayılır (`attachments.unscannable`).
 
 Biçim çevirisi yoktur: OpenAI biçimi OpenAI uyumlu upstream'e, Anthropic biçimi Anthropic
 API'sine (`UPSTREAM_ANTHROPIC_URL`) gider. Anthropic biçimini kurum içi bir modele göndermek
@@ -135,8 +144,8 @@ providers:
 
 | Tip | Kabul ettiği biçim | Örnekler |
 |---|---|---|
-| `openai` | chat, responses | OpenAI, Gemini, Mistral, DeepSeek, Groq, xAI, OpenRouter, vLLM, Ollama |
-| `azure` | chat, responses | Azure OpenAI; `api_version` yoksa v1 API, varsa `deployments` eşlemeli klasik API |
+| `openai` | chat, responses, embeddings | OpenAI, Gemini, Mistral, DeepSeek, Groq, xAI, OpenRouter, vLLM, Ollama |
+| `azure` | chat, responses, embeddings | Azure OpenAI; `api_version` yoksa v1 API, varsa `deployments` eşlemeli klasik API |
 | `anthropic` | messages | Anthropic, Anthropic uyumlu kurum içi sunucu |
 
 - Sağlayıcının `destination`'ı (varsayılan `external`) politikadaki öneklerden önce gelir: veri
@@ -618,7 +627,7 @@ baktığı izlenebilir.
 | `GET /v1/reports/kvkk-transfer?month=2026-09` | KVKK yurt dışı aktarım raporu (CSV; `&format=json` da olur) |
 | `GET /v1/inventory?days=90` | AI envanteri: beyan edilen sistemler, risk sınıfı, yükümlülükler, beyan edilmemiş kullanımlar |
 | `GET /v1/reports/verbis?format=csv\|json` | VERBİS başlıklarına eşlenmiş taslak |
-| `POST /v1/policy/simulate?format=chat\|responses\|messages` | Bir isteğe verilecek karar, işaretli metin bölümleri ve modele gidecek maskeli gövde |
+| `POST /v1/policy/simulate?format=chat\|responses\|messages\|embeddings` | Bir isteğe verilecek karar, işaretli metin bölümleri ve modele gidecek maskeli gövde |
 
 Tarayıcı eklentisi olayları ayrı bir uçtan gelir: `POST /v1/shadow-ai/events`
 (`Authorization: Bearer <SHADOW_AI_TOKEN>`; tanımlı değilse kapalı).
