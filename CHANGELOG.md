@@ -1,5 +1,17 @@
 # Değişiklik günlüğü
 
+## Yayımlanmamış
+
+### Gateway (Docker imajı / Helm chart)
+
+- Anlık bildirim (`notify`): engellenen istek, sızan sır, kota aşımı, gölge AI uyarısı Slack,
+  Microsoft Teams (Workflows, Adaptive Card) ya da genel webhook'a (SIEM). Kanal başına koşul
+  (`actions`, `rules`, `entity_in`, `teams`, `sources`) ve tekrar bastırma (`cooldown_seconds`).
+  Mesajda metin yoktur, yalnızca veri türleri; adres `*_WEBHOOK_URL` ortam değişkeninden okunur.
+  Gönderim arka plandadır, isteği bekletmez.
+- `POST /v1/notify/test` (kanallara deneme mesajı), `telveguard_notifications_total` metriği.
+- Yönetim konsolu: `#olaylar?event=<id>` bağlantısı tek olayı açar (bildirimlerdeki "Konsolda aç").
+
 ## 0.2.1 — 2026-09-30
 
 PyPI paketlerinde (telveguard-core, telveguard-contextforge) kod değişikliği yoktur; sürüm
