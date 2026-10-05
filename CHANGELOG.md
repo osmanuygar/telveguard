@@ -31,6 +31,12 @@
   denetim kaydına `subject_hashes` olarak yazılır; anahtar yoksa kapalı.
 - **Şema değişikliği:** `audit.subject_hashes` (+ bloom filter indeksi). Mevcut kurulumda
   `clickhouse/migrations/0.3.0-subject-hashes.sql` bir kez çalıştırılmalı. Helm: `secrets.subjectHashKey`.
+- Kurumsal sözlük (`dictionary`): proje kod adları, müşteri unvanları, iç sunucu adları gibi
+  terimler (liste, dosya ya da düzenli ifade) `KURUM_*` türüyle tespit edilip kurallardan geçer;
+  yurt dışı modele maskeli gider, cevapta geri açılır. Türkçe büyük / küçük harf ve boşluk farkından
+  bağımsız, tam kelime; on binlerce terim ağaç biçimli tek düzenli ifadeyle taranır. Kişisel veri
+  sayılmaz (KVKK raporu ve VERBİS dışında). Varsayılan politikada örnek sözlük ve
+  `kurum-terimleri-yurtdisi-maskele` kuralı.
 - Docker imajına Tesseract (Türkçe + İngilizce) eklendi (~110 MB); `pillow`, `pypdfium2` bağımlılıkları.
 
 ## 0.2.1 — 2026-09-30

@@ -56,8 +56,10 @@ _WINDOW = ("event_time >= now() - INTERVAL {days:UInt32} DAY "
            "AND ({team:String} = '' OR team = {team:String})")
 
 # Yurt dışına maskelenmeden giden kişisel veri: dış hedef, engellenmemiş, en az bir PII
-# türü maskelenmemiş. Sırlar (SECRET_*) kişisel veri değil, ayrı sayılır.
-_UNMASKED_PII = ("arrayExists(e -> NOT startsWith(e, 'SECRET_') AND NOT has(masked_entities, e), entities)")
+# türü maskelenmemiş. Sırlar (SECRET_*) ve kurumsal sözlük terimleri (KURUM_*) kişisel veri
+# değil, ayrı sayılır.
+_NOT_PII = "(startsWith(e, 'SECRET_') OR startsWith(e, 'KURUM_'))"
+_UNMASKED_PII = f"arrayExists(e -> NOT {_NOT_PII} AND NOT has(masked_entities, e), entities)"
 
 XRAY_QUERIES = {
     "summary": f"""
@@ -189,7 +191,7 @@ KVKK_QUERY = """
            countIf(action != 'block' AND has(masked_entities, entity)) AS masked_sent,
            countIf(action != 'block' AND NOT has(masked_entities, entity)) AS unmasked_sent
     FROM audit ARRAY JOIN entities AS entity
-    WHERE destination = 'external' AND NOT startsWith(entity, 'SECRET_')
+    WHERE destination = 'external' AND NOT startsWith(entity, 'SECRET_') AND NOT startsWith(entity, 'KURUM_')
       AND event_time >= toDateTime({start:Date}, 'Europe/Istanbul')
       AND event_time <  toDateTime({end:Date}, 'Europe/Istanbul')
     GROUP BY team, model, entity

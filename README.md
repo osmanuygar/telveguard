@@ -27,6 +27,8 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 **Koruma**
 - **Türkçe kişisel veri:** TCKN, VKN, IBAN, kart (sağlama toplamıyla; rastgele 11 haneli sayı TCKN
   sayılmaz), telefon, e-posta, plaka; opsiyonel Türkçe NER ile kişi / kurum / yer adları.
+- **Kurumsal sözlük:** proje kod adları, müşteri unvanları, iç sunucu adları gibi kişisel veri
+  olmayan ama dışarı çıkmaması gereken terimler (terim listesi, dosya ya da düzenli ifade).
 - **Sırlar:** AWS, GitHub, OpenAI, Anthropic, Slack, Google, Stripe anahtarları, JWT, private key,
   parolalı bağlantı dizeleri, `şifre: ...`.
 - **Prompt injection:** Türkçe ve İngilizce, araç çıktılarına ve web içeriğine gizlenmiş saldırılar dahil.
@@ -362,6 +364,38 @@ Bir isteğin politikadan nasıl geçeceğini görmek için (upstream'e gitmez):
 curl -s localhost:8080/v1/policy/simulate -H 'Authorization: Bearer <yönetici token>' \
   -H 'content-type: application/json' -d '{"model":"gpt-4o","messages":[...]}'
 ```
+
+### Kurumsal sözlük
+
+Kişisel veri olmayan ama kurum dışına çıkmaması gereken terimler: proje kod adları, müşteri
+unvanları, iç sunucu ve alan adları, ürün kodları. Bulunan terim `KURUM_*` türüyle diğer veriler
+gibi kurallardan geçer: yurt dışı modele `[KURUM_PROJE_1]` olarak gider, cevapta geri açılır;
+kayda, Röntgen'e ve bildirimlere düşer.
+
+```yaml
+dictionary:
+  - entity: KURUM_PROJE                  # "KURUM_" ile başlar
+    label: Proje kod adı                 # konsolda görünen ad
+    terms: ["Proje Anka", "Proje Turna"]
+  - entity: KURUM_MUSTERI
+    label: Müşteri unvanı
+    terms_file: kurum/musteriler.txt     # satır başına bir terim (# yorum); politika dosyasına göre göreli
+  - entity: KURUM_SUNUCU
+    patterns: ['[a-z0-9][a-z0-9.-]*\.sirket\.local']
+
+rules:
+  - name: kurum-terimleri-yurtdisi-maskele
+    when: { destination: external, entity_in: ["KURUM_*"] }
+    action: mask
+```
+
+- Büyük / küçük harf (Türkçe İ/ı dahil) ve boşluk farkı önemsizdir; kelimenin parçası eşleşmez
+  (`Anka` terimi "Ankara"yı yakalamaz). `case_sensitive: true`, `whole_word: false` ile değiştirilir.
+- On binlerce terim (ör. tüm müşteri listesi) tek bir düzenli ifadede ağaç biçiminde birleştirilir;
+  tarama süresi terim sayısıyla artmaz.
+- Terimler kişisel veri sayılmaz: KVKK yurt dışı aktarım raporuna, VERBİS'e ve "yurt dışına
+  maskesiz kişisel veri" sayacına girmez. `/v1/policy/info` terimlerin kendisini değil sayısını döner.
+- Genel kelimelerden kaçının: ilçe adıyla aynı bir kod adı ("Kartal") her adres metninde eşleşir.
 
 ## Kurulum (OKD / OpenShift)
 
@@ -766,6 +800,8 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
   Kimlik / dekont fotoğrafı yüklenen ekipler için `unscannable: block` ile birlikte görsel
   eklerini tamamen engelleyen bir ekip kuralı düşünün. OCR görsel başına ~0,5-2 sn ekler.
 - Kota, maskesiz gerçek streaming isteklerinde yalnızca istek sayısını sayar (token bilgisi gelmez).
+- Kurumsal sözlük şimdilik yalnızca gateway'de çalışır; tarayıcı eklentisi ve ContextForge
+  eklentisi sözlüğü kullanmaz.
 - ContextForge'da yer tutucu numaraları (`[TCKN_1]`) tek araç çağrısı içinde tutarlıdır,
   çağrılar arasında değil.
 

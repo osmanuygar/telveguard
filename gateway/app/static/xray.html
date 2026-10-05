@@ -412,8 +412,12 @@ function costText(total, unknown) {
 const ENTITY_LABELS = { TCKN: "T.C. kimlik no", VKN: "Vergi kimlik no", IBAN_TR: "IBAN", CREDIT_CARD: "Kredi kartı",
   PHONE_TR: "Telefon", EMAIL_ADDRESS: "E-posta", PLATE_TR: "Araç plakası", PERSON: "Kişi adı",
   LOCATION: "Konum", ORGANIZATION: "Kurum" };
-const entityLabel = (e) => ENTITY_LABELS[e] || (e.startsWith("SECRET_") ? "Sır: " + e.slice(7).toLowerCase().replace(/_/g, " ") : e);
+const entityLabel = (e) => ENTITY_LABELS[e]
+  || (e.startsWith("SECRET_") ? "Sır: " + e.slice(7).toLowerCase().replace(/_/g, " ")
+  : e.startsWith("KURUM_") ? (DICT_LABELS[e] || "Kurum: " + e.slice(6).toLowerCase().replace(/_/g, " ")) : e);
 const isSecret = (e) => e.startsWith("SECRET_");
+const isPii = (e) => !isSecret(e) && !e.startsWith("KURUM_");   // kurumsal sözlük kişisel veri değil
+const DICT_LABELS = {};   // politikadaki dictionary[].label (/v1/policy/info)
 
 const FORMAT_LABELS = { chat: "OpenAI chat", responses: "OpenAI responses", messages: "Anthropic / Claude",
   embeddings: "Embeddings (RAG)", browser: "Tarayıcı (gölge AI)" };
@@ -806,7 +810,7 @@ async function loadEvents(filters, append = false) {
 
 const fmtTime = (s) => { const [d, t] = (s || "").split(" "); return d ? `${d.split("-").reverse().join(".")} ${(t || "").slice(0, 8)}` : "–"; };
 const unmaskedExternal = (r) => r.destination === "external" && r.action !== "block"
-  ? r.entities.filter((e) => !isSecret(e) && !r.masked_entities.includes(e)) : [];
+  ? r.entities.filter((e) => isPii(e) && !r.masked_entities.includes(e)) : [];
 
 function entityChips(r) {
   const open = new Set(unmaskedExternal(r));
@@ -972,6 +976,7 @@ function refreshDatalists() {
 async function loadPolicyInfo() {
   if (policyInfo) return policyInfo;
   policyInfo = await apiJson("/v1/policy/info");
+  for (const d of policyInfo.dictionary || []) if (d.label) DICT_LABELS[d.entity] = d.label;
   // Kurum içi hedef önekinden denenebilir model adı: "vllm/" -> "vllm/model"
   for (const p of policyInfo.destinations.internal || []) knownModels.add(/[\/-]$/.test(p) ? p + "model" : p);
   for (const prov of policyInfo.providers || []) for (const m of prov.match) knownModels.add(/[\/-]$/.test(m) ? m + "model" : m);
@@ -1261,6 +1266,7 @@ function route() {
   document.title = { rontgen: "AI Kullanım Röntgeni", olaylar: "Olaylar", deneme: "Politika deneme",
     basvuru: "İlgili kişi başvurusu" }[view] + " · Telveguard";
   if (!token()) { setStatus("Yönetici token'ını sağ üstteki alana girin.", true); $("token").focus(); return; }
+  loadPolicyInfo().catch(() => null);   // kurumsal sözlük etiketleri vb.
   if (view === "rontgen" && !xrayLoaded) { xrayLoaded = true; loadXray(); }
   if (view === "olaylar") {
     const filters = Object.fromEntries(new URLSearchParams(qs || ""));

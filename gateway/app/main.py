@@ -28,6 +28,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 
 from . import attachments as attachments_mod
 from . import compliance
+from . import dictionary as dictionary_mod
 from . import shadow_ai
 from . import subjects as subjects_mod
 from . import metrics
@@ -51,6 +52,9 @@ async def lifespan(app: FastAPI):
     app.state.policy = PolicyEngine(policy_path)
     app.state.providers = providers_mod.load(policy_path)
     app.state.attachments = attachments_mod.load(policy_path)
+    # Kurumsal sözlük (proje adları, müşteri unvanları ...): PII motoruna tanıyıcı olarak eklenir
+    app.state.dictionary = dictionary_mod.load(policy_path)
+    app.state.dictionary.install(app.state.pii)
     app.state.audit = AuditSink()
     await app.state.audit.start()
     if not hasattr(app.state, "http"):  # testlerde MockTransport enjekte edilebilir
@@ -565,7 +569,8 @@ async def policy_info(request: Request):
     return {"default_action": pol.default_action, "mode": pol.mode, "destinations": pol.destinations,
             "rules": rules(pol.rules), "output_rules": rules(pol.output_rules), "teams": teams,
             "providers": request.app.state.providers.describe(),
-            "notify": request.app.state.notifier.describe()}
+            "notify": request.app.state.notifier.describe(),
+            "dictionary": request.app.state.dictionary.describe()}
 
 
 @app.post("/v1/notify/test")

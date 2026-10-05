@@ -39,6 +39,22 @@ destinations:
 #     match: ["qwen", "llama"]
 #     url: http://vllm:8000/v1
 #     destination: internal
+# Kurumsal sözlük: kişisel veri olmayan ama dışarı çıkmaması gereken terimler. Bulunanlar
+# KURUM_* türüyle diğer veriler gibi kurallardan geçer ([KURUM_PROJE_1] olarak maskelenir,
+# cevapta geri açılır). Kişisel veri sayılmaz: KVKK aktarım raporuna ve VERBİS'e girmez.
+# Büyük / küçük harf (Türkçe İ/ı dahil) fark etmez; kelimenin parçası eşleşmez ("Anka" != "Ankara").
+# Genel kelimelerden kaçının: ilçe adı olan bir kod adı ("Kartal") her adres metninde eşleşir.
+dictionary:
+  - entity: KURUM_PROJE
+    label: Proje kod adı
+    terms: ["Proje Anka", "Proje Turna"]       # örnek: kendi kod adlarınızla değiştirin
+  - entity: KURUM_SUNUCU
+    label: İç sunucu / alan adı
+    patterns: ['[a-z0-9][a-z0-9.-]*\.sirket\.local']   # örnek: iç DNS alanınız
+  # - entity: KURUM_MUSTERI
+  #   label: Müşteri unvanı
+  #   terms_file: kurum/musteriler.txt       # satır başına bir terim (bu dosyaya göre göreli)
+
 rules:
   - name: prompt-injection-block
     when: { injection_score_gte: 0.85 }
@@ -54,6 +70,11 @@ rules:
     when:
       destination: external
       entity_in: [TCKN, VKN, IBAN_TR, CREDIT_CARD, PHONE_TR, EMAIL_ADDRESS, PLATE_TR, PERSON]
+    action: mask
+
+  # Kurumsal sözlük terimleri yurt dışı modele gitmesin (kurum içi modelde serbest)
+  - name: kurum-terimleri-yurtdisi-maskele
+    when: { destination: external, entity_in: ["KURUM_*"] }
     action: mask
 
   # API anahtarı, token, private key, parolalı bağlantı dizesi: iç modelde bile maskele
