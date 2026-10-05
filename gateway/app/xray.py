@@ -311,6 +311,67 @@ async def events(ch: ClickHouse, filters: Dict[str, str], flag: str = "", before
             "next": {"before_ts": rows[-1]["ts"], "before_id": rows[-1]["event_id"]} if more and rows else None}
 
 
+# ---------------- ilgili kişi başvurusu (KVKK md. 11) ----------------
+
+SUBJECT_LIMIT = 1000
+SUBJECT_QUERY = """
+    SELECT toString(event_id) AS event_id, toString(event_time) AS event_time, team, user, model,
+           destination, if(api_format = '', 'chat', api_format) AS api_format, action, rules,
+           entities, masked_entities, arrayIntersect(subject_hashes, {hashes:Array(String)}) AS matched
+    FROM audit
+    WHERE event_time >= now() - INTERVAL {days:UInt32} DAY AND hasAny(subject_hashes, {hashes:Array(String)})
+    ORDER BY event_time DESC LIMIT {limit:UInt32}"""
+
+SUBJECT_STATUS = {
+    "blocked": "Engellendi; hiçbir yere gönderilmedi",
+    "internal": "Kurum içi modele gönderildi; yurt dışına aktarılmadı",
+    "masked": "Yurt dışı modele maskelenerek gönderildi; veri aktarılmadı",
+    "unmasked": "Yurt dışı modele maskelenmeden gönderildi (yurt dışına aktarım)",
+}
+
+
+def subject_status(ev: Dict[str, Any], entity: str) -> str:
+    if ev["action"] == "block":
+        return "blocked"
+    if ev["destination"] != "external":
+        return "internal"
+    return "masked" if entity in ev["masked_entities"] else "unmasked"
+
+
+async def subject_search(ch: ClickHouse, subjects: List[Dict[str, Any]], days: int,
+                         registry=None) -> Dict[str, Any]:
+    """subjects: SubjectIndex.resolve çıktısı (hatasız olanlar). Olay başına hangi değerin
+    eşleştiği ve verinin akıbeti; değer başına özet."""
+    by_hash = {h: s for s in subjects for h in s["hashes"]}
+    rows = await ch.query(SUBJECT_QUERY, {"hashes": list(by_hash), "days": days, "limit": SUBJECT_LIMIT + 1})
+    truncated = len(rows) > SUBJECT_LIMIT
+    countries = registry.countries() if registry else {}
+    # Anahtar nesne kimliği: iki farklı değerin maskeli etiketi aynı olabilir (son 4 hane)
+    events, summary = [], {id(s): {"label": s["label"], "entity": s["entity"],
+                                        "entity_label": ENTITY_LABELS.get(s["entity"], s["entity"]),
+                                        "events": 0, "first_seen": None, "last_seen": None,
+                                        **{k: 0 for k in SUBJECT_STATUS}, "recipients": {}}
+                           for s in subjects}
+    for r in rows[:SUBJECT_LIMIT]:
+        provider = provider_of(r["model"], registry)
+        hits = []
+        for subj in {id(by_hash[h]): by_hash[h] for h in r["matched"] if h in by_hash}.values():
+            status = subject_status(r, subj["entity"])
+            hits.append({"label": subj["label"], "entity": subj["entity"], "status": status})
+            agg = summary[id(subj)]
+            agg["events"] += 1
+            agg[status] += 1
+            agg["first_seen"] = r["event_time"] if not agg["first_seen"] else min(agg["first_seen"], r["event_time"])
+            agg["last_seen"] = r["event_time"] if not agg["last_seen"] else max(agg["last_seen"], r["event_time"])
+            if status == "unmasked":
+                key = f"{provider} ({countries[provider]})" if provider in countries else provider
+                agg["recipients"][key] = agg["recipients"].get(key, 0) + 1
+        events.append({k: r[k] for k in ("event_id", "event_time", "team", "user", "model", "destination",
+                                         "api_format", "action")} | {"provider": provider, "subjects": hits})
+    return {"summary": list(summary.values()), "events": events, "truncated": truncated,
+            "statuses": SUBJECT_STATUS}
+
+
 EVENT_DETAIL_QUERY = f"""
     SELECT {EVENT_COLUMNS}, prompt_sha256, masked_prompt, masked_count, output_scan
     FROM audit WHERE event_id = toUUID({{id:String}}) LIMIT 1"""

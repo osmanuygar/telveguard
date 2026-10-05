@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from . import attachments as attachments_mod
 from . import compliance
 from . import shadow_ai
+from . import subjects as subjects_mod
 from . import metrics
 from . import notify as notify_mod
 from . import providers as providers_mod
@@ -59,6 +60,7 @@ async def lifespan(app: FastAPI):
     if not hasattr(app.state, "ch"):  # testlerde sahte ClickHouse enjekte edilebilir
         app.state.ch = xray_mod.ClickHouse.from_env(app.state.http)
     app.state.auth = Authenticator.from_env(app.state.http)
+    app.state.subjects = subjects_mod.SubjectIndex.from_env()
     app.state.quota = QuotaManager.from_env(app.state.policy.quotas)
     # AI sistem beyanları (EU AI Act envanteri); yoksa tüm kullanımlar "beyan edilmemiş"
     app.state.inventory = compliance.load_inventory(os.getenv("INVENTORY_PATH", "policies/inventory.yaml"))
@@ -136,6 +138,7 @@ class Analysis:
     provider: Optional[providers_mod.Provider] = None
     provider_error: Optional[str] = None
     scans: List[attachments_mod.Scan] = field(default_factory=list)   # görsel / PDF ekleri
+    subject_hashes: List[str] = field(default_factory=list)          # ilgili kişi araması (subjects.py)
 
     @property
     def user(self) -> str:
@@ -173,14 +176,16 @@ def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT
     full_text = "\n".join([p.text for p in parts if p.role in fmt.injection_roles]
                           + [s.text for s in scans if s.text and s.att.role in fmt.injection_roles])
     all_text = "\n".join([p.text for p in parts] + [s.text for s in scans if s.text])
-    entity_counts = Counter(f.entity for f in st.pii.analyze(all_text))
+    findings = st.pii.analyze(all_text)
+    entity_counts = Counter(f.entity for f in findings)
     injection = st.injection.scan(full_text)
     ctx = Context(identity.team, model, destination, set(entity_counts), injection.score,
                   frozenset(identity.teams))
     decision = st.policy.evaluate(ctx)
     st.attachments.apply_unscannable(decision, list(scans), destination)
     return Analysis(identity, fmt, model, destination, body, parts, full_text, all_text,
-                    entity_counts, injection, ctx, decision, provider, provider_error, list(scans))
+                    entity_counts, injection, ctx, decision, provider, provider_error, list(scans),
+                    st.subjects.event_hashes(all_text, findings))
 
 
 async def _emit(st, ev: dict):
@@ -319,7 +324,8 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
             masked_prompt=masked_prompt, latency_ms=(time.perf_counter() - t0) * 1000,
             upstream_status=upstream_status,
         )
-        ev.update(teams=a.identity.teams, auth_source=a.identity.source, api_format=fmt.name)
+        ev.update(teams=a.identity.teams, auth_source=a.identity.source, api_format=fmt.name,
+                  subject_hashes=a.subject_hashes)
         ev.update(extra)
         await _emit(st, ev)
 
@@ -582,6 +588,50 @@ async def notify_test(request: Request, channel: Optional[str] = None):
         ok, detail = await notifier.send(c, ev)
         results.append({"name": c.name, "type": c.type, "ok": ok, "detail": detail})
     return {"results": results}
+
+
+# ---------------- ilgili kişi başvurusu (KVKK md. 11) ----------------
+
+@app.post("/v1/subjects/search")
+async def subjects_search(request: Request):
+    """Verilen kimlik / iletişim değerlerinin geçtiği istekler ve verinin akıbeti. Değerler
+    URL'de değil gövdede gelir (erişim loglarına düşmesin); cevapta ve logda maskelidir.
+    Gövde: {"values": ["10000000146", {"entity": "VKN", "value": "1234567890"}], "days": 730}"""
+    if err := await _require_admin(request):
+        return err
+    index = request.app.state.subjects
+    if not index.enabled:
+        return _openai_error(404, "İlgili kişi araması kapalı (TELVEGUARD_SUBJECT_HASH_KEY tanımlı değil).",
+                             "subjects_disabled", "admin_error")
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    values = body.get("values") if isinstance(body, dict) else None
+    days = body.get("days", 730) if isinstance(body, dict) else None
+    if not isinstance(values, list) or not 1 <= len(values) <= subjects_mod.MAX_SEARCH_VALUES:
+        return _openai_error(400, f"values 1-{subjects_mod.MAX_SEARCH_VALUES} değerlik bir liste olmalı.",
+                             "invalid_request", "invalid_request_error")
+    if not isinstance(days, int) or isinstance(days, bool) or not 1 <= days <= 3650:
+        return _openai_error(400, "days 1-3650 arası bir tamsayı olmalı.", "invalid_request", "invalid_request_error")
+    ch, err = _require_clickhouse(request)
+    if err:
+        return err
+    resolved = index.resolve(request.app.state.pii, values)
+    found = [s for s in resolved if "error" not in s]
+    errors = [{"label": s["label"], "error": s["error"]} for s in resolved if "error" in s]
+    result = {"summary": [], "events": [], "truncated": False, "statuses": xray_mod.SUBJECT_STATUS}
+    if found:
+        try:
+            result = await xray_mod.subject_search(ch, found, days, request.app.state.providers)
+        except xray_mod.ClickHouseError as e:
+            hint = (" Şema güncel değil: clickhouse/migrations/0.3.0-subject-hashes.sql çalıştırılmalı."
+                    if "subject_hashes" in str(e) else "")
+            return _openai_error(502, str(e)[:200] + hint, "clickhouse_error", "admin_error")
+    # Kim, ne zaman, kaç değer aradı (değerler loglanmaz)
+    admin_log.info("subject_search values=%d types=%s events=%d", len(values),
+                   ",".join(sorted({s["entity"] for s in found})), len(result["events"]))
+    return {**result, "errors": errors, "days": days}
 
 
 # ---------------- Röntgen + KVKK raporu ----------------

@@ -23,6 +23,7 @@ services:
       SLACK_SECURITY_WEBHOOK_URL: http://mock-llm:9000/webhook/slack
       TEAMS_SECURITY_WEBHOOK_URL: http://mock-llm:9000/webhook/teams
       TELVEGUARD_PUBLIC_URL: http://localhost:8080
+      TELVEGUARD_SUBJECT_HASH_KEY: e2e-ilgili-kisi-anahtari-yalnizca-lokal-test   # yalnızca lokal test
     depends_on:
       mock-llm: { condition: service_started }
 

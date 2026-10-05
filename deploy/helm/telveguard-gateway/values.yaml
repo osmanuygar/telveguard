@@ -69,7 +69,8 @@ policy:
 # Önerilen: Secret'ı chart dışında (Vault / sealed-secrets / oc create secret) oluşturup adını verin.
 # Beklenen anahtarlar (hepsi opsiyonel): admin-token, upstream-external-key,
 # upstream-internal-key, upstream-anthropic-key, upstream-anthropic-internal-key, clickhouse-password,
-# redis-password, shadow-ai-token (tarayıcı eklentisi olayları)
+# redis-password, shadow-ai-token (tarayıcı eklentisi olayları),
+# subject-hash-key (KVKK ilgili kişi araması; en az 32 karakter, değişirse eski kayıtlar bulunamaz)
 existingSecret: ""
 # existingSecret boşsa chart bu değerlerden Secret üretir (geliştirme / test için).
 # adminToken boşsa yönetim uçları (Röntgen, simülatör, raporlar) KAPALIDIR.
@@ -79,6 +80,7 @@ secrets:
   upstreamInternalKey: ""
   upstreamAnthropicKey: ""
   clickhousePassword: ""
+  subjectHashKey: ""        # boşsa ilgili kişi araması kapalı
 
 # ---------------- opsiyonel modeller (air-gapped) ----------------
 # scripts/mirror_models.sh ile indirilen modeller bir PVC'de: /models/tr-ner, /models/prompt-injection

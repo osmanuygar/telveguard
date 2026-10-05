@@ -71,6 +71,8 @@ services:
       TEAMS_SECURITY_WEBHOOK_URL: ${TEAMS_SECURITY_WEBHOOK_URL:-}
       SIEM_WEBHOOK_URL: ${SIEM_WEBHOOK_URL:-}
       TELVEGUARD_PUBLIC_URL: ${TELVEGUARD_PUBLIC_URL:-}
+      # İlgili kişi araması (KVKK md. 11): en az 32 karakter, ör. openssl rand -hex 32; boşsa kapalı
+      TELVEGUARD_SUBJECT_HASH_KEY: ${TELVEGUARD_SUBJECT_HASH_KEY:-}
       # Boşsa yönetim uçları (/v1/xray, /v1/policy/simulate, raporlar) kapalıdır
       TELVEGUARD_ADMIN_TOKEN: ${TELVEGUARD_ADMIN_TOKEN:-}
     volumes:

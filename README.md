@@ -42,6 +42,8 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 - **Olay gezgini ve politika deneme:** tek tek isteklerin kararı; yeni kuralı canlıya almadan denemek.
 - **Anlık bildirim:** engellenen istek, sızan sır, kota aşımı, gölge AI uyarısı Slack / Teams / SIEM'e.
 - **KVKK ve VERBİS:** aylık yurt dışı aktarım raporu, VERBİS taslağı.
+- **İlgili kişi başvurusu (KVKK md. 11):** "verim yapay zekâya gitti mi?" sorusuna kayıtlardan
+  cevap ve yazdırılabilir cevap taslağı; ham değer saklanmadan.
 - **EU AI Act:** AI sistem envanteri, risk sınıfı ve yükümlülükler; beyan edilmemiş kullanımlar.
 
 **Kurumsal işletim**
@@ -79,7 +81,7 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
 ```
 
 **Yönetim konsolu:** http://localhost:8080/xray → sağ üstteki alana yönetici token'ı olarak
-`e2e-admin-token` (yalnızca bu yerel test ortamı içindir). Üç sekme:
+`e2e-admin-token` (yalnızca bu yerel test ortamı içindir). Dört sekme:
 
 - **Röntgen** (`#rontgen`): özet, trend, ekip / model / veri türü kırılımı, envanter.
   Kutucuklara, çubuklara ve satırlara tıklayınca ilgili olaylar açılır.
@@ -89,6 +91,8 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
 - **Politika deneme** (`#deneme`): metni yapıştırın, ekip ve modeli seçin; karar, tetiklenen
   kurallar, işaretlenmiş kişisel veri / sırlar ve modele gidecek maskeli metin yan yana görünür.
   Aynı isteğin kurum içi modelde ne olacağı da gösterilir. Modele gitmez, kayda yazılmaz.
+- **Başvuru** (`#basvuru`): KVKK ilgili kişi başvurusu; TCKN / telefon / e-posta girin, kişinin
+  verisinin hangi isteklerde geçtiği, yurt dışına aktarılıp aktarılmadığı ve cevap taslağı.
 
 Kapatmak için: `docker compose -f docker-compose.yml -f docker-compose.test.yml down`
 
@@ -362,7 +366,7 @@ curl -s localhost:8080/v1/policy/simulate -H 'Authorization: Bearer <yönetici t
 ## Kurulum (OKD / OpenShift)
 
 Helm chart gateway'i kurar; Kafka ve ClickHouse kurumdaki mevcut kümelerdir
-(ClickHouse şeması: `clickhouse/init.sql`, bir kez).
+(ClickHouse şeması: `clickhouse/init.sql`, bir kez; sürüm yükseltirken `clickhouse/migrations/`).
 
 ```bash
 docker build -f gateway/Dockerfile -t harbor.sirket.local/telveguard/gateway:0.2.1 .
@@ -415,6 +419,7 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB` | Röntgen ve KVKK raporu için (yalnızca okuma yetkili kullanıcı önerilir) |
 | `SHADOW_AI_TOKEN` | Tarayıcı eklentisi olay token'ı; boşsa `/v1/shadow-ai/events` kapalı |
 | `SLACK_SECURITY_WEBHOOK_URL`, `TEAMS_SECURITY_WEBHOOK_URL`, `*_WEBHOOK_URL` | Bildirim kanallarının adresleri (politikadaki `notify.channels[].url_env`) |
+| `TELVEGUARD_SUBJECT_HASH_KEY`, `TELVEGUARD_SUBJECT_HASH_KEY_OLD` | İlgili kişi araması için özet anahtarı (en az 32 karakter); boşsa kapalı |
 | `TELVEGUARD_PUBLIC_URL` | Bildirimlerdeki "Konsolda aç" bağlantısının tabanı (politikada `notify.console_url` yoksa) |
 | `TELVEGUARD_ADMIN_TOKEN` | Yönetim uçları (Röntgen, simülatör, rapor); **boşsa bu uçlar kapalıdır** |
 | `ENABLE_TR_NER=1`, `TR_NER_MODEL_PATH` | Türkçe kişi / kurum / yer adı tespiti (BERT, lokal model) |
@@ -528,6 +533,46 @@ notify:
 Yerel test ortamında bildirimler sahte LLM'in kaydedicisine gider:
 `curl localhost:9000/webhook/received`.
 
+## İlgili kişi başvurusu (KVKK md. 11)
+
+"Kişisel verilerim yapay zekâ hizmetlerine gönderildi mi, yurt dışına aktarıldı mı?" başvurusuna
+denetim kaydından cevap verilir. Konsoldaki **Başvuru** sekmesine kişinin TCKN, telefon, e-posta,
+IBAN, kart ya da plakası girilir; değer başına kaç istekte geçtiği, ilk / son tarih ve verinin
+akıbeti çıkar:
+
+| Akıbet | Anlamı |
+|---|---|
+| Yurt dışına maskelenmeden gönderildi | Yurt dışına aktarım (alıcı sağlayıcı ve ülkesiyle) |
+| Yurt dışına maskelenerek gönderildi | Modele `[TCKN_1]` gitti; veri aktarılmadı |
+| Kurum içi modele gönderildi | Yurt dışına çıkmadı |
+| Engellendi | Hiçbir yere gönderilmedi |
+
+Sonuçtan bir cevap taslağı üretilir (kopyala / yazdır); taslaktır, hukuk birimi onaylamalıdır.
+İç inceleme için ilgili istekler (ekip, kullanıcı, model) ayrıca listelenir.
+
+**Nasıl çalışır:** ham değer hiçbir zaman saklanmaz. Her istekte bulunan tanımlayıcıların
+(TCKN, VKN, IBAN, kart, telefon, e-posta, plaka) anahtarlı özeti (HMAC-SHA256) kayda
+`subject_hashes` olarak yazılır; aramada girilen değer aynı anahtarla özetlenip aranır. Değerler
+biçimden bağımsız eşleşir (`0532 123 45 67` = `+90 532 1234567`). Anahtarsız düz bir özet
+kullanılamazdı: geçerli TCKN sayısı ~10⁹'dur, kaba kuvvetle dakikalar içinde geri çevrilir.
+
+```bash
+# Anahtar: en az 32 karakter; Secret'ta tutun (Helm: secrets.subjectHashKey / subject-hash-key)
+export TELVEGUARD_SUBJECT_HASH_KEY=$(openssl rand -hex 32)
+# Mevcut kurulumda şemayı bir kez güncelleyin (yeni kurulumda init.sql içerir)
+clickhouse-client --multiquery < clickhouse/migrations/0.3.0-subject-hashes.sql
+```
+
+- Anahtar tanımlı değilse özellik kapalıdır ve özet yazılmaz. Arama yalnızca anahtar
+  tanımlandıktan **sonraki** istekleri bulur.
+- Anahtar değişirse eski kayıtlar bulunamaz; geçiş döneminde eski anahtar
+  `TELVEGUARD_SUBJECT_HASH_KEY_OLD` ile aramaya eklenir. Anahtar, ClickHouse'a erişen kişilerle
+  paylaşılmamalıdır (anahtar + kayıt birlikte geri çevirmeye yeter).
+- Aramayı yalnızca yöneticiler yapabilir; her arama kimlik, değer sayısı ve türüyle loglanır
+  (değerin kendisi loglanmaz). API: `POST /v1/subjects/search` (değerler gövdede, URL'de değil).
+- Kişi adı aranmaz (yazım farkı güvenilir eşleşmez). Tarayıcı eklentisi olayları değer
+  taşımadığı için aramada çıkmaz. Kayıtlar ClickHouse TTL'i kadar (varsayılan 2 yıl) tutulur.
+
 ## AI envanteri, EU AI Act ve VERBİS
 
 Risk sınıfını model değil **kullanım amacı** belirler: aynı model müşteri sorularını yanıtlarken
@@ -623,6 +668,7 @@ baktığı izlenebilir.
 | `GET /v1/events?team=&user=&model=&action=&destination=&entity=&rule=&day=&flag=` | Denetim kayıtları, en yeni önce (sayfalı: `limit`, `before_ts`, `before_id`) |
 | `GET /v1/events/{id}` | Tek olay: tüm alanlar, maskeli metin (`AUDIT_STORE_MASKED=1` ise), aynı prompt'un tekrarı |
 | `GET /v1/policy/info` | Politikadaki hedef önekleri, kurallar ve bildirim kanalları (adres yok) |
+| `POST /v1/subjects/search` | İlgili kişi başvurusu: `{"values": [...], "days": 730}`; değer başına özet ve ilgili istekler |
 | `POST /v1/notify/test?channel=` | Bildirim kanallarına deneme mesajı; kanal başına sonuç |
 | `GET /v1/reports/kvkk-transfer?month=2026-09` | KVKK yurt dışı aktarım raporu (CSV; `&format=json` da olur) |
 | `GET /v1/inventory?days=90` | AI envanteri: beyan edilen sistemler, risk sınıfı, yükümlülükler, beyan edilmemiş kullanımlar |
@@ -689,6 +735,7 @@ contextforge/                    ContextForge imajı + eklenti ayarları
 deploy/helm/telveguard-gateway/  OKD / OpenShift Helm chart'ı
 extension/                       Gölge AI tarayıcı eklentisi (Chrome / Edge, Manifest V3)
 clickhouse/init.sql              Denetim şeması
+clickhouse/migrations/           Mevcut kurulumlar için şema güncellemeleri
 policies/default.yaml            Örnek KVKK politikası + fiyat tablosu
 docs/FORK_STRATEGY.md            ContextForge'u neden ve nasıl kullanıyoruz
 docs/assets/make_diagram.py      README akış diyagramını (SVG) üretir

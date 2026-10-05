@@ -177,6 +177,23 @@ mark.ph { background: var(--mark-sent); box-shadow: inset 0 -2px 0 var(--mark-se
 .nothing { display: flex; align-items: center; justify-content: center; text-align: center; color: var(--text-muted);
   border: 1px dashed var(--border); border-radius: 8px; padding: 10px; font-size: 13px; }
 kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--text-secondary); }
+/* İlgili kişi başvurusu */
+.subject { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+.subject .head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.subject .head b { font-size: 15px; }
+.status-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+.status-list li { display: flex; gap: 8px; align-items: center; }
+.status-list i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.status-list b { font-variant-numeric: tabular-nums; min-width: 3ch; }
+.letter { white-space: pre-wrap; font-family: inherit; font-size: 13px; line-height: 1.6; background: var(--surface-2); border-radius: 8px;
+  padding: 12px 14px; margin: 0; }
+@media print {
+  .topbar, #status, #sub-form, .print-hide, #drawer { display: none !important; }
+  body { background: #fff; color: #000; }
+  .grid.lab { display: block; }
+  .card { border: 0; padding: 0; }
+  .letter { background: none; padding: 0; }
+}
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -188,6 +205,7 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--border); borde
       <a href="#rontgen" data-view="rontgen">Röntgen</a>
       <a href="#olaylar" data-view="olaylar">Olaylar</a>
       <a href="#deneme" data-view="deneme">Politika deneme</a>
+      <a href="#basvuru" data-view="basvuru">Başvuru</a>
     </nav>
     <span class="spacer"></span>
     <label class="sr-only" for="token">Yönetici token'ı</label>
@@ -330,6 +348,32 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--border); borde
       </form>
       <div class="card" id="sim-result">
         <div class="empty">Sonuç burada görünür: karar, tetiklenen kurallar, bulunan veriler ve modele gidecek metin.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== İlgili kişi başvurusu ==================== -->
+  <section id="view-basvuru" data-view hidden>
+    <h1>İlgili kişi başvurusu</h1>
+    <p class="sub">KVKK md. 11: Kişinin verilerinin yapay zekâ hizmetlerine gönderilip gönderilmediği, gönderildiyse
+      yurt dışına aktarılıp aktarılmadığı. Kayıtlarda değerin kendisi değil anahtarlı özeti bulunur; girdiğiniz değerler
+      bu sayfada saklanmaz, her arama kimliğinizle loglanır.</p>
+    <div class="grid lab">
+      <form class="card" id="sub-form" autocomplete="off">
+        <label class="field">Başvurandan alınan kimlik / iletişim bilgileri (her satıra bir değer)
+          <textarea name="values" rows="7" required placeholder="10000000146&#10;0532 123 45 67&#10;TR33 0006 1005 1978 6457 8413 26&#10;ad.soyad@ornek.com&#10;VKN: 1234567890"></textarea>
+        </label>
+        <div class="hint">TCKN, IBAN, kart, telefon, e-posta ve plaka otomatik tanınır; vergi numarasını "VKN:" ile yazın.</div>
+        <div class="form-row" style="margin-top:10px">
+          <label class="field">Dönem
+            <select name="days"><option value="365">Son 1 yıl</option><option value="730" selected>Son 2 yıl</option>
+              <option value="1825">Son 5 yıl</option></select></label>
+          <label class="field">Başvuru tarihi <input name="applied" type="date"></label>
+        </div>
+        <button class="primary" type="submit">Ara</button>
+      </form>
+      <div class="card" id="sub-result">
+        <div class="empty">Sonuç burada görünür: değer başına özet, cevap taslağı ve ilgili istekler.</div>
       </div>
     </div>
   </section>
@@ -1114,8 +1158,98 @@ function verdictTitle(res) {
   return "Olduğu gibi gider";
 }
 
+// ==================== ilgili kişi başvurusu ====================
+const SUBJECT_STATUSES = [
+  { key: "unmasked", color: "var(--status-critical)" },
+  { key: "masked", color: "var(--series-3)" },
+  { key: "internal", color: "var(--series-1)" },
+  { key: "blocked", color: "var(--series-4)" },
+];
+const trDate = (s) => s ? s.slice(0, 10).split("-").reverse().join(".") : "–";
+
+async function runSubjectSearch() {
+  const f = $("sub-form");
+  const values = f.values.value.split("\n").map((v) => v.trim()).filter(Boolean);
+  if (!values.length) { f.values.focus(); return; }
+  $("sub-result").classList.add("loading");
+  setStatus("Aranıyor…");
+  try {
+    const res = await apiJson("/v1/subjects/search", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values, days: Number(f.days.value) }) });
+    renderSubjects(res, f.applied.value);
+    setStatus("");
+  } catch (e) {
+    setStatus("Aranamadı: " + e.message, true);
+  } finally {
+    $("sub-result").classList.remove("loading");
+  }
+}
+
+function subjectLetter(res, applied) {
+  const years = res.days >= 365 ? `son ${Math.round(res.days / 365)} yıl` : `son ${res.days} gün`;
+  const lines = [`Sayın İlgili,`, ``,
+    `${applied ? trDate(applied) + " tarihli " : ""}başvurunuz kapsamında, kurumumuzda kullanılan yapay zekâ ` +
+    `hizmetlerine ait kayıtlar ${years} için incelenmiştir.`, ``];
+  for (const s of res.summary) {
+    if (!s.events) { lines.push(`• ${s.entity_label} (${s.label}): bu dönemde kayıt bulunmamıştır.`); continue; }
+    lines.push(`• ${s.entity_label} (${s.label}): ${s.events} istekte yer almaktadır ` +
+      `(ilk: ${trDate(s.first_seen)}, son: ${trDate(s.last_seen)}).`);
+    if (s.unmasked) lines.push(`   - ${s.unmasked} istekte yurt dışındaki hizmet sağlayıcıya aktarılmıştır` +
+      (Object.keys(s.recipients).length ? `: ${Object.keys(s.recipients).join(", ")}.` : "."));
+    if (s.masked) lines.push(`   - ${s.masked} istekte yurt dışındaki hizmete maskelenerek gönderilmiş; verinizin kendisi aktarılmamıştır.`);
+    if (s.internal) lines.push(`   - ${s.internal} istekte kurum içinde çalışan modele gönderilmiş; yurt dışına aktarılmamıştır.`);
+    if (s.blocked) lines.push(`   - ${s.blocked} istek güvenlik politikası gereği engellenmiş; veri gönderilmemiştir.`);
+  }
+  if (res.truncated) lines.push("", "(Not: kayıt sayısı sınırı aşıldı; yalnızca en yeni 1.000 istek incelendi.)");
+  lines.push("", "Bu metin otomatik oluşturulmuş bir TASLAKTIR; hukuk biriminin onayı olmadan gönderilmemelidir.");
+  return lines.join("\n");
+}
+
+function renderSubjects(res, applied) {
+  const out = [];
+  for (const e of res.errors) out.push(el("p", { class: "chip warn", style: "white-space:normal" }, `⚠ ${e.label}: ${e.error}`));
+  if (!res.summary.length) { $("sub-result").replaceChildren(...out); return; }
+
+  out.push(el("h2", {}, "Özet"));
+  for (const s of res.summary) {
+    const items = SUBJECT_STATUSES.filter((x) => s[x.key]).map((x) => el("li", {},
+      el("i", { style: `background:${x.color}` }), el("b", {}, n(s[x.key])), res.statuses[x.key],
+      x.key === "unmasked" && Object.keys(s.recipients).length ? el("span", { class: "meta" }, "→ " + Object.keys(s.recipients).join(", ")) : null));
+    out.push(el("div", { class: "subject" },
+      el("div", { class: "head" }, el("b", {}, `${s.entity_label} · ${s.label}`),
+        el("span", { class: "meta" }, s.events ? `${n(s.events)} istek · ${trDate(s.first_seen)} – ${trDate(s.last_seen)}` : "Kayıt yok")),
+      items.length ? el("ul", { class: "status-list" }, items) : null));
+  }
+
+  out.push(el("h2", { style: "margin-top:16px" }, "Cevap taslağı"));
+  const letter = subjectLetter(res, applied);
+  out.push(el("pre", { class: "letter" }, letter));
+  const copy = el("button", { type: "button" }, "Metni kopyala");
+  copy.addEventListener("click", () => navigator.clipboard.writeText(letter).then(
+    () => setStatus("Taslak panoya kopyalandı."), () => setStatus("Kopyalanamadı; metni seçip kopyalayın.", true)));
+  const print = el("button", { type: "button" }, "Yazdır / PDF");
+  print.addEventListener("click", () => window.print());
+  out.push(el("div", { class: "print-hide", style: "display:flex; gap:8px; margin-top:8px" }, copy, print));
+
+  if (res.events.length) {
+    out.push(el("h2", { style: "margin-top:16px" }, "İlgili istekler"));
+    out.push(el("p", { class: "sub" }, "İç inceleme içindir (kullanıcı adları cevaba konmaz). Satıra tıklayınca ayrıntı açılır."));
+    const box = el("div", { class: "table-wrap" });
+    const statusOf = Object.fromEntries(SUBJECT_STATUSES.map((x) => [x.key, x]));
+    table(box, [
+      { label: "Zaman", render: (r) => el("span", { class: "mono" }, fmtTime(r.event_time)) },
+      { label: "Kullanıcı", render: (r) => el("div", {}, el("div", {}, r.user), el("div", { class: "meta" }, r.team)) },
+      { label: "Model", render: (r) => el("div", {}, el("div", {}, r.model), el("div", { class: "meta" }, `${r.provider} · ${DEST_LABELS[r.destination] || r.destination}`)) },
+      { label: "Veri ve akıbeti", render: (r) => el("ul", { class: "status-list", style: "margin:0" }, ...r.subjects.map((x) =>
+          el("li", {}, el("i", { style: `background:${statusOf[x.status].color}` }), `${x.label}: ${res.statuses[x.status]}`))) },
+    ], res.events, { onRow: (r) => openEventById(r.event_id), empty: "" });
+    out.push(box);
+  }
+  $("sub-result").replaceChildren(...out);
+}
+
 // ==================== yönlendirme ====================
-const VIEWS = ["rontgen", "olaylar", "deneme"];
+const VIEWS = ["rontgen", "olaylar", "deneme", "basvuru"];
 let xrayLoaded = false;
 function route() {
   const [name, qs] = location.hash.slice(1).split("?");
@@ -1124,7 +1258,8 @@ function route() {
   if (view !== "olaylar") closeDrawer();
   document.querySelectorAll("section[data-view]").forEach((s) => { s.hidden = s.id !== "view-" + view; });
   document.querySelectorAll("nav.tabs a").forEach((a) => { if (a.dataset.view === view) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
-  document.title = { rontgen: "AI Kullanım Röntgeni", olaylar: "Olaylar", deneme: "Politika deneme" }[view] + " · Telveguard";
+  document.title = { rontgen: "AI Kullanım Röntgeni", olaylar: "Olaylar", deneme: "Politika deneme",
+    basvuru: "İlgili kişi başvurusu" }[view] + " · Telveguard";
   if (!token()) { setStatus("Yönetici token'ını sağ üstteki alana girin.", true); $("token").focus(); return; }
   if (view === "rontgen" && !xrayLoaded) { xrayLoaded = true; loadXray(); }
   if (view === "olaylar") {
@@ -1134,6 +1269,7 @@ function route() {
     evFiltersToForm(filters); renderActiveFilters(filters); loadEvents(filters);
     if (eventId) openEventById(eventId);
   }
+  if (view === "basvuru") setStatus("");
   if (view === "deneme") { setStatus(""); loadPolicyInfo().catch((e) => setStatus("Politika bilgisi alınamadı: " + e.message, true)); }
 }
 
@@ -1157,6 +1293,7 @@ $("ev-more").addEventListener("click", () => loadEvents(evState.filters, true));
 $("drawer-close").addEventListener("click", closeDrawer);
 addEventListener("keydown", (e) => { if (e.key === "Escape" && $("drawer").classList.contains("open")) closeDrawer(); });
 $("sim-form").addEventListener("submit", (e) => { e.preventDefault(); runSimulation(); });
+$("sub-form").addEventListener("submit", (e) => { e.preventDefault(); runSubjectSearch(); });
 $("sim-form").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runSimulation(); } });
 $("sim-form").model.addEventListener("input", updateDestHint);
 $("token").addEventListener("change", () => { xrayLoaded = false; policyInfo = null; route(); });

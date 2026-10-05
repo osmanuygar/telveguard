@@ -16,7 +16,9 @@ CREATE TABLE IF NOT EXISTS telveguard.audit_queue
     -- kimlik (OIDC) ve çıktı koruması
     teams Array(String), auth_source String,
     output_leaked Array(String), output_action String, output_rules Array(String),
-    api_format String, quota String
+    api_format String, quota String,
+    -- ilgili kişi başvurusu: tanımlayıcıların anahtarlı özeti (ham değer değil)
+    subject_hashes Array(String)
 )
 ENGINE = Kafka
 SETTINGS kafka_broker_list = 'kafka:9092',
@@ -49,7 +51,10 @@ CREATE TABLE IF NOT EXISTS telveguard.audit
     -- istemci API biçimi: chat | responses | messages (Claude Code vb.)
     api_format LowCardinality(String),
     -- kota aşımı: requests_per_minute | monthly_tokens | monthly_cost_usd | backend_unavailable
-    quota LowCardinality(String)
+    quota LowCardinality(String),
+    -- KVKK md. 11 ilgili kişi araması: TCKN / IBAN / telefon ... HMAC özetleri (gateway/app/subjects.py)
+    subject_hashes Array(String) CODEC(ZSTD(3)),
+    INDEX subject_idx subject_hashes TYPE bloom_filter(0.01) GRANULARITY 4
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(event_time)
@@ -65,7 +70,8 @@ SELECT toUUID(event_id) AS event_id,
        latency_ms, upstream_status, output_entities, masked_count, output_scan,
        monitored_rules, would_action, masked_entities,
        prompt_tokens, completion_tokens, usage_known, est_cost_usd,
-       teams, auth_source, output_leaked, output_action, output_rules, api_format, quota
+       teams, auth_source, output_leaked, output_action, output_rules, api_format, quota,
+       subject_hashes
 FROM telveguard.audit_queue;
 
 -- Örnek rapor: ekip bazında yurt dışına giden kişisel veri denemeleri (son 30 gün)

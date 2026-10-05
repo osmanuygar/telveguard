@@ -24,6 +24,13 @@
   kota, denetim kaydı ve Röntgen'de ayrı kırılım. Injection taranmaz (embedding modeli talimat
   izlemez); token dizisi girdisi taranamaz sayılır. Sağlayıcı tipleri `openai` ve `azure`
   (klasik `deployments` dahil) embeddings'i yönlendirir; simülatörde `?format=embeddings`.
+- KVKK md. 11 ilgili kişi başvurusu: konsolda **Başvuru** sekmesi ve `POST /v1/subjects/search`.
+  Kişinin TCKN / VKN / IBAN / kart / telefon / e-posta / plakasının geçtiği istekler ve akıbeti
+  (yurt dışına maskesiz / maskeli, kurum içi, engellendi), alıcı sağlayıcı ve ülke, yazdırılabilir
+  cevap taslağı. Ham değer saklanmaz: tanımlayıcıların HMAC özeti (`TELVEGUARD_SUBJECT_HASH_KEY`)
+  denetim kaydına `subject_hashes` olarak yazılır; anahtar yoksa kapalı.
+- **Şema değişikliği:** `audit.subject_hashes` (+ bloom filter indeksi). Mevcut kurulumda
+  `clickhouse/migrations/0.3.0-subject-hashes.sql` bir kez çalıştırılmalı. Helm: `secrets.subjectHashKey`.
 - Docker imajına Tesseract (Türkçe + İngilizce) eklendi (~110 MB); `pillow`, `pypdfium2` bağımlılıkları.
 
 ## 0.2.1 — 2026-09-30
