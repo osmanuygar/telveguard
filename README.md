@@ -38,6 +38,7 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 - **Denetim kaydı:** ham prompt hiç saklanmaz; veri türleri, karar, token, maliyet ClickHouse'ta.
 - **AI Kullanım Röntgeni:** kim, hangi modeli, hangi veriyle kullanıyor; ne engellendi, ne kadar tuttu.
 - **Olay gezgini ve politika deneme:** tek tek isteklerin kararı; yeni kuralı canlıya almadan denemek.
+- **Anlık bildirim:** engellenen istek, sızan sır, kota aşımı, gölge AI uyarısı Slack / Teams / SIEM'e.
 - **KVKK ve VERBİS:** aylık yurt dışı aktarım raporu, VERBİS taslağı.
 - **EU AI Act:** AI sistem envanteri, risk sınıfı ve yükümlülükler; beyan edilmemiş kullanımlar.
 
@@ -402,6 +403,8 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `AUDIT_STORE_MASKED=1` | Maskelenmiş prompt da saklansın (ham prompt hiçbir zaman saklanmaz) |
 | `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB` | Röntgen ve KVKK raporu için (yalnızca okuma yetkili kullanıcı önerilir) |
 | `SHADOW_AI_TOKEN` | Tarayıcı eklentisi olay token'ı; boşsa `/v1/shadow-ai/events` kapalı |
+| `SLACK_SECURITY_WEBHOOK_URL`, `TEAMS_SECURITY_WEBHOOK_URL`, `*_WEBHOOK_URL` | Bildirim kanallarının adresleri (politikadaki `notify.channels[].url_env`) |
+| `TELVEGUARD_PUBLIC_URL` | Bildirimlerdeki "Konsolda aç" bağlantısının tabanı (politikada `notify.console_url` yoksa) |
 | `TELVEGUARD_ADMIN_TOKEN` | Yönetim uçları (Röntgen, simülatör, rapor); **boşsa bu uçlar kapalıdır** |
 | `ENABLE_TR_NER=1`, `TR_NER_MODEL_PATH` | Türkçe kişi / kurum / yer adı tespiti (BERT, lokal model) |
 | `ENABLE_LLM_GUARD=1`, `LLM_GUARD_MODEL_PATH` | Ek injection sınıflandırıcı (LLM Guard); model lokal dizinden, internetsiz (`/models/prompt-injection`) |
@@ -430,9 +433,56 @@ model ve ekip adı istemci kontrolünde olduğu için etiket yapılmaz, bu kır�
 | `telveguard_request_duration_seconds`, `telveguard_upstream_duration_seconds` | Uçtan uca ve LLM süresi |
 | `telveguard_quota_exceeded_total{kind}`, `telveguard_quota_backend_errors_total` | Kota aşımları ve sayaç (Redis) hataları |
 | `telveguard_shadow_ai_events_total{action}` | Tarayıcı eklentisi olayları |
+| `telveguard_notifications_total{channel_type,result}` | Bildirimler: `sent`, `failed`, `suppressed` (tekrar bastırma), `dropped` (kuyruk dolu) |
 | `telveguard_upstream_errors_total`, `telveguard_audit_failures_total`, `telveguard_auth_failures_total{reason}` | Hatalar |
 
 </details>
+
+## Anlık bildirim (Slack, Teams, webhook)
+
+Politika dosyasındaki `notify` bölümü hangi olayın hangi kanala gideceğini belirler. Bildirim
+denetim kaydıyla birlikte kuyruğa atılır ve arka planda gönderilir: isteği bekletmez, Slack /
+Teams kesintisi isteği bozmaz (bir kez yeniden denenir, sonra `telveguard_notifications_total`
+ve log'a düşer).
+
+```yaml
+notify:
+  console_url: https://telveguard.sirket.local   # "Konsolda aç" bağlantısı (yoksa TELVEGUARD_PUBLIC_URL)
+  channels:
+    - name: guvenlik-slack
+      type: slack                       # slack | teams | webhook
+      url_env: SLACK_SECURITY_WEBHOOK_URL
+      when: { actions: [block] }        # koşul yoksa da yalnızca block
+      cooldown_seconds: 300
+    - name: golge-ai-teams
+      type: teams                       # Teams "Workflows" webhook'u (Adaptive Card)
+      url_env: TEAMS_SECURITY_WEBHOOK_URL
+      when: { sources: [browser], actions: [alert, block] }
+```
+
+| Koşul | Eşleşir |
+|---|---|
+| `actions` | Karar (istek ya da cevap kararının en kısıtlayıcısı): `block`, `mask`, `alert`, `allow` |
+| `rules` | Tetiklenen kural adı, joker destekli: `prompt-injection-*`, `kota:*`, `golge-ai:*` |
+| `entity_in` | Girdideki ya da cevapta sızan veri türü: `["SECRET_*"]`, `[TCKN, IBAN_TR]` |
+| `teams` | Kullanıcının ekiplerinden herhangi biri |
+| `sources` | `gateway` (API isteği) ya da `browser` (tarayıcı eklentisi) |
+
+- **Metin gönderilmez:** mesajda ekip, kullanıcı, model, karar, kural, veri **türleri** ve olay
+  kimliği vardır; ham ya da maskeli prompt yoktur. Slack / Teams yurt dışı bir hizmetse kullanıcı
+  adı da yurt dışına aktarılır; istenmiyorsa `include_user: false`.
+- **Adres YAML'a yazılmaz** (Slack / Teams adresinde token vardır): `url_env`, `_WEBHOOK_URL` ile
+  biten bir ortam değişkeninin adıdır. Değişken boşsa kanal kapalıdır. Helm'de `extraEnv` +
+  `valueFrom.secretKeyRef` ile verin.
+- **Tekrar bastırma:** aynı kanal, ekip ve kural için `cooldown_seconds` boyunca tek mesaj gider;
+  sonraki mesajda aradaki olay sayısı yazar. Sayaç pod içidir (pod başına bir mesaj gelebilir).
+- **Kurulumu denemek:** `POST /v1/notify/test` (yönetici) tüm kanallara, `?channel=ad` ile tek
+  kanala deneme mesajı gönderir ve sonucu döner.
+- `type: webhook` SIEM / SOAR için yapılandırılmış JSON gönderir (`type: telveguard.alert`,
+  `severity`, `event`).
+
+Yerel test ortamında bildirimler sahte LLM'in kaydedicisine gider:
+`curl localhost:9000/webhook/received`.
 
 ## AI envanteri, EU AI Act ve VERBİS
 
@@ -528,7 +578,8 @@ baktığı izlenebilir.
 | `GET /v1/xray?days=30&team=` | Özet, günlük trend, ekip / model / veri türü kırılımı, kural isabetleri |
 | `GET /v1/events?team=&user=&model=&action=&destination=&entity=&rule=&day=&flag=` | Denetim kayıtları, en yeni önce (sayfalı: `limit`, `before_ts`, `before_id`) |
 | `GET /v1/events/{id}` | Tek olay: tüm alanlar, maskeli metin (`AUDIT_STORE_MASKED=1` ise), aynı prompt'un tekrarı |
-| `GET /v1/policy/info` | Politikadaki hedef önekleri ve kurallar |
+| `GET /v1/policy/info` | Politikadaki hedef önekleri, kurallar ve bildirim kanalları (adres yok) |
+| `POST /v1/notify/test?channel=` | Bildirim kanallarına deneme mesajı; kanal başına sonuç |
 | `GET /v1/reports/kvkk-transfer?month=2026-09` | KVKK yurt dışı aktarım raporu (CSV; `&format=json` da olur) |
 | `GET /v1/inventory?days=90` | AI envanteri: beyan edilen sistemler, risk sınıfı, yükümlülükler, beyan edilmemiş kullanımlar |
 | `GET /v1/reports/verbis?format=csv\|json` | VERBİS başlıklarına eşlenmiş taslak |

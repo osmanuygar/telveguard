@@ -809,6 +809,22 @@ async function openEvent(row, tr) {
     $("drawer-body").append(el("p", { class: "meta" }, "Ayrıntı alınamadı: " + e.message));
   }
 }
+async function openEventById(id) {
+  drawerReturn = document.activeElement;
+  $("drawer-title").textContent = "Olay";
+  $("drawer-sub").textContent = id;
+  $("drawer-body").replaceChildren(el("p", { class: "meta" }, "Yükleniyor…"));
+  $("drawer").classList.add("open"); $("drawer").setAttribute("aria-hidden", "false");
+  $("drawer-close").focus();
+  try {
+    const full = await apiJson("/v1/events/" + encodeURIComponent(id));
+    $("drawer-title").textContent = fmtTime(full.event_time);
+    $("drawer-sub").textContent = `${full.user} · ${full.team}`;
+    $("drawer-body").replaceChildren(renderEventDetail(full, full));
+  } catch (e) {
+    $("drawer-body").replaceChildren(el("p", { class: "meta" }, "Olay alınamadı: " + e.message));
+  }
+}
 function closeDrawer() {
   $("drawer").classList.remove("open"); $("drawer").setAttribute("aria-hidden", "true");
   document.querySelectorAll("tr.selected").forEach((x) => x.classList.remove("selected"));
@@ -1113,8 +1129,10 @@ function route() {
   if (view === "rontgen" && !xrayLoaded) { xrayLoaded = true; loadXray(); }
   if (view === "olaylar") {
     const filters = Object.fromEntries(new URLSearchParams(qs || ""));
+    const eventId = filters.event;  // bildirimlerdeki "Konsolda aç" bağlantısı
     for (const k of Object.keys(filters)) if (!EV_KEYS.includes(k)) delete filters[k];
     evFiltersToForm(filters); renderActiveFilters(filters); loadEvents(filters);
+    if (eventId) openEventById(eventId);
   }
   if (view === "deneme") { setStatus(""); loadPolicyInfo().catch((e) => setStatus("Politika bilgisi alınamadı: " + e.message, true)); }
 }

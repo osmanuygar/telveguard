@@ -92,6 +92,40 @@ output_rules:
     action: mask
     mode: monitor
 
+# Anlık bildirim: Slack / Microsoft Teams / genel webhook (SIEM). Adres YAML'a yazılmaz:
+# url_env, "_WEBHOOK_URL" ile biten ortam değişkeninin adıdır; değişken boşsa kanal kapalıdır.
+# Koşullar: actions, rules (joker), entity_in, teams, sources (gateway | browser). Hepsi sağlanmalı.
+# Mesajda metin yoktur (ekip, kullanıcı, model, karar, kural, veri türü). Deneme: POST /v1/notify/test
+notify:
+  # Mesajdaki "Konsolda aç" bağlantısı; yoksa TELVEGUARD_PUBLIC_URL ortam değişkeni
+  # console_url: https://telveguard.sirket.local
+  channels:
+    - name: guvenlik-slack
+      type: slack
+      url_env: SLACK_SECURITY_WEBHOOK_URL
+      when: { actions: [block] }        # injection, ekip kuralı, kota, cevapta sızıntı engeli
+      cooldown_seconds: 300             # aynı ekip + kural için 5 dk'da bir mesaj (arası sayılır)
+
+    - name: sir-sizintisi-slack
+      type: slack
+      url_env: SLACK_SECURITY_WEBHOOK_URL
+      # Maskelense de bildirilir: anahtar sohbete yapıştırıldıysa döndürülmeli (rotate).
+      # block hariç: engellenen istek zaten guvenlik-slack'e düşer (çift mesaj olmasın)
+      when: { entity_in: ["SECRET_*"], actions: [mask, alert, allow] }
+      cooldown_seconds: 60
+
+    - name: golge-ai-teams
+      type: teams
+      url_env: TEAMS_SECURITY_WEBHOOK_URL
+      when: { sources: [browser], actions: [alert, block] }   # uyarıya rağmen yapıştırma / engelleme
+
+    # - name: siem
+    #   type: webhook
+    #   url_env: SIEM_WEBHOOK_URL
+    #   when: { actions: [block, alert] }
+    #   cooldown_seconds: 0             # SIEM her olayı istesin
+    #   include_user: true
+
 # Ekip kota / hız sınırı (sayaç Redis'te: REDIS_URL). Kota BİRİNCİL ekibe uygulanır.
 # Limitler: requests_per_minute, monthly_tokens, monthly_cost_usd (ay İstanbul saatine göre).
 quotas:

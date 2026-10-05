@@ -26,6 +26,8 @@ QUOTA_EXCEEDED = Counter("telveguard_quota_exceeded", "Kota aşımıyla reddedil
                          ["kind"])  # requests_per_minute | monthly_tokens | monthly_cost_usd
 SHADOW_AI_EVENTS = Counter("telveguard_shadow_ai_events", "Tarayıcı eklentisi olayları",
                            ["action"])  # blocked | masked | cancelled | allowed_override | visit
+NOTIFICATIONS = Counter("telveguard_notifications", "Slack / Teams / webhook bildirimleri",
+                        ["channel_type", "result"])  # result: sent | failed | suppressed | dropped
 QUOTA_BACKEND_ERRORS = Counter("telveguard_quota_backend_errors", "Kota sayacına (Redis) ulaşılamayan işlemler")
 
 _BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120)

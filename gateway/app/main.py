@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from . import compliance
 from . import shadow_ai
 from . import metrics
+from . import notify as notify_mod
 from . import providers as providers_mod
 from . import xray as xray_mod
 from .audit import AuditSink
@@ -51,6 +52,8 @@ async def lifespan(app: FastAPI):
     await app.state.audit.start()
     if not hasattr(app.state, "http"):  # testlerde MockTransport enjekte edilebilir
         app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5))
+    app.state.notifier = notify_mod.load(policy_path)
+    app.state.notifier.start(app.state.http)
     if not hasattr(app.state, "ch"):  # testlerde sahte ClickHouse enjekte edilebilir
         app.state.ch = xray_mod.ClickHouse.from_env(app.state.http)
     app.state.auth = Authenticator.from_env(app.state.http)
@@ -58,6 +61,7 @@ async def lifespan(app: FastAPI):
     # AI sistem beyanları (EU AI Act envanteri); yoksa tüm kullanımlar "beyan edilmemiş"
     app.state.inventory = compliance.load_inventory(os.getenv("INVENTORY_PATH", "policies/inventory.yaml"))
     yield
+    await app.state.notifier.stop()
     await app.state.audit.stop()
     await app.state.http.aclose()
 
@@ -164,6 +168,12 @@ def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT
     decision = st.policy.evaluate(ctx)
     return Analysis(identity, fmt, model, destination, body, parts, full_text, all_text,
                     entity_counts, injection, ctx, decision, provider, provider_error)
+
+
+async def _emit(st, ev: dict):
+    """Denetim kaydı + (eşleşen kanal varsa) arka planda Slack / Teams / webhook bildirimi."""
+    await st.audit.emit(ev)
+    st.notifier.submit(ev)
 
 
 def _auth_error(e: AuthError, fmt: ApiFormat = CHAT) -> JSONResponse:
@@ -290,7 +300,7 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
         )
         ev.update(teams=a.identity.teams, auth_source=a.identity.source, api_format=fmt.name)
         ev.update(extra)
-        await st.audit.emit(ev)
+        await _emit(st, ev)
 
     if decision.action == "block":
         # Upstream'e hiçbir şey gitmedi: maliyet kesin olarak 0
@@ -522,7 +532,30 @@ async def policy_info(request: Request):
     teams = sorted({t for r in pol.rules + pol.output_rules for t in (r.get("when") or {}).get("teams", [])})
     return {"default_action": pol.default_action, "mode": pol.mode, "destinations": pol.destinations,
             "rules": rules(pol.rules), "output_rules": rules(pol.output_rules), "teams": teams,
-            "providers": request.app.state.providers.describe()}
+            "providers": request.app.state.providers.describe(),
+            "notify": request.app.state.notifier.describe()}
+
+
+@app.post("/v1/notify/test")
+async def notify_test(request: Request, channel: Optional[str] = None):
+    """Kurulum denetimi: kanallara (?channel=ad ile tek kanala) örnek bir bildirim gönderir.
+    Koşullara ve tekrar bastırmaya bakılmaz; denetim kaydına yazılmaz."""
+    if err := await _require_admin(request):
+        return err
+    notifier = request.app.state.notifier
+    channels = [c for c in notifier.channels if channel in (None, c.name)]
+    if not channels:
+        return _openai_error(404, "Bildirim kanalı bulunamadı (politikadaki notify.channels).",
+                             "not_found", "admin_error")
+    ev = {"event_id": str(uuid.uuid4()), "ts": int(time.time() * 1000), "user": "deneme.kullanici",
+          "team": "deneme", "teams": ["deneme"], "model": "gpt-4o", "destination": "external",
+          "action": "block", "rules": ["bildirim-denemesi"], "entities": ["TCKN"], "output_leaked": [],
+          "reason": "Bu bir deneme bildirimidir; gerçek bir olay değildir.", "api_format": "chat"}
+    results = []
+    for c in channels:
+        ok, detail = await notifier.send(c, ev)
+        results.append({"name": c.name, "type": c.type, "ok": ok, "detail": detail})
+    return {"results": results}
 
 
 # ---------------- Röntgen + KVKK raporu ----------------
@@ -714,6 +747,6 @@ async def shadow_ai_events(request: Request):
     except ValueError as e:
         return _openai_error(400, f"Geçersiz olay: {str(e)[:300]}", "invalid_request", "invalid_request_error")
     for event in batch.events:
-        await request.app.state.audit.emit(shadow_ai.to_audit_event(event))
+        await _emit(request.app.state, shadow_ai.to_audit_event(event))
         metrics.SHADOW_AI_EVENTS.labels(event.action).inc()
     return {"accepted": len(batch.events)}

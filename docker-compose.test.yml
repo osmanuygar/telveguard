@@ -7,6 +7,7 @@ services:
     command: ["python", "/mock/mock_llm.py"]
     volumes:
       - ./tests/e2e/mock_llm.py:/mock/mock_llm.py:ro
+    ports: ["9000:9000"]
 
   gateway:
     environment:
@@ -18,6 +19,10 @@ services:
       AUDIT_STORE_MASKED: "1"
       TELVEGUARD_ADMIN_TOKEN: e2e-admin-token   # yalnızca lokal test
       SHADOW_AI_TOKEN: e2e-extension-token      # tarayıcı eklentisi olayları (yalnızca lokal test)
+      # Bildirimler sahte LLM'in kaydedicisine gider: GET http://localhost:9000/webhook/received
+      SLACK_SECURITY_WEBHOOK_URL: http://mock-llm:9000/webhook/slack
+      TEAMS_SECURITY_WEBHOOK_URL: http://mock-llm:9000/webhook/teams
+      TELVEGUARD_PUBLIC_URL: http://localhost:8080
     depends_on:
       mock-llm: { condition: service_started }
 

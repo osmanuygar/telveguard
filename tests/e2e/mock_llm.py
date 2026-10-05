@@ -6,12 +6,14 @@ Son kullanıcı mesajını olduğu gibi geri döndürür; böylece modelin ne g�
 Mesaj "SIZINTI_TESTI" ile başlarsa girdide olmayan sahte bir AWS anahtarı "üretir"
 (çıktı koruması testi; anahtar kaynakta parça parça durur).
 Cevaplardaki "mock_received_*" alanları upstream'e ne gittiğini gösterir.
+/webhook/<kanal> Slack / Teams bildirimlerini kaydeder; GET /webhook/received son 100'ünü döner.
 """
 import json
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 FAKE_KEY = "AKIA" + "Q3EXAMPLE7ABCDEF"
+WEBHOOKS = []  # [{"channel": ..., "body": ...}]
 
 
 def _texts(content):
@@ -33,6 +35,10 @@ def _answer(last):
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path.startswith("/webhook/"):
+            WEBHOOKS.append({"channel": self.path.rsplit("/", 1)[-1], "body": body})
+            del WEBHOOKS[:-100]
+            return self._json({"ok": True})
         model = body.get("model", "")
         if model.startswith("fail-"):
             return self._send(502, b"<html>Bad Gateway</html>", "text/html")
@@ -77,6 +83,8 @@ class Handler(BaseHTTPRequestHandler):
                 "mock_received_instructions": body.get("instructions"), "mock_received_last": last}
 
     def do_GET(self):
+        if self.path.startswith("/webhook/received"):
+            return self._json(WEBHOOKS)
         self._send(200, b'{"status":"ok"}', "application/json")
 
     def _json(self, obj):
