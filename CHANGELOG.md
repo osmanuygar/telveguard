@@ -1,5 +1,25 @@
 # Değişiklik günlüğü
 
+## Yayımlanmadı
+
+### Yükseltme notları
+
+- Politika yüklenirken kural koşulları (`when`) doğrulanır: bilinmeyen bir koşul adı (ör. yazım
+  hatası) artık sessizce yok sayılmaz, gateway başlarken hata verir. Özel politikanızı
+  `PolicyEngine("politika.yaml")` ile ya da simülatörde deneyin.
+
+### telveguard-core
+
+- Model izin listesi: kurallarda `model_in` / `model_not_in` (model adı, joker destekli) ve
+  `declared` (AI envanterinde beyan edilmiş mi) koşulları. `Context.declared` alanı.
+
+### Gateway
+
+- `declared` koşulu `inventory.yaml`'dan hesaplanır: kullanıcının ekiplerinden biri için bu
+  modeli içeren bir sistem beyan edilmişse `true`. Envanter boşsa koşul eşleşmez.
+- Simülatör cevabında ve Politika deneme ekranında `declared`.
+- Varsayılan politikada yorum satırı olarak model izin listesi örnekleri.
+
 ## 0.3.0 — 2026-10-05
 
 PyPI paketlerinde (telveguard-core, telveguard-contextforge) kod değişikliği yoktur; sürüm

@@ -94,6 +94,23 @@ rules:
     action: block
     message: "Bu ekip dış modellere kimlik numarası gönderemez."
 
+  # Model izin listesi: model_in / model_not_in model adına joker ile bakar.
+  # declared: false = AI envanterinde (inventory.yaml) kullanıcının ekiplerinden biri için bu
+  # modeli içeren bir sistem beyan edilmemiş. Envanter boşsa / yoksa bu koşul hiç eşleşmez.
+  # Önce mode: monitor ile açıp kimlerin etkileneceğini Olaylar ekranında görün.
+  # - name: stajyer-sadece-kurum-ici
+  #   when: { teams: [stajyer], model_not_in: ["vllm/*", "qwen*", "llama*"] }
+  #   action: block
+  #   message: "Ekibiniz yalnızca kurum içi modelleri kullanabilir."
+  # - name: pahali-modeller-ar-ge
+  #   when: { model_in: ["o3*", "claude-opus-*"] }
+  #   action: alert
+  # - name: beyan-edilmemis-model
+  #   when: { declared: false, destination: external }
+  #   action: block
+  #   mode: monitor
+  #   message: "Bu model ekibiniz için AI envanterinde beyan edilmemiş."
+
 # Model cevabı: entity_in, cevapta olup GİRDİDE OLMAYAN değerlere (sızıntı) bakar.
 # Kullanıcının kendi TCKN'sinin cevapta geri gelmesi sızıntı sayılmaz.
 # mask: değer "[GİZLENDİ:TCKN]" olur (geri çevrilmez); block: cevap hiç dönmez.

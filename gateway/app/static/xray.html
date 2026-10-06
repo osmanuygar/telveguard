@@ -1086,7 +1086,8 @@ function renderSimulation(res, other) {
     el("div", {}, el("div", { class: "title" }, verdictTitle(res)),
       el("div", { class: "why" }, d.reason || (d.rules.length ? "Kural: " + d.rules.join(", ") : "Hiçbir kural tetiklenmedi; varsayılan karar.")))));
   const meta = [`${DEST_LABELS[res.destination]} · ${res.model}`, res.provider ? `sağlayıcı: ${res.provider}` : null,
-    `ekip: ${res.teams.join(", ")}`].filter(Boolean);
+    `ekip: ${res.teams.join(", ")}`,
+    res.declared === false ? "envanterde beyan edilmemiş" : res.declared ? "envanterde beyanlı" : null].filter(Boolean);
   out.push(el("div", { class: "compare" }, meta.join(" · ")));
   if (res.provider_error) out.push(el("p", { class: "chip warn", style: "white-space:normal; margin-top:8px" },
     "⚠ Gerçek istekte bu model bu API biçimiyle gönderilemez: " + res.provider_error));

@@ -147,6 +147,16 @@ def _match(system: Dict[str, Any], team: str, model: str) -> bool:
     return team in _teams(system) and any(fnmatchcase(model, p) for p in system["models"])
 
 
+def is_declared(cfg: Dict[str, Any], teams, model: str) -> Optional[bool]:
+    """Politikadaki `declared` koşulu için: kullanıcının ekiplerinden biri bu modeli içeren
+    bir sistem beyan etmiş mi. Envanterde hiç sistem yoksa None (koşul eşleşmez): envanter
+    dosyası unutuldu diye tüm trafik "beyan edilmemiş" sayılıp engellenmesin."""
+    systems = cfg.get("systems") or []
+    if not systems:
+        return None
+    return any(_match(s, team, model) for s in systems for team in teams)
+
+
 def build_inventory(cfg: Dict[str, Any], usage: List[Dict[str, Any]], today: Optional[date] = None) -> Dict[str, Any]:
     """Beyanlar + gözlenen kullanım (ClickHouse: ekip x model) -> envanter."""
     today = today or date.today()

@@ -331,6 +331,33 @@ rules:
     mode: monitor                        # önce gözlemle: engellemez, "engellerdi" diye kaydeder
 ```
 
+Kural koşulları (hepsi birlikte sağlanmalı; bilinmeyen koşul adı politika yüklenirken hata verir):
+
+| Koşul | Eşleşir |
+|---|---|
+| `teams` | Kullanıcının ekiplerinden herhangi biri |
+| `destination` | `internal` (kurum içi) ya da `external` (yurt dışı) |
+| `entity_in` | İstekteki veri türü, joker destekli: `["SECRET_*"]`, `[TCKN, IBAN_TR]` |
+| `injection_score_gte` | Prompt injection skoru bu değer ve üstü |
+| `model_in` / `model_not_in` | Model adı listede var / yok, joker destekli: `["vllm/*", "qwen*"]` |
+| `declared` | `false`: AI envanterinde (`inventory.yaml`) kullanıcının ekiplerinden biri için bu modeli içeren sistem yok. Envanter boşsa eşleşmez |
+
+**Model izin listesi:** hangi ekibin hangi modeli kullanabileceği ve envantere beyan edilmemiş
+kullanımın engellenmesi (EU AI Act envanteri yalnızca raporlamaz, uygular):
+
+```yaml
+rules:
+  - name: stajyer-sadece-kurum-ici
+    when: { teams: [stajyer], model_not_in: ["vllm/*", "qwen*"] }
+    action: block
+    message: "Ekibiniz yalnızca kurum içi modelleri kullanabilir."
+
+  - name: beyan-edilmemis-model
+    when: { declared: false, destination: external }
+    action: block
+    mode: monitor                        # önce kimlerin etkileneceğini görün
+```
+
 Model cevabı için ayrı `output_rules` bölümü vardır; burada `entity_in`, cevapta olup
 **girdide olmayan** değerlere bakar (kullanıcının kendi TCKN'sinin geri gelmesi sızıntı sayılmaz):
 

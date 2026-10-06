@@ -183,8 +183,9 @@ def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT
     findings = st.pii.analyze(all_text)
     entity_counts = Counter(f.entity for f in findings)
     injection = st.injection.scan(full_text)
-    ctx = Context(identity.team, model, destination, set(entity_counts), injection.score,
-                  frozenset(identity.teams))
+    teams = frozenset(identity.teams)
+    ctx = Context(identity.team, model, destination, set(entity_counts), injection.score, teams,
+                  compliance.is_declared(st.inventory, teams | {identity.team}, model))
     decision = st.policy.evaluate(ctx)
     st.attachments.apply_unscannable(decision, list(scans), destination)
     return Analysis(identity, fmt, model, destination, body, parts, full_text, all_text,
@@ -519,6 +520,7 @@ async def policy_simulate(request: Request, format: str = "chat"):
         "teams": a.identity.teams,
         "model": a.model,
         "destination": a.destination,
+        "declared": a.ctx.declared,
         "provider": a.provider.name if a.provider else None,
         "provider_error": a.provider_error,
         "entities": dict(sorted(a.entity_counts.items())),
