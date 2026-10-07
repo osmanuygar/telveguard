@@ -814,10 +814,8 @@ async def verbis_report(request: Request, days: int = 365, format: str = "json")
 
 # ---------------- gölge AI (tarayıcı eklentisi) ----------------
 
-@app.post("/v1/shadow-ai/events")
-async def shadow_ai_events(request: Request):
-    """Tarayıcı eklentisinden olay toplu gönderimi. Metin YOK: site, veri türleri, karar.
-    SHADOW_AI_TOKEN (MDM ile eklentiye dağıtılır) ile korunur; tanımlı değilse kapalı."""
+def _require_extension(request: Request) -> Optional[JSONResponse]:
+    """SHADOW_AI_TOKEN (MDM ile eklentiye dağıtılır); tanımlı değilse gölge AI uçları kapalı."""
     expected = os.getenv("SHADOW_AI_TOKEN", "")
     if not expected:
         return _openai_error(404, "Gölge AI toplama kapalı (SHADOW_AI_TOKEN tanımlı değil).",
@@ -825,6 +823,14 @@ async def shadow_ai_events(request: Request):
     header = request.headers.get("authorization", "")
     if not shadow_ai.check_token(header[7:].strip() if header.lower().startswith("bearer ") else None, expected):
         return _openai_error(401, "Geçersiz eklenti token'ı.", "unauthorized", "authentication_error")
+    return None
+
+
+@app.post("/v1/shadow-ai/events")
+async def shadow_ai_events(request: Request):
+    """Tarayıcı eklentisinden olay toplu gönderimi. Metin YOK: site, veri türleri, karar."""
+    if err := _require_extension(request):
+        return err
     try:
         batch = shadow_ai.ShadowBatch.model_validate(await request.json())
     except ValueError as e:
@@ -833,3 +839,16 @@ async def shadow_ai_events(request: Request):
         await _emit(request.app.state, shadow_ai.to_audit_event(event))
         metrics.SHADOW_AI_EVENTS.labels(event.action).inc()
     return {"accepted": len(batch.events)}
+
+
+@app.get("/v1/shadow-ai/dictionary")
+async def shadow_ai_dictionary(request: Request):
+    """Kurumsal sözlüğün tarayıcı sürümü: terimler tuzlu özet, düzenli ifadeler olduğu gibi
+    (dictionary.browser_payload). ETag = sürüm; değişmediyse 304, eklenti yeniden indirmez."""
+    if err := _require_extension(request):
+        return err
+    payload = request.app.state.dictionary.browser()
+    etag = f'"{payload["version"]}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return JSONResponse(payload, headers={"ETag": etag, "Cache-Control": "no-cache"})

@@ -34,14 +34,18 @@ ACTIONS = {
 }
 
 
-TRIGGERS = {"paste": "Tarayıcı: yapıştırma sırasında", "send": "Tarayıcı: gönderim sırasında"}
+TRIGGERS = {"paste": "Tarayıcı: yapıştırma sırasında", "send": "Tarayıcı: gönderim sırasında",
+            "file": "Tarayıcı: dosya eklerken"}
+# Kurumsal sözlük türleri (dictionary.py ile aynı biçim): politikaya göre değişir, adla doğrulanır
+_DICT_ENTITY = re.compile(r"^KURUM_[A-Z0-9_]{1,40}$")
 
 
 class ShadowEvent(BaseModel):
     site: str
     action: Literal["blocked", "masked", "cancelled", "allowed_override", "visit"]
-    # Nerede yakalandı: yapıştırma ya da gönderim (Enter / gönder düğmesi). Eski eklentiler göndermez.
-    trigger: Optional[Literal["paste", "send"]] = None
+    # Nerede yakalandı: yapıştırma, gönderim (Enter / gönder düğmesi) ya da dosya ekleme
+    # (sürükle-bırak / dosya seçme). Eski eklentiler göndermez.
+    trigger: Optional[Literal["paste", "send", "file"]] = None
     entities: Dict[str, int] = Field(default_factory=dict)   # tür -> adet (değer YOK)
     chars: int = Field(0, ge=0, le=10_000_000)
     user: str = "unknown"
@@ -59,7 +63,7 @@ class ShadowEvent(BaseModel):
     @field_validator("entities")
     @classmethod
     def _entities(cls, v: Dict[str, int]) -> Dict[str, int]:
-        unknown = set(v) - KNOWN_ENTITIES
+        unknown = {e for e in v if e not in KNOWN_ENTITIES and not _DICT_ENTITY.match(e)}
         if unknown:
             raise ValueError(f"bilinmeyen veri türü: {', '.join(sorted(unknown))}")
         if any(not isinstance(n, int) or n < 0 or n > 100_000 for n in v.values()):

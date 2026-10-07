@@ -78,3 +78,47 @@ def test_fixtures_cover_every_recognizer():
     from telveguard_core.pii.tr_recognizers import TR_RECOGNIZERS
     seen = {f[0] for case in expected() for f in case["findings"]}
     assert seen == {r.entity for r in TR_RECOGNIZERS + SECRET_RECOGNIZERS}
+
+
+# ---------------- kurumsal sözlük (özetle eşleşme) ----------------
+
+DICT_FIXTURES = FIXTURES.parent / "dictionary_fixtures.json"
+DICT_CONFIG = {"dictionary": [
+    {"entity": "KURUM_PROJE", "label": "Proje kod adı",
+     "terms": ["Proje Anka", "Kızılay Projesi", "Mavi", "Anka Turna"]},
+    {"entity": "KURUM_MUSTERI", "label": "Müşteri unvanı", "terms": ["Akdeniz Holding A.Ş.", "Işık Lojistik"]},
+    {"entity": "KURUM_KOD", "terms": ["ACME"], "case_sensitive": True},
+    {"entity": "KURUM_SUNUCU", "patterns": [r"[a-z0-9][a-z0-9.-]*\.sirket\.local"]},
+]}
+DICT_TEXTS = [
+    "PROJE ANKA bütçesi ve Kızılay Projesi toplantısı",
+    "proje   anka\nraporu; KIZILAY PROJESİ onaylandı",
+    "Mavi'nin teslim tarihi; Mavişehir şubesi ve Ankara ofisi, Proje Ankara değil",
+    "Akdeniz Holding A.Ş. ile ışık lojistik ve IŞIK LOJİSTİK sözleşmesi",
+    "ACME bayisi, acme ve Acme değil",
+    "Sunucular db01.sirket.local ve api.sirket.local:8443, sirket.local.com değil",
+    "Proje Anka Turna birlikte geçerse soldaki kazanır",
+    f"Proje Anka müşterisi TC {make_tckn(1)}, e-posta ali@sirket.local",
+    "Önceden maskeli [KURUM_PROJE_1] ve yeni Mavi",
+]
+
+
+def dictionary_expected():
+    from app.dictionary import Dictionary
+    d = Dictionary.from_config(DICT_CONFIG)
+    engine = TrPiiEngine()
+    d.install(engine)
+    cases = [{"text_b64": _b64(t), "findings": [[f.entity, f.start, f.end] for f in engine.analyze(t)],
+              "masked_b64": _b64(engine.mask(t).text)} for t in DICT_TEXTS]
+    return {"payload": d.browser(), "cases": cases}
+
+
+def test_dictionary_fixtures_match_python_engine():
+    exp = dictionary_expected()
+    if os.getenv("REGENERATE_FIXTURES") == "1":
+        DICT_FIXTURES.write_text(json.dumps(exp, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    assert DICT_FIXTURES.exists(), "REGENERATE_FIXTURES=1 ile oluşturun"
+    assert json.loads(DICT_FIXTURES.read_text(encoding="utf-8")) == exp, \
+        "Sözlük motoru değişti: REGENERATE_FIXTURES=1 pytest tests/test_extension_parity.py"
+    payload = json.dumps(exp["payload"], ensure_ascii=False).lower()
+    assert not any(t.lower() in payload for item in DICT_CONFIG["dictionary"] for t in item.get("terms", []))

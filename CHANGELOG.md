@@ -19,6 +19,20 @@
   modeli içeren bir sistem beyan edilmişse `true`. Envanter boşsa koşul eşleşmez.
 - Simülatör cevabında ve Politika deneme ekranında `declared`.
 - Varsayılan politikada yorum satırı olarak model izin listesi örnekleri.
+- `GET /v1/shadow-ai/dictionary` (`SHADOW_AI_TOKEN`): kurumsal sözlüğün tarayıcı sürümü. Terimler
+  tuzlu SHA-256 özeti (ilk 64 bit), düzenli ifadeler olduğu gibi; ETag ile 304.
+- Gölge AI olaylarında `KURUM_*` veri türleri ve `trigger: file` ("Tarayıcı: dosya eklerken").
+
+### Tarayıcı eklentisi
+
+- Kurumsal sözlük: proje adları, müşteri unvanları, iç sunucu adları yapıştırma, gönderim ve
+  dosyalarda yakalanır, `[KURUM_PROJE_1]` olarak maskelenir. Sözlük saatte bir gateway'den çekilir;
+  popup'ta terim sayısı ve son kontrol zamanı.
+- Dosya ekleme: sürükle-bırak, dosya seçme ve dosya yapıştırmada metin dosyaları (5 MB'a kadar)
+  taranır; "Maskeleyerek ekle" siteye maskeli kopyayı verir. Yeni MDM ayarı `unscannableFiles`
+  (`allow` | `block`): PDF, görsel ve Office belgeleri.
+- `scripts/package_extension.sh`: gateway adresiyle paketleme; mağaza için `.zip`, kendi sunucunuz
+  için imzalı `.crx` + `update.xml` ve eklenti kimliği.
 
 ## 0.3.0 — 2026-10-05
 

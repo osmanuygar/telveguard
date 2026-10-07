@@ -10,12 +10,16 @@
                                 border: 1px solid #c3c2b7; border-radius: 8px; box-sizing: border-box; }
 </style>
 <script>
-  // chrome.runtime taklidi: gönderilen olaylar window.__sent'te; mod ?mode=block ile
+  // chrome.runtime taklidi: gönderilen olaylar window.__sent'te; mod ?mode=block ile,
+  // taranamayan dosyalar ?unscannable=block ile
   window.__sent = [];
-  const mode = new URLSearchParams(location.search).get("mode") || "warn";
+  const params = new URLSearchParams(location.search);
+  const mode = params.get("mode") || "warn";
   window.chrome = { runtime: { sendMessage(msg, cb) {
     window.__sent.push(msg);
-    if (msg.type === "getConfig" && cb) cb({ mode, reportVisits: true, reporting: true });
+    if (msg.type === "getConfig" && cb) {
+      cb({ mode, reportVisits: true, reporting: true, unscannableFiles: params.get("unscannable") || "allow" });
+    }
   } } };
 </script>
 </head>
@@ -29,11 +33,48 @@
 <div class="chat"><div id="chat-ce" contenteditable="true"></div>
   <button id="chat-send" type="button" aria-label="Send message">Gönder</button></div>
 <form id="chat-form"><textarea id="chat-ta"></textarea><button id="chat-submit" type="submit">➤</button></form>
+
+<h2>Dosya ekleme: sohbet sitesi taklidi</h2>
+<!-- Site gibi davranır: bırakılan / seçilen / yapıştırılan dosyaları window.__uploads'a ekler -->
+<div id="drop" style="border: 2px dashed #c3c2b7; padding: 24px; border-radius: 8px">Dosyayı buraya bırakın</div>
+<input id="file" type="file" multiple>
 <script>document.getElementById("m").textContent = mode;</script>
 <script src="../src/detectors.js"></script>
 <script src="../src/content.js"></script>
 <script>
   window.__messages = [];
+  window.__uploads = [];
+  const record = (files, via) => Promise.all([...files].map(async (f) => window.__uploads.push({ via, name: f.name, text: await f.text() })));
+  const drop = document.getElementById("drop");
+  drop.addEventListener("dragover", (e) => e.preventDefault());
+  drop.addEventListener("drop", (e) => { e.preventDefault(); record(e.dataTransfer.files, "drop"); });
+  document.getElementById("file").addEventListener("change", (e) => record(e.target.files, "input"));
+  document.getElementById("chat-ta").addEventListener("paste", (e) => { if (e.clipboardData.files.length) record(e.clipboardData.files, "paste"); });
+
+  // Test yardımcıları: gerçek DragEvent / input.files ile dosya ekle
+  window.makeFile = (name, text, type = "") => new File([text], name, { type });
+  window.dropFiles = (el, files) => {
+    const dt = new DataTransfer();
+    files.forEach((f) => dt.items.add(f));
+    const ev = new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true });
+    el.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  };
+  window.chooseFiles = (input, files) => {
+    const dt = new DataTransfer();
+    files.forEach((f) => dt.items.add(f));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  window.pasteFiles = (el, files) => {
+    el.focus();
+    const dt = new DataTransfer();
+    files.forEach((f) => dt.items.add(f));
+    const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+    el.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  };
   const ce = document.getElementById("chat-ce"), ta = document.getElementById("chat-ta");
   const post = (text, clear) => { if (text.trim()) window.__messages.push(text); clear(); };
   const postCe = () => post(ce.innerText, () => { ce.textContent = ""; });

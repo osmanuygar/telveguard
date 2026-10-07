@@ -17,6 +17,12 @@
       "type": "string",
       "enum": ["warn", "block"]
     },
+    "unscannableFiles": {
+      "title": "Taranamayan dosyalar",
+      "description": "AI sitelerine eklenen ve tarayıcıda taranamayan dosyalar (PDF, görsel, Office belgeleri, 5 MB üstü metin). allow: eklenir (varsayılan). block: eklenmez. Metin dosyaları her durumda taranır.",
+      "type": "string",
+      "enum": ["allow", "block"]
+    },
     "user": { "title": "Kullanıcı", "description": "Denetim kaydında görünecek kullanıcı (ör. e-posta; MDM değişkeniyle doldurulur).", "type": "string" },
     "team": { "title": "Ekip", "type": "string" },
     "reportVisits": {

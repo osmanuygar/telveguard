@@ -16,8 +16,9 @@
 <script src="../src/detectors.js"></script>
 <script src="detectors.test.js"></script>
 <script>
-  fetch("fixtures.json").then((r) => r.json()).then((fixtures) => {
-    const { total, failures } = TelveguardDetectorTests.run(TelveguardDetectors, fixtures);
+  const load = (name) => fetch(name).then((r) => r.json());
+  Promise.all([load("fixtures.json"), load("dictionary_fixtures.json")]).then(([fixtures, dict]) => {
+    const { total, failures } = TelveguardDetectorTests.run(TelveguardDetectors, fixtures, dict);
     document.getElementById("result").textContent = failures.length
       ? `BAŞARISIZ: ${failures.length} / ${total}` : `JS motoru Python ile tutarlı: ${total} örnek`;
     document.getElementById("details").textContent = JSON.stringify(failures, null, 1);

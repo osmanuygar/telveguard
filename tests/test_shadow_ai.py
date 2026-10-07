@@ -74,3 +74,55 @@ def test_strict_validation(client, events, bad):  # noqa: F811
 
 def test_batch_size_limit(client, events):  # noqa: F811
     assert post(client, [{"site": "claude.ai", "action": "visit"}] * 101).status_code == 400
+
+
+def test_dictionary_entities_and_file_trigger(client, events):  # noqa: F811
+    r = post(client, [{"site": "chatgpt.com", "action": "masked", "trigger": "file",
+                       "entities": {"KURUM_PROJE": 2, "TCKN": 1}}])
+    assert r.status_code == 200
+    assert events[0]["entities"] == ["KURUM_PROJE", "TCKN"] and events[0]["reason"] == "Tarayıcı: dosya eklerken"
+    assert post(client, [{"site": "chatgpt.com", "action": "blocked", "entities": {"KURUM_": 1}}]).status_code == 400
+    assert post(client, [{"site": "chatgpt.com", "action": "blocked", "entities": {"kurum_proje": 1}}]).status_code == 400
+
+
+# ---------------- kurumsal sözlük (tarayıcı sürümü) ----------------
+
+def get_dictionary(c, headers=H):
+    return c.get("/v1/shadow-ai/dictionary", headers=headers)
+
+
+def test_dictionary_endpoint_sends_hashes_not_terms(client, events):  # noqa: F811
+    from app.dictionary import Dictionary, term_hash
+    client.app.state.dictionary = Dictionary.from_config({"dictionary": [
+        {"entity": "KURUM_MUSTERI", "label": "Müşteri", "terms": ["Işık Lojistik", "Akdeniz Holding"]},
+        {"entity": "KURUM_SUNUCU", "patterns": [r"[a-z0-9-]+\.sirket\.local"]},
+        {"entity": "KURUM_KOD", "terms": ["PRJX"], "whole_word": False},
+    ]})
+    r = get_dictionary(client)
+    assert r.status_code == 200
+    body = r.json()
+    assert "lojistik" not in r.text.lower() and "akdeniz" not in r.text.lower()
+    (terms,) = body["terms"]
+    assert terms["entity"] == "KURUM_MUSTERI" and terms["max_words"] == 2 and terms["lengths"] == [13, 15]
+    assert term_hash(body["salt"], "ışık lojistik") in terms["hashes"]       # Türkçe küçük harf
+    assert body["patterns"] == [{"entity": "KURUM_SUNUCU", "pattern": r"[a-z0-9-]+\.sirket\.local",
+                                 "case_sensitive": False, "whole_word": True}]
+    assert body["skipped_terms"] == 1 and body["labels"] == {"KURUM_MUSTERI": "Müşteri"}
+    # Değişmediyse 304: eklenti saatlik kontrolde yeniden indirmez
+    etag = r.headers["etag"]
+    assert get_dictionary(client, {**H, "If-None-Match": etag}).status_code == 304
+
+
+def test_dictionary_endpoint_requires_token(client, monkeypatch):  # noqa: F811
+    monkeypatch.delenv("SHADOW_AI_TOKEN", raising=False)
+    assert get_dictionary(client).status_code == 404
+    monkeypatch.setenv("SHADOW_AI_TOKEN", TOKEN)
+    assert get_dictionary(client, {"Authorization": "Bearer yanlis"}).status_code == 401
+
+
+def test_dictionary_version_changes_with_terms():
+    from app.dictionary import Dictionary
+    a = Dictionary.from_config({"dictionary": [{"entity": "KURUM_P", "terms": ["Anka"]}]}).browser()
+    b = Dictionary.from_config({"dictionary": [{"entity": "KURUM_P", "terms": ["Anka", "Turna"]}]}).browser()
+    assert a["version"] != b["version"] and a["salt"] != b["salt"]
+    assert Dictionary.from_config({}).browser()["terms"] == []

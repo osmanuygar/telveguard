@@ -1,0 +1,197 @@
+{
+ "payload": {
+  "version": "46ca7a956473af87176a6896ba58a74b",
+  "salt": "46ca7a956473af87176a6896ba58a74b",
+  "labels": {
+   "KURUM_PROJE": "Proje kod adı",
+   "KURUM_MUSTERI": "Müşteri unvanı"
+  },
+  "terms": [
+   {
+    "entity": "KURUM_PROJE",
+    "case_sensitive": false,
+    "hashes": [
+     "11cb233107788713",
+     "5c920db6ff2d86da",
+     "aba403894b20b4b6",
+     "cb3e0cc556b4fc7a"
+    ],
+    "lengths": [
+     4,
+     10,
+     15
+    ],
+    "max_words": 2
+   },
+   {
+    "entity": "KURUM_MUSTERI",
+    "case_sensitive": false,
+    "hashes": [
+     "ba44479bc7ecd620",
+     "f1e33557b3857949"
+    ],
+    "lengths": [
+     13,
+     20
+    ],
+    "max_words": 3
+   },
+   {
+    "entity": "KURUM_KOD",
+    "case_sensitive": true,
+    "hashes": [
+     "df442cf55bbfa417"
+    ],
+    "lengths": [
+     4
+    ],
+    "max_words": 1
+   }
+  ],
+  "patterns": [
+   {
+    "entity": "KURUM_SUNUCU",
+    "pattern": "[a-z0-9][a-z0-9.-]*\\.sirket\\.local",
+    "case_sensitive": false,
+    "whole_word": true
+   }
+  ],
+  "skipped_terms": 0
+ },
+ "cases": [
+  {
+   "text_b64": "UFJPSkUgQU5LQSBiw7x0w6dlc2kgdmUgS8SxesSxbGF5IFByb2plc2kgdG9wbGFudMSxc8Sx",
+   "findings": [
+    [
+     "KURUM_PROJE",
+     0,
+     10
+    ],
+    [
+     "KURUM_PROJE",
+     22,
+     37
+    ]
+   ],
+   "masked_b64": "W0tVUlVNX1BST0pFXzFdIGLDvHTDp2VzaSB2ZSBbS1VSVU1fUFJPSkVfMl0gdG9wbGFudMSxc8Sx"
+  },
+  {
+   "text_b64": "cHJvamUgICBhbmthCnJhcG9ydTsgS0laSUxBWSBQUk9KRVPEsCBvbmF5bGFuZMSx",
+   "findings": [
+    [
+     "KURUM_PROJE",
+     0,
+     12
+    ],
+    [
+     "KURUM_PROJE",
+     21,
+     36
+    ]
+   ],
+   "masked_b64": "W0tVUlVNX1BST0pFXzFdCnJhcG9ydTsgW0tVUlVNX1BST0pFXzJdIG9uYXlsYW5kxLE="
+  },
+  {
+   "text_b64": "TWF2aSduaW4gdGVzbGltIHRhcmloaTsgTWF2acWfZWhpciDFn3ViZXNpIHZlIEFua2FyYSBvZmlzaSwgUHJvamUgQW5rYXJhIGRlxJ9pbA==",
+   "findings": [
+    [
+     "KURUM_PROJE",
+     0,
+     4
+    ]
+   ],
+   "masked_b64": "W0tVUlVNX1BST0pFXzFdJ25pbiB0ZXNsaW0gdGFyaWhpOyBNYXZpxZ9laGlyIMWfdWJlc2kgdmUgQW5rYXJhIG9maXNpLCBQcm9qZSBBbmthcmEgZGXEn2ls"
+  },
+  {
+   "text_b64": "QWtkZW5peiBIb2xkaW5nIEEuxZ4uIGlsZSDEscWfxLFrIGxvamlzdGlrIHZlIEnFnklLIExPSsSwU1TEsEsgc8O2emxlxZ9tZXNp",
+   "findings": [
+    [
+     "KURUM_MUSTERI",
+     0,
+     20
+    ],
+    [
+     "KURUM_MUSTERI",
+     25,
+     38
+    ],
+    [
+     "KURUM_MUSTERI",
+     42,
+     55
+    ]
+   ],
+   "masked_b64": "W0tVUlVNX01VU1RFUklfMV0gaWxlIFtLVVJVTV9NVVNURVJJXzJdIHZlIFtLVVJVTV9NVVNURVJJXzNdIHPDtnpsZcWfbWVzaQ=="
+  },
+  {
+   "text_b64": "QUNNRSBiYXlpc2ksIGFjbWUgdmUgQWNtZSBkZcSfaWw=",
+   "findings": [
+    [
+     "KURUM_KOD",
+     0,
+     4
+    ]
+   ],
+   "masked_b64": "W0tVUlVNX0tPRF8xXSBiYXlpc2ksIGFjbWUgdmUgQWNtZSBkZcSfaWw="
+  },
+  {
+   "text_b64": "U3VudWN1bGFyIGRiMDEuc2lya2V0LmxvY2FsIHZlIGFwaS5zaXJrZXQubG9jYWw6ODQ0Mywgc2lya2V0LmxvY2FsLmNvbSBkZcSfaWw=",
+   "findings": [
+    [
+     "KURUM_SUNUCU",
+     10,
+     27
+    ],
+    [
+     "KURUM_SUNUCU",
+     31,
+     47
+    ]
+   ],
+   "masked_b64": "U3VudWN1bGFyIFtLVVJVTV9TVU5VQ1VfMV0gdmUgW0tVUlVNX1NVTlVDVV8yXTo4NDQzLCBzaXJrZXQubG9jYWwuY29tIGRlxJ9pbA=="
+  },
+  {
+   "text_b64": "UHJvamUgQW5rYSBUdXJuYSBiaXJsaWt0ZSBnZcOnZXJzZSBzb2xkYWtpIGthemFuxLFy",
+   "findings": [
+    [
+     "KURUM_PROJE",
+     0,
+     10
+    ]
+   ],
+   "masked_b64": "W0tVUlVNX1BST0pFXzFdIFR1cm5hIGJpcmxpa3RlIGdlw6dlcnNlIHNvbGRha2kga2F6YW7EsXI="
+  },
+  {
+   "text_b64": "UHJvamUgQW5rYSBtw7zFn3RlcmlzaSBUQyAzOTE0MTc3NzY5NCwgZS1wb3N0YSBhbGlAc2lya2V0LmxvY2Fs",
+   "findings": [
+    [
+     "KURUM_PROJE",
+     0,
+     10
+    ],
+    [
+     "TCKN",
+     24,
+     35
+    ],
+    [
+     "EMAIL_ADDRESS",
+     45,
+     61
+    ]
+   ],
+   "masked_b64": "W0tVUlVNX1BST0pFXzFdIG3DvMWfdGVyaXNpIFRDIFtUQ0tOXzFdLCBlLXBvc3RhIFtFTUFJTF9BRERSRVNTXzFd"
+  },
+  {
+   "text_b64": "w5ZuY2VkZW4gbWFza2VsaSBbS1VSVU1fUFJPSkVfMV0gdmUgeWVuaSBNYXZp",
+   "findings": [
+    [
+     "KURUM_PROJE",
+     40,
+     44
+    ]
+   ],
+   "masked_b64": "w5ZuY2VkZW4gbWFza2VsaSBbS1VSVU1fUFJPSkVfMV0gdmUgeWVuaSBbS1VSVU1fUFJPSkVfMV0="
+  }
+ ]
+}

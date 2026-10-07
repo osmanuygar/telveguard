@@ -681,7 +681,19 @@ için Chrome / Edge eklentisi: `extension/` (Manifest V3).
   sayfada ikinci kez sorulmaz.
 - **Engelle modu:** kişisel veri ya da sır içeren yapıştırma ve gönderim engellenir; gönderimde
   "Metni maskele" ile metin düzeltilip tekrar gönderilebilir.
-- Yakalanmayanlar: dosya yükleme / sürükle-bırak, sitelerin masaüstü uygulamaları, Safari ve Firefox.
+- **Dosya ekleme:** sürükle-bırak, dosya seçme düğmesi ve dosya yapıştırma. Metin dosyaları
+  (`.txt`, `.csv`, `.json`, `.md`, `.sql`, `.env`, kaynak kodu...; 5 MB'a kadar) tarayıcıda okunup
+  taranır: "Maskeleyerek ekle" siteye dosyanın maskeli bir kopyasını verir, bilgisayardaki dosya
+  değişmez. PDF, görsel ve Office belgeleri tarayıcıda taranamaz; varsayılan olarak eklenir,
+  `unscannableFiles: "block"` ile engellenir.
+- **Kurumsal sözlük:** politikadaki `dictionary` (proje kod adları, müşteri unvanları, iç sunucu
+  adları) eklentide de aranır. Eklenti sözlüğü saatte bir gateway'den çeker
+  (`GET /v1/shadow-ai/dictionary`, değişmediyse indirmez). Terimler eklentiye **düz metin olarak
+  gitmez**: tuzlu SHA-256 özeti gider, eklenti metindeki kelime gruplarını özetleyip karşılaştırır.
+  Listeyi ele geçiren terimleri okuyamaz; ancak tahmin ettiği bir terimin listede olup olmadığını
+  deneyebilir (kısa, yaygın kelimeler bu yüzden zayıf kalır). Düzenli ifadeler (`patterns`) olduğu
+  gibi gider; `whole_word: false` terimler tarayıcıda aranmaz.
+- Yakalanmayanlar: sitelerin masaüstü uygulamaları, Safari ve Firefox.
 - Telveguard'a yalnızca site, veri **türü** adetleri ve kullanıcının kararı gider; **metin asla
   gönderilmez.** Olaylar denetim hattına `api_format=browser` olarak yazılır, Röntgen'de ve
   envanterde ("beyan edilmemiş kullanım") kendiliğinden görünür. Olay ayrıntısında yapıştırma
@@ -691,15 +703,37 @@ için Chrome / Edge eklentisi: `extension/` (Manifest V3).
 
 Kurumda dağıtım:
 
-1. `extension/manifest.json` içindeki `host_permissions`'ı kendi Telveguard adresinizle değiştirip
-   paketleyin (Chrome Web Store'a özel yayın ya da kurum içi `.crx`).
+1. Eklentiyi kendi gateway adresinizle paketleyin. Eklenti yalnızca `host_permissions`'taki adrese
+   istek atabildiği için adres pakete yazılır (MDM ayarı tek başına yetmez):
+
+   ```bash
+   # Mağaza için .zip (Chrome Web Store / Edge Add-ons)
+   scripts/package_extension.sh https://telveguard.sirket.local
+   # Kendi sunucunuzdan dağıtım için ayrıca imzalı .crx + update.xml
+   scripts/package_extension.sh https://telveguard.sirket.local https://indirme.sirket.local/telveguard
+   ```
+
+   Çıktı `dist/extension/` altındadır. İki yol vardır:
+   - **Kendi sunucunuz (önerilen, air-gapped uyumlu):** `telveguard.crx` ve `update.xml`'i ikinci
+     adrese koyun (iç ağdaki herhangi bir HTTPS sunucu). Eklenti kimliği `dist/extension-key.pem`
+     anahtarından türer. Anahtarı kasada saklayın: kaybolursa yeni sürüm kurulu eklentiyi
+     güncelleyemez. Sürüm yükseltmek için `manifest.json`'daki `version`'ı artırıp betiği aynı
+     anahtarla yeniden çalıştırın; tarayıcılar `update.xml`'den birkaç saat içinde güncellenir.
+     Chrome ve Edge mağaza dışı eklentiyi yalnızca **yönetilen** cihazlara (etki alanına bağlı
+     Windows, MDM'e kayıtlı macOS) politikayla kurar.
+   - **Mağaza:** `.zip`'i Chrome Web Store'a "Özel" (yalnızca Google Workspace alanınız) ya da
+     "Liste dışı" olarak, Edge Add-ons'a "Gizli" olarak yükleyin. İnceleme birkaç gün sürebilir;
+     güncellemeyi mağaza yapar (`update_url`: `https://clients2.google.com/service/update2/crx`,
+     Edge'de `https://edge.microsoft.com/extensionwebstorebase/v1/crx`).
 2. Gateway'e `SHADOW_AI_TOKEN` verin (Helm: secret'ta `shadow-ai-token`).
-3. MDM (Intune, GPO, Jamf) ile zorunlu kurulum ve yapılandırma:
+3. MDM (Intune, GPO, Jamf) ile zorunlu kurulum ve yapılandırma. Edge'de aynı ayarlar Edge
+   politikalarının altına yazılır:
 
 ```json
 {
   "ExtensionSettings": {
-    "<eklenti-id>": { "installation_mode": "force_installed", "update_url": "<güncelleme adresi>" }
+    "<eklenti-id>": { "installation_mode": "force_installed",
+                      "update_url": "https://indirme.sirket.local/telveguard/update.xml" }
   },
   "3rdparty": { "extensions": { "<eklenti-id>": {
     "telveguardUrl": "https://telveguard.sirket.local",
@@ -707,13 +741,16 @@ Kurumda dağıtım:
     "mode": "warn",
     "user": "${user_email}",
     "team": "analitik",
-    "reportVisits": false
+    "reportVisits": false,
+    "unscannableFiles": "allow"
   } } }
 }
 ```
 
-Ayar şeması: `extension/managed_schema.json`. MDM yapılandırması yoksa eklenti yalnızca yerel
-koruma yapar (olay göndermez). Kullanıcı / ekip bilgisi MDM'den gelir; JWT gibi doğrulanmaz.
+Ayar şeması: `extension/managed_schema.json`. Windows GPO'da ayarlar
+`HKLM\Software\Policies\Google\Chrome\3rdparty\extensions\<eklenti-id>\policy` altına, macOS'ta
+`com.google.Chrome.extensions.<eklenti-id>` yapılandırma profiline yazılır. MDM yapılandırması
+yoksa eklenti yalnızca yerel koruma yapar (olay göndermez, kurumsal sözlüğü çekemez). Kullanıcı / ekip bilgisi MDM'den gelir; JWT gibi doğrulanmaz.
 
 ## Yönetim uçları
 
@@ -736,8 +773,9 @@ baktığı izlenebilir.
 | `GET /v1/reports/verbis?format=csv\|json` | VERBİS başlıklarına eşlenmiş taslak |
 | `POST /v1/policy/simulate?format=chat\|responses\|messages\|embeddings` | Bir isteğe verilecek karar, işaretli metin bölümleri ve modele gidecek maskeli gövde |
 
-Tarayıcı eklentisi olayları ayrı bir uçtan gelir: `POST /v1/shadow-ai/events`
-(`Authorization: Bearer <SHADOW_AI_TOKEN>`; tanımlı değilse kapalı).
+Tarayıcı eklentisinin uçları ayrıdır: olaylar `POST /v1/shadow-ai/events`, kurumsal sözlüğün
+özetlenmiş hâli `GET /v1/shadow-ai/dictionary` (ikisi de `Authorization: Bearer <SHADOW_AI_TOKEN>`;
+tanımlı değilse kapalı).
 
 ## MCP / agent trafiği (ContextForge)
 

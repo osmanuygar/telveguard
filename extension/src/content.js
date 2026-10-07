@@ -6,6 +6,12 @@
  *   gönderim (Enter ya da gönder düğmesi; elle yazılan metin de):
  *               warn  -> "Maskele ve gönder" (önerilen) / "Düzenle" / "Yine de gönder"
  *               block -> gönderilmez; "Metni maskele" ile düzeltilip tekrar gönderilebilir
+ *   dosya (sürükle-bırak, dosya seçme, dosya yapıştırma): metin dosyaları okunup taranır
+ *               warn  -> "Maskeleyerek ekle" (dosyanın maskeli kopyası) / "Vazgeç" / "Yine de ekle"
+ *               block -> eklenmez
+ *               PDF / görsel / Office taranamaz: unscannableFiles = allow (varsayılan) | block
+ * Kurumsal sözlük (proje adları, müşteri unvanları...) servis çalışanının gateway'den çektiği
+ * özet listeyle aranır (chrome.storage.local; detectors.js setDictionary).
  * Telveguard'a yalnızca site, veri türü adetleri ve karar gider; metin asla gönderilmez.
  * Pencere Shadow DOM'da: sitenin CSS'i bozamaz, sitenin betikleri içeriğini okuyamaz.
  */
@@ -16,7 +22,7 @@
   window.__telveguardLoaded = true;
 
   const site = location.hostname.replace(/^www\./, "");
-  let config = { mode: "warn", reportVisits: false };
+  let config = { mode: "warn", reportVisits: false, unscannableFiles: "allow" };
   const hasRuntime = typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage;
 
   function send(event) {
@@ -36,16 +42,26 @@
     } catch { /* varsayılan yapılandırma */ }
   }
 
+  const DICT_KEY = "telveguardDictionary";
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    try {
+      chrome.storage.local.get(DICT_KEY, (v) => D.setDictionary(v && v[DICT_KEY]));
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === "local" && changes[DICT_KEY]) D.setDictionary(changes[DICT_KEY].newValue);
+      });
+    } catch { /* sözlüksüz devam */ }
+  }
+
   // Kullanıcının "yine de" dediği değerler (yalnızca bu sayfanın belleğinde; saklanmaz / gönderilmez):
   // aynı değer için gönderimde ikinci kez sorulmaz
   const allowedValues = new Set();
   const allow = (text, findings) => findings.forEach((f) => allowedValues.add(text.slice(f.start, f.end)));
 
-  function counts(findings) {
-    const c = {};
+  function counts(findings, c = {}) {
     for (const f of findings) c[f.entity] = (c[f.entity] || 0) + 1;
     return c;
   }
+  const describe = (c) => Object.entries(c).map(([e, n]) => `${D.label(e)}${n > 1 ? ` (${n})` : ""}`);
 
   function insert(target, text) {
     // Sitelerin editörleri (React / ProseMirror) input olayını görsün diye tarayıcının komutu
@@ -135,6 +151,16 @@
 
   // ---------- yapıştırma ----------
   function onPaste(ev) {
+    if (redispatching) return;
+    const files = ev.clipboardData ? [...ev.clipboardData.files] : [];
+    if (files.length && needsReview(files)) {
+      holdFiles(ev, files, (out) => {
+        const dt = new DataTransfer();
+        out.forEach((f) => dt.items.add(f));
+        redispatch(ev.target, new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true, composed: true }));
+      });
+      return;
+    }
     const text = ev.clipboardData && ev.clipboardData.getData("text/plain");
     if (!text) return;
     const findings = D.analyze(text);
@@ -143,13 +169,13 @@
     ev.stopImmediatePropagation();
     const target = ev.target;
     const c = counts(findings);
-    const items = Object.entries(c).map(([e, n]) => `${D.label(e)}${n > 1 ? ` (${n})` : ""}`);
+    const items = describe(c);
     const base = { entities: c, chars: text.length, trigger: "paste" };
 
     if (config.mode === "block") {
       send({ ...base, action: "blocked" });
       dialog({ title: "Yapıştırma engellendi", items, buttons: [{ label: "Tamam", primary: true, cancel: true }],
-               message: "Kurum politikası gereği kişisel veri ya da sır içeren metin AI sitelerine yapıştırılamaz." });
+               message: "Kurum politikası gereği kişisel veri, sır ya da kurum bilgisi içeren metin AI sitelerine yapıştırılamaz." });
       return;
     }
     dialog({
@@ -165,6 +191,112 @@
       ],
     });
   }
+
+  // ---------- dosya ekleme ----------
+  // Metin dosyaları tarayıcıda okunup taranır; olay durdurulur, karar sonrası (temizse olduğu gibi,
+  // maskelendiyse maskeli kopyayla) siteye yeniden verilir. PDF / görsel / Office taranamaz.
+  const TEXT_EXT = /\.(txt|text|csv|tsv|md|markdown|json|jsonl|ndjson|xml|ya?ml|log|sql|ini|cfg|conf|env|properties|toml|html?|css|scss|js|mjs|cjs|jsx|ts|tsx|py|ipynb|java|kt|kts|cs|go|rb|php|sh|bash|zsh|ps1|bat|c|h|cc|cpp|hpp|rs|swift|scala|r|tf|tfvars|gradle|vue|svelte|pem|key)$/i;
+  const TEXT_MIME = /^text\/|[/+](json|xml|yaml|x-yaml|javascript|x-sh|sql|x-python|x-pem-file)$/i;
+  const MAX_FILE_BYTES = 5 * 1024 * 1024;
+  const scannable = (f) => f.size <= MAX_FILE_BYTES && (TEXT_MIME.test(f.type || "") || TEXT_EXT.test(f.name || ""));
+  const needsReview = (files) => files.some(scannable) || (config.unscannableFiles === "block" && files.length > 0);
+
+  let redispatching = false;
+  function redispatch(target, event) {
+    redispatching = true;
+    try { (target || document.body).dispatchEvent(event); } finally { redispatching = false; }
+  }
+
+  /** Dosyaları tarar; kullanıcı kararına göre onDone(eklenecek dosyalar) çağrılır (vazgeçince çağrılmaz). */
+  async function reviewFiles(files, onDone, onCancel = () => {}) {
+    const hits = [], unscannable = [];
+    let chars = 0;
+    const out = await Promise.all(files.map(async (f) => {
+      if (!scannable(f)) { unscannable.push(f); return f; }
+      const text = await f.text().catch(() => null);
+      if (text === null) { unscannable.push(f); return f; }
+      const findings = D.analyze(text);
+      if (!findings.length) return f;
+      chars += text.length;
+      const masked = new File([D.mask(text).text], f.name, { type: f.type || "text/plain", lastModified: f.lastModified });
+      hits.push({ file: f, findings, masked });
+      return f;
+    }));
+    const blockedUnscannable = config.unscannableFiles === "block" ? unscannable : [];
+    if (!hits.length && !blockedUnscannable.length) { onDone(files); return; }
+
+    const c = {};
+    hits.forEach((h) => counts(h.findings, c));
+    const base = { entities: c, chars, trigger: "file" };
+    const items = hits.map((h) => `${h.file.name}: ${describe(counts(h.findings)).join(", ")}`)
+      .concat(blockedUnscannable.map((f) => `${f.name}: taranamayan dosya türü`));
+
+    if (config.mode === "block" || blockedUnscannable.length) {
+      send({ ...base, action: "blocked" });
+      dialog({ title: "Dosya eklenmedi", items, buttons: [{ label: "Tamam", primary: true, cancel: true, onClick: onCancel }],
+               message: hits.length && config.mode === "block"
+                 ? "Kurum politikası gereği kişisel veri, sır ya da kurum bilgisi içeren dosyalar AI sitelerine eklenemez."
+                 : "Kurum politikası gereği taranamayan dosyalar (PDF, görsel, Office belgeleri) AI sitelerine eklenemez." });
+      return;
+    }
+    const maskedOut = out.map((f) => (hits.find((h) => h.file === f) || { masked: f }).masked);
+    dialog({
+      title: "Dosyada hassas veri var",
+      message: "Eklediğiniz dosyalar şunları içeriyor. Maskeleyerek eklerseniz siteye değerlerin yerine [TCKN_1] gibi " +
+               "yer tutucuların olduğu bir kopya gider; bilgisayarınızdaki dosya değişmez.",
+      items,
+      buttons: [
+        { label: "Vazgeç", cancel: true, onClick: () => { send({ ...base, action: "cancelled" }); onCancel(); } },
+        { label: "Yine de ekle", onClick: () => { send({ ...base, action: "allowed_override" }); onDone(files); } },
+        { label: "Maskeleyerek ekle", primary: true, onClick: () => { send({ ...base, action: "masked" }); onDone(maskedOut); } },
+      ],
+    });
+  }
+
+  function holdFiles(ev, files, onDone, onCancel) {
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    reviewFiles(files, onDone, onCancel);
+  }
+
+  // Sürükle-bırak
+  window.addEventListener("drop", (ev) => {
+    if (redispatching || !ev.dataTransfer) return;
+    const files = [...ev.dataTransfer.files];
+    if (!files.length || !needsReview(files)) return;
+    const init = { bubbles: true, cancelable: true, composed: true, clientX: ev.clientX, clientY: ev.clientY,
+                   screenX: ev.screenX, screenY: ev.screenY };
+    const target = ev.target;
+    holdFiles(ev, files, (out) => {
+      const dt = new DataTransfer();
+      out.forEach((f) => dt.items.add(f));
+      redispatch(target, new DragEvent("drop", { ...init, dataTransfer: dt }));
+    }, () => redispatch(target, new DragEvent("dragleave", init)));   // sitenin "bırakın" katmanı kapansın
+  }, true);
+
+  // Dosya seçme (<input type=file>): tarayıcı önce input sonra change verir; ikisi de karar
+  // verilene kadar siteye ulaşmaz, sonra aynı sırayla yeniden verilir
+  const fileInputOf = (t) => t && t.tagName === "INPUT" && t.type === "file" && t.files && t.files.length ? t : null;
+  window.addEventListener("input", (ev) => {
+    const input = fileInputOf(ev.target);
+    if (!redispatching && input && needsReview([...input.files])) ev.stopImmediatePropagation();
+  }, true);
+  window.addEventListener("change", (ev) => {
+    const input = fileInputOf(ev.target);
+    if (redispatching || !input) return;
+    const files = [...input.files];
+    if (!needsReview(files)) return;
+    ev.stopImmediatePropagation();
+    reviewFiles(files, (out) => {
+      if (out !== files) {
+        const dt = new DataTransfer();
+        out.forEach((f) => dt.items.add(f));
+        input.files = dt.files;
+      }
+      redispatch(input, new Event("input", { bubbles: true, composed: true }));
+      redispatch(input, new Event("change", { bubbles: true }));
+    }, () => { input.value = ""; });
+  }, true);
 
   document.addEventListener("paste", onPaste, true);
 
@@ -242,7 +374,7 @@
     ev.preventDefault();
     ev.stopImmediatePropagation();
     const c = counts(findings);
-    const items = Object.entries(c).map(([e, n]) => `${D.label(e)}${n > 1 ? ` (${n})` : ""}`);
+    const items = describe(c);
     const base = { entities: c, chars: text.length, trigger: "send" };
     const masked = () => D.mask(text, { continueNumbering: true }).text;
     const done = () => { dialogOpen = false; };
@@ -250,7 +382,7 @@
 
     if (config.mode === "block") {
       send({ ...base, action: "blocked" });
-      dialog({ title: "Gönderim engellendi", items, message: "Kurum politikası gereği kişisel veri ya da sır içeren mesaj " +
+      dialog({ title: "Gönderim engellendi", items, message: "Kurum politikası gereği kişisel veri, sır ya da kurum bilgisi içeren mesaj " +
                  "AI sitelerine gönderilemez. Metni maskeleyip kontrol ettikten sonra tekrar gönderebilirsiniz.",
                buttons: [
                  { label: "Düzenle", cancel: true, onClick: () => { done(); composer.focus(); } },
