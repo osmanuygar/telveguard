@@ -1,0 +1,214 @@
+# Telveguard POC başlangıç politikası: varsayılan politikanın GÖZLEM modundaki hâli.
+# Kurallar isteği değiştirmez; "uygulansaydı ne olurdu" denetim kaydına yazılır ve
+# konsoldaki POC raporu (#rapor) bunu "gözlemde korunurdu" olarak gösterir. Kullanıcılar
+# POC boyunca hiçbir fark görmez. Tek istisna sırlar: maskelemek risksizdir, baştan uygulanır.
+# POC sonunda raporun önerdiği kurallardan `mode: monitor` kaldırılır (ya da en üstteki satır).
+default_action: allow
+mode: monitor
+
+# Model adı önekine göre verinin nereye gittiği.
+# internal = kurum içi (on-prem vLLM / Ollama), external = yurt dışına aktarım (KVKK md. 9)
+destinations:
+  internal: ["local/", "vllm/", "qwen", "llama"]
+  external: ["gpt-", "claude-", "gemini-"]
+
+# Model adına göre sağlayıcı (opsiyonel). Eşleşen sağlayıcının destination'ı yukarıdaki
+# önekten önce gelir. Eşleşme yoksa UPSTREAM_* ortam değişkenleri kullanılır.
+# Anahtar YAML'a yazılmaz: key_env, "_KEY" ile biten bir ortam değişkeninin adıdır.
+# type: openai (chat + responses) | azure (chat + responses) | anthropic (messages)
+# providers:
+#   - name: Azure OpenAI
+#     match: ["gpt-"]
+#     type: azure
+#     url: https://KAYNAK.openai.azure.com
+#     key_env: AZURE_OPENAI_KEY
+#     country: İsveç (AB)            # VERBİS / KVKK raporunda aktarım ülkesi
+#     # api_version: "2024-10-21"    # klasik API; o zaman deployments: {gpt-4o: uretim-gpt4o}
+#   - name: Google Gemini
+#     match: ["gemini-"]
+#     url: https://generativelanguage.googleapis.com/v1beta/openai
+#     key_env: GEMINI_API_KEY
+#     country: ABD
+#   - name: Mistral
+#     match: ["mistral-", "codestral-"]
+#     url: https://api.mistral.ai/v1
+#     key_env: MISTRAL_API_KEY
+#     country: Fransa (AB)
+#   - name: Anthropic
+#     match: ["claude-"]
+#     type: anthropic
+#     url: https://api.anthropic.com
+#     key_env: ANTHROPIC_API_KEY
+#     country: ABD
+#   - name: Kurum içi vLLM
+#     match: ["qwen", "llama"]
+#     url: http://vllm:8000/v1
+#     destination: internal
+# Kurumsal sözlük: kişisel veri olmayan ama dışarı çıkmaması gereken terimler. Bulunanlar
+# KURUM_* türüyle diğer veriler gibi kurallardan geçer ([KURUM_PROJE_1] olarak maskelenir,
+# cevapta geri açılır). Kişisel veri sayılmaz: KVKK aktarım raporuna ve VERBİS'e girmez.
+# Büyük / küçük harf (Türkçe İ/ı dahil) fark etmez; kelimenin parçası eşleşmez ("Anka" != "Ankara").
+# Genel kelimelerden kaçının: ilçe adı olan bir kod adı ("Kartal") her adres metninde eşleşir.
+dictionary:
+  - entity: KURUM_PROJE
+    label: Proje kod adı
+    terms: ["Proje Anka", "Proje Turna"]       # örnek: kendi kod adlarınızla değiştirin
+  - entity: KURUM_SUNUCU
+    label: İç sunucu / alan adı
+    patterns: ['[a-z0-9][a-z0-9.-]*\.sirket\.local']   # örnek: iç DNS alanınız
+  # - entity: KURUM_MUSTERI
+  #   label: Müşteri unvanı
+  #   terms_file: kurum/musteriler.txt       # satır başına bir terim (bu dosyaya göre göreli)
+
+rules:
+  - name: prompt-injection-block
+    when: { injection_score_gte: 0.85 }
+    action: block
+    message: "Olası prompt injection tespit edildi."
+
+  - name: prompt-injection-alert
+    when: { injection_score_gte: 0.5 }
+    action: alert
+
+  # Kimlik/finans verisi yurt dışı modele maskelenmeden gitmesin
+  - name: kvkk-yurtdisi-maskele
+    when:
+      destination: external
+      entity_in: [TCKN, VKN, IBAN_TR, CREDIT_CARD, PHONE_TR, EMAIL_ADDRESS, PLATE_TR, PERSON]
+    action: mask
+
+  # Kurumsal sözlük terimleri yurt dışı modele gitmesin (kurum içi modelde serbest)
+  - name: kurum-terimleri-yurtdisi-maskele
+    when: { destination: external, entity_in: ["KURUM_*"] }
+    action: mask
+
+  # API anahtarı, token, private key, parolalı bağlantı dizesi: iç modelde bile maskele
+  # (model/log tarafında saklanan sır, sızmış sırdır). Joker: tüm SECRET_* türleri.
+  - name: sirlar-her-yerde-maskele
+    when: { entity_in: ["SECRET_*"] }
+    action: mask
+    mode: enforce                  # POC'de de uygulanır
+
+  # Kurum içi modelde bile kart numarası istemiyoruz
+  - name: kart-numarasi-her-yerde-maskele
+    when: { entity_in: [CREDIT_CARD] }
+    action: mask
+
+  # Örnek ekip kuralı: stajyer ekibi dış modele hiç TCKN gönderemez
+  - name: stajyer-tckn-engel
+    when: { teams: [stajyer], destination: external, entity_in: [TCKN] }
+    action: block
+    message: "Bu ekip dış modellere kimlik numarası gönderemez."
+
+  # Model izin listesi: model_in / model_not_in model adına joker ile bakar.
+  # declared: false = AI envanterinde (inventory.yaml) kullanıcının ekiplerinden biri için bu
+  # modeli içeren bir sistem beyan edilmemiş. Envanter boşsa / yoksa bu koşul hiç eşleşmez.
+  # Önce mode: monitor ile açıp kimlerin etkileneceğini Olaylar ekranında görün.
+  # - name: stajyer-sadece-kurum-ici
+  #   when: { teams: [stajyer], model_not_in: ["vllm/*", "qwen*", "llama*"] }
+  #   action: block
+  #   message: "Ekibiniz yalnızca kurum içi modelleri kullanabilir."
+  # - name: pahali-modeller-ar-ge
+  #   when: { model_in: ["o3*", "claude-opus-*"] }
+  #   action: alert
+  # - name: beyan-edilmemis-model
+  #   when: { declared: false, destination: external }
+  #   action: block
+  #   mode: monitor
+  #   message: "Bu model ekibiniz için AI envanterinde beyan edilmemiş."
+
+# Model cevabı: entity_in, cevapta olup GİRDİDE OLMAYAN değerlere (sızıntı) bakar.
+# Kullanıcının kendi TCKN'sinin cevapta geri gelmesi sızıntı sayılmaz.
+# mask: değer "[GİZLENDİ:TCKN]" olur (geri çevrilmez); block: cevap hiç dönmez.
+output_rules:
+  # Eğitim verisinden / RAG belgesinden sızan API anahtarı, parola, private key
+  - name: cikti-sir-gizle
+    when: { entity_in: ["SECRET_*"] }
+    action: mask
+
+  - name: cikti-kimlik-finans-gizle
+    when: { entity_in: [TCKN, VKN, IBAN_TR, CREDIT_CARD] }
+    action: mask
+
+  # Telefon / e-posta: önce gözlemle (modelin ürettiği örnek adresler yanlış pozitif olabilir)
+  - name: cikti-iletisim-gizle
+    when: { entity_in: [PHONE_TR, EMAIL_ADDRESS] }
+    action: mask
+    mode: monitor
+
+# Ekler: görseller (OCR, Türkçe + İngilizce) ve PDF'ler taranır; bulunan veri türleri metinle
+# aynı kurallardan geçer. Maskeleme gerekirse görselde ilgili alan karartılır (üstüne [TCKN_1]
+# yazılır), PDF / metin dosyası modele maskeli metni olarak gider.
+# Taranamayan ek (uzak adres, file_id, şifreli PDF, desteklenmeyen tür, boyut sınırı):
+# yalnızca yurt dışı hedefte unscannable uygulanır ve "ek-taranamadi" kuralı kayda geçer.
+attachments:
+  ocr: true
+  max_bytes: 20000000           # 20 MB
+  max_pages: 30
+  unscannable: alert            # allow | alert | block (önce alert ile ne kadar olduğunu görün)
+
+# Anlık bildirim: Slack / Microsoft Teams / genel webhook (SIEM). Adres YAML'a yazılmaz:
+# url_env, "_WEBHOOK_URL" ile biten ortam değişkeninin adıdır; değişken boşsa kanal kapalıdır.
+# Koşullar: actions, rules (joker), entity_in, teams, sources (gateway | browser). Hepsi sağlanmalı.
+# Mesajda metin yoktur (ekip, kullanıcı, model, karar, kural, veri türü). Deneme: POST /v1/notify/test
+notify:
+  # Mesajdaki "Konsolda aç" bağlantısı; yoksa TELVEGUARD_PUBLIC_URL ortam değişkeni
+  # console_url: https://telveguard.sirket.local
+  channels:
+    - name: guvenlik-slack
+      type: slack
+      url_env: SLACK_SECURITY_WEBHOOK_URL
+      when: { actions: [block] }        # injection, ekip kuralı, kota, cevapta sızıntı engeli
+      cooldown_seconds: 300             # aynı ekip + kural için 5 dk'da bir mesaj (arası sayılır)
+
+    - name: sir-sizintisi-slack
+      type: slack
+      url_env: SLACK_SECURITY_WEBHOOK_URL
+      # Maskelense de bildirilir: anahtar sohbete yapıştırıldıysa döndürülmeli (rotate).
+      # block hariç: engellenen istek zaten guvenlik-slack'e düşer (çift mesaj olmasın)
+      when: { entity_in: ["SECRET_*"], actions: [mask, alert, allow] }
+      cooldown_seconds: 60
+
+    - name: golge-ai-teams
+      type: teams
+      url_env: TEAMS_SECURITY_WEBHOOK_URL
+      when: { sources: [browser], actions: [alert, block] }   # uyarıya rağmen yapıştırma / engelleme
+
+    # - name: siem
+    #   type: webhook
+    #   url_env: SIEM_WEBHOOK_URL
+    #   when: { actions: [block, alert] }
+    #   cooldown_seconds: 0             # SIEM her olayı istesin
+    #   include_user: true
+
+# Ekip kota / hız sınırı (sayaç Redis'te: REDIS_URL). Kota BİRİNCİL ekibe uygulanır.
+# Limitler: requests_per_minute, monthly_tokens, monthly_cost_usd (ay İstanbul saatine göre).
+quotas:
+  on_backend_error: open        # Redis erişilemezse: open = istekleri geçir, closed = 503
+  default:
+    requests_per_minute: 300
+  teams:
+    stajyer: { requests_per_minute: 30, monthly_cost_usd: 25 }
+
+# Röntgen maliyet tahmini: USD / 1M token. Liste sırayla denenir, İLK eşleşen önek kazanır
+# (claude-opus-5-5, claude-opus-5'ten önce gelmeli). Eşleşmeyen modelin maliyeti "bilinmiyor".
+# Claude: Anthropic birinci taraf API liste fiyatları (2026-06). Bedrock/Vertex fiyatları farklıdır.
+pricing:
+  - { match: "claude-opus-5-5",   input: 4.0,  output: 20.0 }
+  - { match: "claude-opus-5",     input: 5.0,  output: 25.0 }
+  - { match: "claude-opus-4",     input: 5.0,  output: 25.0 }   # 4.6 / 4.7 / 4.8
+  - { match: "claude-fable-5",    input: 10.0, output: 50.0 }   # 5 ve 5.1
+  - { match: "claude-sonnet-5",   input: 2.0,  output: 10.0 }
+  - { match: "claude-sonnet-4-6", input: 3.0,  output: 15.0 }
+  - { match: "claude-haiku-4-5",  input: 1.0,  output: 5.0 }
+  # Kurum içi modeller: token ücreti yok (donanım maliyetini isterseniz buraya yansıtın)
+  - { match: "local/", input: 0, output: 0 }
+  - { match: "vllm/",  input: 0, output: 0 }
+  - { match: "qwen",   input: 0, output: 0 }
+  - { match: "llama",  input: 0, output: 0 }
+  # Diğer sağlayıcılar: kendi sözleşme fiyatlarınızla doldurun
+  # - { match: "gpt-4o", input: ..., output: ... }
+  # - { match: "gemini-", input: ..., output: ... }
+  # Embedding modelleri (yalnızca girdi token'ı)
+  # - { match: "text-embedding-3-small", input: ..., output: 0 }
+  # - { match: "text-embedding-3-large", input: ..., output: 0 }

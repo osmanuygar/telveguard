@@ -33,6 +33,7 @@ from . import shadow_ai
 from . import subjects as subjects_mod
 from . import metrics
 from . import notify as notify_mod
+from . import poc_report as poc_report_mod
 from . import providers as providers_mod
 from . import xray as xray_mod
 from .audit import AuditSink
@@ -766,6 +767,26 @@ async def kvkk_transfer_report(request: Request, month: str, format: str = "csv"
         return {"month": month, "rows": rows}
     return Response(xray_mod.kvkk_csv(rows), media_type="text/csv; charset=utf-8", headers={
         "Content-Disposition": f'attachment; filename="kvkk-yurtdisi-aktarim-{month}.csv"'})
+
+
+@app.get("/v1/reports/poc")
+async def poc_report(request: Request, days: int = 14):
+    """POC değerlendirme raporu: riskli istekler korundu / gözlemde korunurdu / korumasız,
+    KVKK md. 9 maruziyeti, gölge AI, örnek olaylar (kullanıcı adı yok) ve politika önerileri."""
+    if err := await _require_admin(request):
+        return err
+    if not 1 <= days <= 366:
+        return _openai_error(400, "days 1 ile 366 arasında olmalı.", "invalid_request", "invalid_request_error")
+    ch, err = _require_clickhouse(request)
+    if err:
+        return err
+    st = request.app.state
+    try:
+        return await poc_report_mod.build(
+            ch, days, registry=st.providers, inventory_cfg=st.inventory, policy_mode=st.policy.mode,
+            dictionary_labels={e["entity"]: e["label"] for e in st.dictionary.describe() if e["label"]})
+    except xray_mod.ClickHouseError as e:
+        return _openai_error(502, str(e), "clickhouse_error", "admin_error")
 
 
 # ---------------- AI envanteri (EU AI Act) + VERBİS taslağı ----------------

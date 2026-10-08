@@ -22,6 +22,14 @@
 - `GET /v1/shadow-ai/dictionary` (`SHADOW_AI_TOKEN`): kurumsal sözlüğün tarayıcı sürümü. Terimler
   tuzlu SHA-256 özeti (ilk 64 bit), düzenli ifadeler olduğu gibi; ETag ile 304.
 - Gölge AI olaylarında `KURUM_*` veri türleri ve `trigger: file` ("Tarayıcı: dosya eklerken").
+- POC raporu: konsolda **POC raporu** sekmesi (`#rapor`) ve `GET /v1/reports/poc?days=`. Riskli
+  istekler korundu / gözlemde korunurdu / korumasız; risk türleri, KVKK md. 9 (veri türü ×
+  sağlayıcı × ülke), ekipler, gölge AI, örnek olaylar (kullanıcı adı yok) ve politika YAML'ı ile
+  öneriler. Yazdırılabilir / PDF.
+- `policies/poc.yaml`: varsayılan politikanın gözlem modundaki hâli (sırlar uygulanır).
+- `scripts/demo_traffic.py`: gerçek politikadan geçen, geçmiş tarihli demo trafiği ve gölge AI
+  olayları (`auth_source = demo`, `--purge` ile silinir).
+- KVKK ve VERBİS raporlarında `text-embedding-*` modelleri OpenAI olarak tanınır.
 
 ### Tarayıcı eklentisi
 

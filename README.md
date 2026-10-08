@@ -41,6 +41,9 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 **Görünürlük ve uyum**
 - **Denetim kaydı:** ham prompt hiç saklanmaz; veri türleri, karar, token, maliyet ClickHouse'ta.
 - **AI Kullanım Röntgeni:** kim, hangi modeli, hangi veriyle kullanıyor; ne engellendi, ne kadar tuttu.
+- **POC raporu:** "Telveguard olmasaydı ne olurdu?" Yönetici özeti: riskli isteklerin ne kadarı
+  korundu, ne kadarı gözlemdeki kurallarla korunacaktı, ne kadarı korumasız kaldı; KVKK md. 9
+  maruziyeti, gölge AI ve politikaya eklenecek YAML ile öneriler. Yazdırılabilir / PDF.
 - **Olay gezgini ve politika deneme:** tek tek isteklerin kararı; yeni kuralı canlıya almadan denemek.
 - **Anlık bildirim:** engellenen istek, sızan sır, kota aşımı, gölge AI uyarısı Slack / Teams / SIEM'e.
 - **KVKK ve VERBİS:** aylık yurt dışı aktarım raporu, VERBİS taslağı.
@@ -83,10 +86,12 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
 ```
 
 **Yönetim konsolu:** http://localhost:8080/xray → sağ üstteki alana yönetici token'ı olarak
-`e2e-admin-token` (yalnızca bu yerel test ortamı içindir). Dört sekme:
+`e2e-admin-token` (yalnızca bu yerel test ortamı içindir). Beş sekme:
 
 - **Röntgen** (`#rontgen`): özet, trend, ekip / model / veri türü kırılımı, envanter.
   Kutucuklara, çubuklara ve satırlara tıklayınca ilgili olaylar açılır.
+- **POC raporu** (`#rapor`): dönem ve kurum adını seçin, "Yazdır / PDF" ile yönetim sunumuna
+  hazır tek belge. Ayrıntı: [POC: gözlem modu, rapor ve demo verisi](#poc-gözlem-modu-rapor-ve-demo-verisi).
 - **Olaylar** (`#olaylar`): denetim kayıtları; ekip, kullanıcı, model, karar, veri türü,
   kural ve güne göre süzülür, satıra tıklayınca ayrıntısı açılır. Filtreler adreste durur,
   bağlantı olarak paylaşılabilir (ör. `#olaylar?action=block&team=stajyer`).
@@ -97,6 +102,34 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
   verisinin hangi isteklerde geçtiği, yurt dışına aktarılıp aktarılmadığı ve cevap taslağı.
 
 Kapatmak için: `docker compose -f docker-compose.yml -f docker-compose.test.yml down`
+
+### POC: gözlem modu, rapor ve demo verisi
+
+**1. Gözlem moduyla başlayın.** `policies/poc.yaml`, varsayılan politikanın gözlem modundaki hâlidir:
+kurallar istekleri değiştirmez, "uygulansaydı ne olurdu" denetim kaydına yazılır. Kullanıcılar POC
+boyunca fark görmez; tek istisna sırlardır (maskelemek risksizdir, baştan uygulanır).
+`POLICY_PATH=/policies/poc.yaml` (Helm: politika içeriği olarak `poc.yaml`).
+
+**2. Raporu alın.** Konsolda **POC raporu** sekmesi ya da `GET /v1/reports/poc?days=14`. Her riskli istek
+(yurt dışına kişisel veri, sır, kurum bilgisi, prompt injection, cevapta sızıntı) üç akıbetten birine
+ayrılır: **korundu**, **gözlemde korunurdu** (gözlemdeki kural uygulamaya alınınca korunur),
+**korumasız** (hiçbir kural yok; öneriler bu açığı kapatacak YAML'ı yazar). Ham metin ve kullanıcı adı
+rapora girmez; ekip düzeyindedir. "Gözlemde korunurdu" istek düzeyindedir (hangi veri türünü
+maskeleyeceği kaydedilmez), bu yüzden üst sınırdır.
+
+**3. Boş ekranla başlamayın (demo).** Satış demosu ya da POC'nin ilk günü için gerçekçi Türkçe trafik:
+
+```bash
+python3 scripts/demo_traffic.py --days 14 --requests 3000   # ~3 sn; yalnızca standart kütüphane
+python3 scripts/demo_traffic.py --purge                     # demo kayıtlarını sil
+```
+
+Yedi ekip (müşteri hizmetleri, yazılım, finans, İK, analitik, pazarlama, stajyer), hafta içi mesai
+yoğunluğu ve zamanla artan kullanım; çoğu temiz, bir kısmında kişisel veri, sır, kurum terimi ve
+injection, ayrıca gölge AI olayları. Her istek gateway'in politika deneme ucundan geçer: kararı
+**gerçek politika ve tespit motoru** verir, sonuç geçmiş tarihli olarak ClickHouse'a yazılır
+(yazma yetkili kullanıcı gerekir). Kayıtlar `auth_source = demo` ile işaretlidir. Müşterinin gerçek
+POC verisinin olduğu ClickHouse'a yazmayın.
 
 ## Desteklenen API'ler
 
@@ -771,6 +804,7 @@ baktığı izlenebilir.
 | `GET /v1/reports/kvkk-transfer?month=2026-09` | KVKK yurt dışı aktarım raporu (CSV; `&format=json` da olur) |
 | `GET /v1/inventory?days=90` | AI envanteri: beyan edilen sistemler, risk sınıfı, yükümlülükler, beyan edilmemiş kullanımlar |
 | `GET /v1/reports/verbis?format=csv\|json` | VERBİS başlıklarına eşlenmiş taslak |
+| `GET /v1/reports/poc?days=14` | POC raporu: riskli isteklerin akıbeti, KVKK md. 9, gölge AI, örnek olaylar, öneriler |
 | `POST /v1/policy/simulate?format=chat\|responses\|messages\|embeddings` | Bir isteğe verilecek karar, işaretli metin bölümleri ve modele gidecek maskeli gövde |
 
 Tarayıcı eklentisinin uçları ayrıdır: olaylar `POST /v1/shadow-ai/events`, kurumsal sözlüğün

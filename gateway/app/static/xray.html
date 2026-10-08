@@ -194,6 +194,37 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--border); borde
   .card { border: 0; padding: 0; }
   .letter { background: none; padding: 0; }
 }
+/* POC raporu */
+.report { --ok: var(--status-good); --would: var(--status-warning); --bad: var(--status-critical); }
+.report .doc-head { margin: 8px 0 12px; }
+.report .doc-head h1 { font-size: 24px; margin: 8px 0 4px; }
+.report .card { margin-top: 12px; break-inside: avoid; }
+.report .headline { font-size: 18px; line-height: 1.5; margin: 0 0 12px; max-width: 70ch; }
+.report .headline b { font-size: 40px; display: block; line-height: 1.1; margin-bottom: 4px; }
+.stack { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: var(--surface-2); gap: 2px; }
+.stack span { display: block; height: 100%; min-width: 3px; }
+.outcomes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.outcome { border-left: 3px solid var(--c); padding: 2px 0 2px 10px; }
+.outcome .v { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.outcome .l { font-size: 13px; color: var(--text-secondary); }
+@media (max-width: 700px) { .outcomes { grid-template-columns: 1fr; } }
+.oc { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.oc i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+td.zero { color: var(--text-muted); }
+.recs { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: rec; }
+.recs li { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; counter-increment: rec; break-inside: avoid; }
+.recs .t { font-weight: 600; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.recs .t::before { content: counter(rec) "."; color: var(--text-muted); }
+.recs p { margin: 6px 0 0; color: var(--text-secondary); font-size: 13px; }
+.recs pre { margin: 8px 0 0; font-size: 12px; max-height: none; }
+.prio { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--c); color: var(--text-primary); }
+@media print {
+  .report .card { border: 1px solid #ddd; padding: 12px; }
+  .report .stack, .report .oc i, .report .outcome { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  #view-rapor .filters { display: none; }
+  .report .grid { grid-template-columns: 1fr !important; }
+  .report .table-wrap { overflow: visible; }
+}
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -203,6 +234,7 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--border); borde
     <span class="brand">Telveguard</span>
     <nav class="tabs" aria-label="Bölümler">
       <a href="#rontgen" data-view="rontgen">Röntgen</a>
+      <a href="#rapor" data-view="rapor">POC raporu</a>
       <a href="#olaylar" data-view="olaylar">Olaylar</a>
       <a href="#deneme" data-view="deneme">Politika deneme</a>
       <a href="#basvuru" data-view="basvuru">Başvuru</a>
@@ -280,6 +312,25 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--border); borde
       </div>
       <p class="sub section" id="footnote"></p>
     </div>
+  </section>
+
+  <!-- ==================== POC raporu ==================== -->
+  <section id="view-rapor" data-view hidden>
+    <form class="filters print-hide" id="rp-form" autocomplete="off">
+      <label>Dönem
+        <select name="days">
+          <option value="7">Son 7 gün</option><option value="14" selected>Son 14 gün</option>
+          <option value="30">Son 30 gün</option><option value="90">Son 90 gün</option>
+        </select>
+      </label>
+      <label>Kurum adı <input name="org" placeholder="ör. Örnek Bank A.Ş." style="width:220px"></label>
+      <button class="primary" type="submit">Raporu oluştur</button>
+      <button type="button" id="rp-print">Yazdır / PDF</button>
+    </form>
+    <article class="report" id="rp">
+      <div class="empty">Yönetici özeti: dönem içindeki riskli AI kullanımı, Telveguard'ın ne kadarını koruduğu,
+        KVKK maruziyeti ve uygulanacak politika önerileri.</div>
+    </article>
   </section>
 
   <!-- ==================== Olaylar ==================== -->
@@ -1254,9 +1305,151 @@ function renderSubjects(res, applied) {
   $("sub-result").replaceChildren(...out);
 }
 
+// ==================== POC raporu ====================
+const OUTCOMES = [
+  { key: "protected", label: "Telveguard korudu", short: "Korundu", color: "var(--ok)" },
+  { key: "would", label: "Gözlemdeki kurallar koruyacaktı", short: "Gözlemde korunurdu", color: "var(--would)" },
+  { key: "exposed", label: "Korumasız kaldı", short: "Korumasız", color: "var(--bad)" },
+];
+const PRIORITY = { high: ["Yüksek", "var(--status-critical)"], medium: ["Orta", "var(--status-warning)"],
+  low: ["Düşük", "var(--series-1)"] };
+const ocBadge = (key) => { const o = OUTCOMES.find((x) => x.key === key);
+  return el("span", { class: "oc" }, el("i", { style: `background:${o.color}` }), o.short); };
+const numCell = (v) => el("span", { class: Number(v) ? "" : "zero" }, n(v));
+
+async function loadReport() {
+  const f = $("rp-form");
+  $("rp").classList.add("loading");
+  setStatus("Rapor hazırlanıyor…");
+  try {
+    const r = await apiJson("/v1/reports/poc?days=" + encodeURIComponent(f.days.value));
+    renderReport(r, f.org.value.trim());
+    setStatus(`Rapor hazır: ${new Date().toLocaleTimeString("tr-TR")}`);
+  } catch (e) {
+    setStatus("Rapor alınamadı: " + e.message, true);
+  } finally {
+    $("rp").classList.remove("loading");
+  }
+}
+
+function outcomeCols(label) {
+  return [{ label, render: (r) => r.label }, { label: "Toplam", num: true, render: (r) => numCell(r.total) },
+    ...OUTCOMES.map((o) => ({ label: o.short, num: true, render: (r) => numCell(r[o.key]) }))];
+}
+
+function renderReport(r, org) {
+  const s = r.summary, risky = s.risky, out = [];
+  const period = s.first_seen ? `${trDate(s.first_seen)} – ${trDate(s.last_seen)}` : `son ${r.window.days} gün`;
+  out.push(el("header", { class: "doc-head" },
+    el("div", { class: "meta" }, "Telveguard · POC değerlendirme raporu"),
+    el("h1", {}, "Yapay zekâ kullanım ve risk değerlendirmesi"),
+    el("p", { class: "sub" }, [org, period, `rapor tarihi ${new Date(r.generated_at).toLocaleDateString("tr-TR")}`].filter(Boolean).join(" · ")),
+    r.policy_mode === "monitor" || s.monitored_requests
+      ? el("p", { class: "chip", style: "white-space:normal" }, "Politika gözlem modunda çalıştı: kurallar istekleri " +
+          "değiştirmedi, uygulansalardı ne olacağı kaydedildi. \"Gözlemde korunurdu\" bu kayıtlardan gelir.") : null));
+
+  // Ana bulgu
+  const hero = el("div", { class: "card" });
+  if (!s.requests) {
+    hero.append(el("p", { class: "headline" }, "Bu dönemde Telveguard'dan geçen AI isteği yok."));
+  } else if (!risky.total) {
+    hero.append(el("p", { class: "headline" }, el("b", {}, n(s.requests)),
+      "AI isteğinin hiçbirinde hassas veri ya da saldırı girişimi bulunmadı."));
+  } else {
+    hero.append(el("p", { class: "headline" }, el("b", {}, n(risky.total)),
+      `AI isteğinde hassas veri ya da saldırı girişimi vardı (${n(s.requests)} isteğin ${pct(risky.total, s.requests)}'i). ` +
+      (risky.exposed ? `${n(risky.exposed)} tanesi hiçbir kurala takılmadan geçti.` : "Hepsi korundu ya da korunacaktı.")));
+    hero.append(el("div", { class: "stack", role: "img",
+      "aria-label": OUTCOMES.map((o) => `${o.label}: ${risky[o.key]}`).join(", ") },
+      ...OUTCOMES.filter((o) => risky[o.key]).map((o) =>
+        el("span", { style: `background:${o.color}; flex:${risky[o.key]}`, title: `${o.label}: ${n(risky[o.key])}` }))));
+    hero.append(el("div", { class: "outcomes" }, ...OUTCOMES.map((o) => el("div", { class: "outcome", style: `--c:${o.color}` },
+      el("div", { class: "v" }, n(risky[o.key])), el("div", { class: "l" }, `${o.label} · ${pct(risky[o.key], risky.total)}`)))));
+  }
+  out.push(hero);
+
+  const sh = r.shadow.totals;
+  out.push(el("div", { class: "card" }, el("div", { class: "tiles" },
+    tile("AI isteği", n(s.requests), `${n(s.users)} kullanıcı · ${n(s.teams)} ekip`),
+    tile("Yurt dışı modele", pct(s.external_requests, s.requests), `${n(s.external_requests)} istek`),
+    tile("Tahmini maliyet", costText(s.est_cost_usd, s.cost_unknown_requests), "sağlayıcı liste fiyatıyla"),
+    tile("Gölge AI olayı", n(sh.with_data), sh.with_data ? `${n(r.shadow.sites.length)} sitede, tarayıcı eklentisinden` : "tarayıcı eklentisi verisi yok"),
+    tile("Beyan edilmemiş kullanım", n(r.inventory.undeclared), "ekip × model (AI envanteri)"))));
+
+  const riskBox = el("div", { class: "table-wrap" });
+  table(riskBox, outcomeCols("Risk türü"), Object.values(s.risks));
+  out.push(el("div", { class: "card" }, el("h2", {}, "Risk türleri"),
+    el("p", { class: "sub" }, "Bir istek birden fazla türde sayılabilir. Kişisel veri ve kurum bilgisi yalnızca yurt dışı modele gidince risk sayılır; sır her hedefte."),
+    riskBox));
+
+  // Yönetici özeti: en riskli 8 satır, kalanı açılır bölümde (yazdırmada da açık)
+  const kvkkCols = [{ label: "Kişisel veri", render: (x) => x.label }, { label: "Sağlayıcı", render: (x) => x.provider },
+    { label: "Ülke", render: (x) => x.country }, { label: "İstek", num: true, render: (x) => numCell(x.total) },
+    ...OUTCOMES.map((o) => ({ label: o.short, num: true, render: (x) => numCell(x[o.key]) }))];
+  const kvkkBox = el("div", { class: "table-wrap" });
+  table(kvkkBox, kvkkCols, r.kvkk.slice(0, 8), { empty: "Bu dönemde yurt dışı modele kişisel veri gönderilmedi." });
+  if (r.kvkk.length > 8) {
+    const rest = el("div", { class: "table-wrap" });
+    table(rest, kvkkCols, r.kvkk.slice(8));
+    kvkkBox.append(el("details", { class: "print-open" }, el("summary", {}, `Diğer ${r.kvkk.length - 8} satır`), rest));
+  }
+  out.push(el("div", { class: "card" }, el("h2", {}, "KVKK md. 9: yurt dışına aktarım"),
+    el("p", { class: "sub" }, "Yurt dışındaki modellere giden kişisel veri türleri, sağlayıcı ve ülkeye göre. Maskelenen veri yurt dışına aktarılmaz; korumasız satırlar aktarım dayanağı gerektirir."),
+    kvkkBox));
+
+  const teamBox = el("div", { class: "table-wrap" });
+  table(teamBox, [{ label: "Ekip", render: (x) => x.team }, { label: "İstek", num: true, render: (x) => numCell(x.requests) },
+    { label: "Riskli", num: true, render: (x) => numCell(x.risky) },
+    { label: "Gözlemde", num: true, render: (x) => numCell(x.would) },
+    { label: "Korumasız", num: true, render: (x) => numCell(x.exposed) }], r.teams);
+  const shadowBox = el("div", {});
+  if (r.shadow.sites.length) {
+    const t = el("div", { class: "table-wrap" });
+    table(t, [{ label: "Site", render: (x) => x.site }, { label: "Kullanıcı", num: true, render: (x) => numCell(x.users) },
+      { label: "Hassas veri", num: true, render: (x) => numCell(x.with_data) },
+      { label: "Maskeledi", num: true, render: (x) => numCell(x.masked) },
+      { label: "Vazgeçti", num: true, render: (x) => numCell(x.cancelled + x.blocked) },
+      { label: "Yine de", num: true, render: (x) => numCell(x.overridden) }], r.shadow.sites);
+    shadowBox.append(t, el("div", { class: "chips", style: "margin-top:8px" },
+      ...r.shadow.entities.slice(0, 8).map((e) => el("span", { class: "chip" }, `${e.label} · ${n(e.events)}`))));
+  } else {
+    shadowBox.append(el("div", { class: "empty" }, "Tarayıcı eklentisi verisi yok: çalışanların AI sitelerine doğrudan yapıştırdığı veri bu raporda görünmüyor."));
+  }
+  out.push(el("div", { class: "grid cols-2" },
+    el("div", { class: "card" }, el("h2", {}, "Ekipler"), el("p", { class: "sub" }, "Korumasız ve gözlemde korunacak istek sayısına göre."), teamBox),
+    el("div", { class: "card" }, el("h2", {}, "Gölge AI"), el("p", { class: "sub" }, "Gateway dışındaki kullanım: AI sitelerine yapıştırılan, yazılan ve eklenen veri."), shadowBox)));
+
+  const exBox = el("div", { class: "table-wrap" });
+  table(exBox, [
+    { label: "Zaman", render: (x) => el("span", { class: "mono" }, fmtTime(x.event_time)) },
+    { label: "Ekip", render: (x) => x.team },
+    { label: "Model", render: (x) => el("div", {}, el("div", {}, x.model),
+        el("div", { class: "meta" }, `${DEST_LABELS[x.destination] || x.destination} · ${FORMAT_LABELS[x.api_format] || x.api_format || "OpenAI chat"}`)) },
+    { label: "Bulgu", render: (x) => el("div", { class: "chips" }, ...x.labels.map((l) => el("span", { class: "chip" }, l)),
+        x.injection_score >= 0.5 ? el("span", { class: "chip warn" }, `injection ${x.injection_score.toFixed(2).replace(".", ",")}`) : null) },
+    { label: "Akıbet", render: (x) => ocBadge(x.outcome) },
+  ], r.examples, { onRow: (x) => openEventById(x.event_id), empty: "Örnek olay yok." });
+  out.push(el("div", { class: "card" }, el("h2", {}, "Örnek olaylar"),
+    el("p", { class: "sub" }, "Ham metin ve kullanıcı adı yoktur; yalnızca veri türleri ve karar. Satıra tıklayınca ayrıntı açılır."), exBox));
+
+  const recs = r.recommendations.length
+    ? el("ol", { class: "recs" }, ...r.recommendations.map((x) => { const [label, color] = PRIORITY[x.priority];
+        return el("li", {}, el("div", { class: "t" }, el("span", { class: "prio", style: `--c:${color}; border-color:${color}` }, label), x.title),
+          el("p", {}, x.detail), x.policy ? el("pre", { class: "text" }, x.policy) : null); }))
+    : el("div", { class: "empty" }, "Bu dönemin bulguları için ek politika önerisi yok.");
+  out.push(el("div", { class: "card" }, el("h2", {}, "Öneriler"),
+    el("p", { class: "sub" }, "Bulgulardan çıkarılan politika değişiklikleri, önem sırasıyla. YAML parçaları politika dosyasının rules bölümüne eklenir; yeni kuralı önce gözlemde açmak önerilir."),
+    recs));
+
+  out.push(el("p", { class: "meta section" }, "Yöntem: rakamlar denetim kayıtlarındaki veri türleri, kararlar ve kural adlarından hesaplanır; " +
+    "ham prompt saklanmaz ve bu rapora girmez. \"Gözlemde korunurdu\": isteğe uygulanan karar korumadı ama gözlem modundaki bir kural " +
+    "maskeleyecek ya da engelleyecekti (istek düzeyinde, üst sınır). Tarayıcı eklentisi olayları yalnızca Gölge AI bölümünde sayılır."));
+  $("rp").replaceChildren(...out);
+}
+
 // ==================== yönlendirme ====================
-const VIEWS = ["rontgen", "olaylar", "deneme", "basvuru"];
-let xrayLoaded = false;
+const VIEWS = ["rontgen", "rapor", "olaylar", "deneme", "basvuru"];
+let xrayLoaded = false, reportLoaded = false;
 function route() {
   const [name, qs] = location.hash.slice(1).split("?");
   const view = VIEWS.includes(name) ? name : "rontgen";
@@ -1264,7 +1457,7 @@ function route() {
   if (view !== "olaylar") closeDrawer();
   document.querySelectorAll("section[data-view]").forEach((s) => { s.hidden = s.id !== "view-" + view; });
   document.querySelectorAll("nav.tabs a").forEach((a) => { if (a.dataset.view === view) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
-  document.title = { rontgen: "AI Kullanım Röntgeni", olaylar: "Olaylar", deneme: "Politika deneme",
+  document.title = { rontgen: "AI Kullanım Röntgeni", rapor: "POC raporu", olaylar: "Olaylar", deneme: "Politika deneme",
     basvuru: "İlgili kişi başvurusu" }[view] + " · Telveguard";
   if (!token()) { setStatus("Yönetici token'ını sağ üstteki alana girin.", true); $("token").focus(); return; }
   loadPolicyInfo().catch(() => null);   // kurumsal sözlük etiketleri vb.
@@ -1277,6 +1470,7 @@ function route() {
     if (eventId) openEventById(eventId);
   }
   if (view === "basvuru") setStatus("");
+  if (view === "rapor" && !reportLoaded) { reportLoaded = true; loadReport(); }
   if (view === "deneme") { setStatus(""); loadPolicyInfo().catch((e) => setStatus("Politika bilgisi alınamadı: " + e.message, true)); }
 }
 
@@ -1301,9 +1495,14 @@ $("drawer-close").addEventListener("click", closeDrawer);
 addEventListener("keydown", (e) => { if (e.key === "Escape" && $("drawer").classList.contains("open")) closeDrawer(); });
 $("sim-form").addEventListener("submit", (e) => { e.preventDefault(); runSimulation(); });
 $("sub-form").addEventListener("submit", (e) => { e.preventDefault(); runSubjectSearch(); });
+$("rp-form").addEventListener("submit", (e) => { e.preventDefault(); loadReport(); });
+$("rp-print").addEventListener("click", () => window.print());
+// Yazdırmada raporun açılır bölümleri de PDF'e girsin
+addEventListener("beforeprint", () => document.querySelectorAll("details.print-open").forEach((d) => { d.dataset.wasOpen = d.open; d.open = true; }));
+addEventListener("afterprint", () => document.querySelectorAll("details.print-open").forEach((d) => { d.open = d.dataset.wasOpen === "true"; }));
 $("sim-form").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runSimulation(); } });
 $("sim-form").model.addEventListener("input", updateDestHint);
-$("token").addEventListener("change", () => { xrayLoaded = false; policyInfo = null; route(); });
+$("token").addEventListener("change", () => { xrayLoaded = false; reportLoaded = false; policyInfo = null; route(); });
 $("theme").addEventListener("click", () => {
   const dark = document.documentElement.dataset.theme
     ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;

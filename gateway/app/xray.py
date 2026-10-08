@@ -146,7 +146,7 @@ ENTITY_LABELS = {
     "CREDIT_CARD": "Kredi kartı", "PHONE_TR": "Telefon", "EMAIL_ADDRESS": "E-posta",
     "PLATE_TR": "Araç plakası", "PERSON": "Kişi adı", "LOCATION": "Konum", "ORGANIZATION": "Kurum",
 }
-PROVIDERS = [("gpt-", "OpenAI"), ("o1", "OpenAI"), ("o3", "OpenAI"), ("claude-", "Anthropic"),
+PROVIDERS = [("gpt-", "OpenAI"), ("o1", "OpenAI"), ("o3", "OpenAI"), ("text-embedding-", "OpenAI"), ("claude-", "Anthropic"),
              ("gemini-", "Google"), ("mistral", "Mistral"), ("command", "Cohere")]
 
 
