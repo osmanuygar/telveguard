@@ -126,3 +126,22 @@ def test_dictionary_version_changes_with_terms():
     b = Dictionary.from_config({"dictionary": [{"entity": "KURUM_P", "terms": ["Anka", "Turna"]}]}).browser()
     assert a["version"] != b["version"] and a["salt"] != b["salt"]
     assert Dictionary.from_config({}).browser()["terms"] == []
+
+
+def test_redirect_and_justification(client, events):  # noqa: F811
+    r = post(client, [
+        {"site": "chatgpt.com", "action": "allowed_override", "trigger": "send", "entities": {"TCKN": 1},
+         "justification": "false_positive"},
+        {"site": "chatgpt.com", "action": "redirected", "trigger": "paste", "entities": {"TCKN": 1}},
+        {"site": "chatgpt.com", "action": "redirected", "trigger": "banner"},
+        {"site": "chatgpt.com", "action": "masked", "entities": {"TCKN": 1}, "justification": "consent"},
+    ])
+    assert r.status_code == 200
+    override, redirected, banner, masked = events
+    assert override["rules"] == ["golge-ai:allowed_override", "golge-ai:gerekce:false_positive"]
+    assert override["reason"] == "Tarayıcı: gönderim sırasında · Gerekçe: Yanlış alarm" and override["action"] == "alert"
+    assert redirected["action"] == "block" and redirected["rules"] == ["golge-ai:redirected"]
+    assert banner["reason"] == "Tarayıcı: bilgilendirme bandından"
+    assert masked["rules"] == ["golge-ai:masked"]                       # gerekçe yalnızca "yine de" için
+    bad = {"site": "chatgpt.com", "action": "allowed_override", "justification": "keyfime göre"}
+    assert post(client, [bad]).status_code == 400                       # serbest metin kabul edilmez

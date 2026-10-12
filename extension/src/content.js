@@ -12,6 +12,9 @@
  *               PDF / görsel / Office taranamaz: unscannableFiles = allow (varsayılan) | block
  * Kurumsal sözlük (proje adları, müşteri unvanları...) servis çalışanının gateway'den çektiği
  * özet listeyle aranır (chrome.storage.local; detectors.js setDictionary).
+ * Onaylı araca yönlendirme (MDM: sanctionedAiUrl): pencerelerde "<ad> ile devam et" metni panoya
+ * kopyalayıp kurumun onaylı AI aracını açar; sitede bir kez bilgilendirme bandı gösterilir.
+ * "Yine de" seçilince gerekçe sorulur (MDM: requireJustification); seçim olaya yazılır, metin yazılmaz.
  * Telveguard'a yalnızca site, veri türü adetleri ve karar gider; metin asla gönderilmez.
  * Pencere Shadow DOM'da: sitenin CSS'i bozamaz, sitenin betikleri içeriğini okuyamaz.
  */
@@ -22,7 +25,8 @@
   window.__telveguardLoaded = true;
 
   const site = location.hostname.replace(/^www\./, "");
-  let config = { mode: "warn", reportVisits: false, unscannableFiles: "allow" };
+  let config = { mode: "warn", reportVisits: false, unscannableFiles: "allow", requireJustification: true,
+                 sanctionedAiUrl: "", sanctionedAiName: "", showBanner: true };
   const hasRuntime = typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage;
 
   function send(event) {
@@ -34,6 +38,7 @@
     try {
       chrome.runtime.sendMessage({ type: "getConfig" }, (c) => {
         if (c) config = c;
+        setTimeout(showBanner, 0);   // yapılandırma eşzamanlı gelse de betiğin tamamı yüklendikten sonra
         if (config.reportVisits && !sessionStorage.getItem("telveguard-visit")) {
           try { sessionStorage.setItem("telveguard-visit", "1"); } catch { /* yok say */ }
           send({ action: "visit" });
@@ -63,6 +68,65 @@
   }
   const describe = (c) => Object.entries(c).map(([e, n]) => `${D.label(e)}${n > 1 ? ` (${n})` : ""}`);
 
+  // ---------- onaylı araca yönlendirme ----------
+  const sanctionedName = () => config.sanctionedAiName || "Kurum AI asistanı";
+  function openSanctioned(text) {
+    // Metin adres satırına konmaz (kişisel veri URL'de olmasın): panoya kopyalanır
+    if (text) { try { navigator.clipboard.writeText(text).catch(() => {}); } catch { /* izin yok */ } }
+    window.open(config.sanctionedAiUrl, "_blank", "noopener");
+  }
+  /** Pencere düğmesi: tanımlıysa "<ad> ile devam et" (metin panoya kopyalanır). */
+  const redirectButton = (base, text, onDone = () => {}) => config.sanctionedAiUrl ? [{
+    label: `${sanctionedName()} ile devam et`,
+    onClick: () => { send({ ...base, action: "redirected" }); openSanctioned(text); onDone(); },
+  }] : [];
+
+  // ---------- "yine de" gerekçesi ----------
+  const JUSTIFICATIONS = [
+    ["consent", "Müşteri / ilgili kişi onayı var"], ["test_data", "Test ya da sahte veri"],
+    ["false_positive", "Yanlış alarm: hassas veri değil"], ["other", "Diğer"],
+  ];
+  /** Gerekçe seçilince onChosen(gerekçe); vazgeçilince onCancel. MDM'de kapalıysa doğrudan devam. */
+  function withJustification(onChosen, onCancel = () => {}) {
+    if (config.requireJustification === false) { onChosen(undefined); return; }
+    dialog({
+      title: "Neden göndermeniz gerekiyor?",
+      message: "Seçiminiz denetim kaydına yazılır (metin yazılmaz). \"Yanlış alarm\" seçimleri tespit kurallarını iyileştirmek için kullanılır.",
+      buttons: [{ label: "Vazgeç", cancel: true, onClick: onCancel },
+        ...JUSTIFICATIONS.map(([key, label]) => ({ label, onClick: () => onChosen(key) }))],
+    });
+  }
+
+  function showBanner() {
+    if (!config.sanctionedAiUrl || config.showBanner === false) return;
+    try { if (sessionStorage.getItem("telveguard-banner")) return; sessionStorage.setItem("telveguard-banner", "1"); } catch { return; }
+    const host = document.createElement("div");
+    host.setAttribute("data-telveguard", "");
+    const root = host.attachShadow({ mode: "closed" });
+    const style = document.createElement("style");
+    style.textContent = BANNER_STYLE;
+    const box = document.createElement("div");
+    box.className = "banner";
+    box.setAttribute("role", "status");
+    const p = document.createElement("p");
+    p.textContent = `Bu site kurum dışı bir yapay zekâ hizmeti. Müşteri, kişisel ya da kurum verisi için ${sanctionedName()} kullanın.`;
+    const open = document.createElement("button");
+    open.className = "primary";
+    open.textContent = "Aç";
+    open.addEventListener("click", () => { host.remove(); send({ action: "redirected", trigger: "banner" }); openSanctioned(""); });
+    const close = document.createElement("button");
+    close.textContent = "Tamam";
+    close.addEventListener("click", () => host.remove());
+    const row = document.createElement("div");
+    row.className = "row";
+    row.append(close, open);
+    box.append(p, row);
+    root.append(style, box);
+    const mount = () => (document.body || document.documentElement).append(host);
+    if (document.body) mount(); else addEventListener("DOMContentLoaded", mount, { once: true });
+    window.__telveguardBanner = { host, open, close };   // testler için
+  }
+
   function insert(target, text) {
     // Sitelerin editörleri (React / ProseMirror) input olayını görsün diye tarayıcının komutu
     if (target && typeof target.focus === "function") target.focus();
@@ -91,6 +155,22 @@
     .muted { font-size: 12px; color: #898781; margin-top: 10px; }
     @media (prefers-color-scheme: dark) {
       .box { background: #1a1a19; color: #fff; } p { color: #c3c2b7; }
+      button { background: #1a1a19; color: #fff; border-color: rgba(255,255,255,.15); }
+      button.primary { background: #fff; color: #0b0b0b; }
+    }`;
+
+  const BANNER_STYLE = `
+    :host { all: initial; }
+    .banner { position: fixed; right: 16px; bottom: 16px; z-index: 2147483646; max-width: 360px; background: #fcfcfb;
+              color: #0b0b0b; border-radius: 12px; padding: 12px 14px; box-shadow: 0 8px 28px rgba(0,0,0,.22);
+              font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; border-left: 4px solid #8a4b1f; }
+    p { margin: 0 0 8px; }
+    .row { display: flex; gap: 8px; justify-content: flex-end; }
+    button { font: inherit; border-radius: 8px; padding: 5px 10px; border: 1px solid rgba(11,11,11,.15); background: #fcfcfb;
+             color: #0b0b0b; cursor: pointer; }
+    button.primary { background: #0b0b0b; color: #fff; border-color: transparent; }
+    @media (prefers-color-scheme: dark) {
+      .banner { background: #1a1a19; color: #fff; }
       button { background: #1a1a19; color: #fff; border-color: rgba(255,255,255,.15); }
       button.primary { background: #fff; color: #0b0b0b; }
     }`;
@@ -174,18 +254,24 @@
 
     if (config.mode === "block") {
       send({ ...base, action: "blocked" });
-      dialog({ title: "Yapıştırma engellendi", items, buttons: [{ label: "Tamam", primary: true, cancel: true }],
-               message: "Kurum politikası gereği kişisel veri, sır ya da kurum bilgisi içeren metin AI sitelerine yapıştırılamaz." });
+      dialog({ title: "Yapıştırma engellendi", items,
+               buttons: [{ label: "Tamam", primary: !config.sanctionedAiUrl, cancel: true },
+                 ...redirectButton(base, text).map((b) => ({ ...b, primary: true }))],
+               message: "Kurum politikası gereği kişisel veri, sır ya da kurum bilgisi içeren metin AI sitelerine yapıştırılamaz." +
+                 (config.sanctionedAiUrl ? ` ${sanctionedName()} ile devam ederseniz metin panoya kopyalanır.` : "") });
       return;
     }
     dialog({
       title: "Hassas veri tespit edildi",
-      message: "Yapıştırdığınız metin şunları içeriyor. Maskeleyerek yapıştırırsanız değerlerin yerine [TCKN_1] gibi yer tutucular gider.",
+      message: "Yapıştırdığınız metin şunları içeriyor. Maskeleyerek yapıştırırsanız değerlerin yerine [TCKN_1] gibi yer tutucular gider." +
+        (config.sanctionedAiUrl ? ` Metnin aslıyla çalışmanız gerekiyorsa ${sanctionedName()} kullanın.` : ""),
       items,
       buttons: [
         { label: "Vazgeç", cancel: true, onClick: () => send({ ...base, action: "cancelled" }) },
-        { label: "Yine de yapıştır", onClick: () => {
-          allow(text, findings); insert(target, text); send({ ...base, action: "allowed_override" }); } },
+        { label: "Yine de yapıştır", onClick: () => withJustification((justification) => {
+          allow(text, findings); insert(target, text); send({ ...base, action: "allowed_override", justification }); },
+          () => send({ ...base, action: "cancelled" })) },
+        ...redirectButton(base, text),
         { label: "Maskeleyerek yapıştır", primary: true,
           onClick: () => { insert(target, D.mask(text).text); send({ ...base, action: "masked" }); } },
       ],
@@ -247,7 +333,9 @@
       items,
       buttons: [
         { label: "Vazgeç", cancel: true, onClick: () => { send({ ...base, action: "cancelled" }); onCancel(); } },
-        { label: "Yine de ekle", onClick: () => { send({ ...base, action: "allowed_override" }); onDone(files); } },
+        { label: "Yine de ekle", onClick: () => withJustification((justification) => {
+          send({ ...base, action: "allowed_override", justification }); onDone(files); },
+          () => { send({ ...base, action: "cancelled" }); onCancel(); }) },
         { label: "Maskeleyerek ekle", primary: true, onClick: () => { send({ ...base, action: "masked" }); onDone(maskedOut); } },
       ],
     });
@@ -386,18 +474,22 @@
                  "AI sitelerine gönderilemez. Metni maskeleyip kontrol ettikten sonra tekrar gönderebilirsiniz.",
                buttons: [
                  { label: "Düzenle", cancel: true, onClick: () => { done(); composer.focus(); } },
+                 ...redirectButton(base, text, done),
                  { label: "Metni maskele", primary: true, onClick: () => { done(); replaceComposer(composer, masked()); } },
                ] });
       return true;
     }
     dialog({
       title: "Göndermeden önce",
-      message: "Mesajınız şunları içeriyor. Maskeleyerek gönderirseniz değerlerin yerine [TCKN_1] gibi yer tutucular gider.",
+      message: "Mesajınız şunları içeriyor. Maskeleyerek gönderirseniz değerlerin yerine [TCKN_1] gibi yer tutucular gider." +
+        (config.sanctionedAiUrl ? ` Metnin aslıyla çalışmanız gerekiyorsa ${sanctionedName()} kullanın (metin panoya kopyalanır).` : ""),
       items,
       buttons: [
         { label: "Düzenle", cancel: true, onClick: () => { done(); send({ ...base, action: "cancelled" }); composer.focus(); } },
-        { label: "Yine de gönder", onClick: () => {
-          done(); allow(text, findings); send({ ...base, action: "allowed_override" }); resend(composer, button); } },
+        { label: "Yine de gönder", onClick: () => withJustification((justification) => {
+          done(); allow(text, findings); send({ ...base, action: "allowed_override", justification }); resend(composer, button); },
+          () => { done(); send({ ...base, action: "cancelled" }); composer.focus(); }) },
+        ...redirectButton(base, text, done),
         { label: "Maskele ve gönder", primary: true, onClick: () => {
           done(); replaceComposer(composer, masked()); send({ ...base, action: "masked" });
           // Editör (React / ProseMirror) yeni metni işlesin, sonra gönder

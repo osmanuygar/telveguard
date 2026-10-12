@@ -55,6 +55,11 @@ RISKS: Dict[str, tuple] = {
     "injection": ("injection_score >= 0.5", "action = 'block'", "would_action = 'block'"),
     "output_leak": ("notEmpty(output_leaked)", f"output_action IN {_PROTECTIVE}", "0"),
 }
+JUSTIFICATION_LABELS = {"consent": "Müşteri / ilgili kişi onayı", "test_data": "Test / sahte veri",
+                        "false_positive": "Yanlış alarm", "other": "Diğer"}
+FALSE_POSITIVE_MIN_EVENTS = 10      # bundan az uyarıda oran anlamlı değil
+FALSE_POSITIVE_RATE = 0.2
+
 RISK_LABELS = {
     "pii_external": "Yurt dışı modele kişisel veri",
     "secrets": "Sır (API anahtarı, parola, private key)",
@@ -116,13 +121,22 @@ QUERIES = {
                countIf(has(rules, 'golge-ai:masked')) AS masked,
                countIf(has(rules, 'golge-ai:cancelled')) AS cancelled,
                countIf(has(rules, 'golge-ai:blocked')) AS blocked,
-               countIf(has(rules, 'golge-ai:allowed_override')) AS overridden
+               countIf(has(rules, 'golge-ai:allowed_override')) AS overridden,
+               countIf(has(rules, 'golge-ai:redirected')) AS redirected
         FROM audit WHERE {_WINDOW} AND api_format = 'browser'
         GROUP BY site ORDER BY with_data DESC, visits DESC LIMIT 20""",
+    # Kullanıcının "yanlış alarm" dediği uyarılar: hangi tespit fazla uyarıyor
     "shadow_entities": f"""
-        SELECT entity, count() AS events
+        SELECT entity, count() AS events,
+               countIf(has(rules, 'golge-ai:allowed_override')) AS overridden,
+               countIf(has(rules, 'golge-ai:gerekce:false_positive')) AS false_positives
         FROM audit ARRAY JOIN entities AS entity WHERE {_WINDOW} AND api_format = 'browser'
         GROUP BY entity ORDER BY events DESC""",
+    "shadow_justifications": f"""
+        SELECT replaceOne(r, 'golge-ai:gerekce:', '') AS justification, count() AS events
+        FROM audit ARRAY JOIN rules AS r
+        WHERE {_WINDOW} AND api_format = 'browser' AND startsWith(r, 'golge-ai:gerekce:')
+        GROUP BY justification ORDER BY events DESC""",
     # Her akıbetten en fazla 3 (korumasız önce), her ekipten akıbet başına 1: liste tek ekip ya da
     # tek akıbetle dolmasın; raporun anlattığı üç durum da örneklensin. Ana bulgu gibi yalnızca
     # gateway istekleri (tarayıcı olayları Gölge AI bölümünde).
@@ -278,6 +292,17 @@ def recommendations(summary: Dict[str, Any], entities: List[Dict[str, Any]], rul
                                   "'yine de' seçti. Uyarı modu bu kullanıcılarda yetmiyor; MDM'de `mode: block`.",
                         "policy": None})
 
+    noisy = [e for e in shadow.get("entities", [])
+             if int(e.get("events") or 0) >= FALSE_POSITIVE_MIN_EVENTS
+             and int(e.get("false_positives") or 0) / int(e["events"]) >= FALSE_POSITIVE_RATE]
+    if noisy:
+        rates = ", ".join(f"{e['label']} (%{round(100 * int(e['false_positives']) / int(e['events']))})" for e in noisy)
+        out.append({"priority": "medium", "title": "Yanlış alarm oranı yüksek tespitleri gözden geçirin",
+                    "detail": f"Kullanıcılar şu türlerdeki uyarıların önemli bir kısmına 'yanlış alarm' dedi: {rates}. "
+                              "Uyarı yorgunluğu kullanıcıyı 'yine de'ye alıştırır; ilgili kalıbı ya da sözlük terimini "
+                              "daraltın, Olaylar ekranında 'golge-ai:gerekce:false_positive' kuralıyla örneklere bakın.",
+                    "policy": None})
+
     undeclared = inventory.get("undeclared") or 0
     if undeclared:
         out.append({"priority": "low", "title": "Beyan edilmemiş AI kullanımını envantere bağlayın",
@@ -305,10 +330,12 @@ async def build(ch: ClickHouse, days: int, *, registry=None, inventory_cfg: Opti
 
     sites = raw["shadow_sites"]
     totals = {k: sum(int(s.get(k) or 0) for s in sites)
-              for k in ("visits", "with_data", "masked", "cancelled", "blocked", "overridden")}
+              for k in ("visits", "with_data", "masked", "cancelled", "blocked", "overridden", "redirected")}
     totals["users"] = max((int(s.get("users") or 0) for s in sites), default=0)
     shadow = {"sites": sites, "totals": totals,
-              "entities": [{**e, "label": entity_label(e["entity"], labels)} for e in raw["shadow_entities"]]}
+              "entities": [{**e, "label": entity_label(e["entity"], labels)} for e in raw["shadow_entities"]],
+              "justifications": [{**j, "label": JUSTIFICATION_LABELS.get(j["justification"], j["justification"])}
+                                 for j in raw["shadow_justifications"]]}
 
     inv = compliance.build_inventory(inventory_cfg or {"systems": []}, usage)
     inventory = {"systems": len(inv["systems"]), "undeclared": inv["summary"]["unclassified"],

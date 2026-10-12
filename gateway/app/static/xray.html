@@ -1409,9 +1409,13 @@ function renderReport(r, org) {
       { label: "Hassas veri", num: true, render: (x) => numCell(x.with_data) },
       { label: "Maskeledi", num: true, render: (x) => numCell(x.masked) },
       { label: "Vazgeçti", num: true, render: (x) => numCell(x.cancelled + x.blocked) },
+      { label: "Onaylı araca", num: true, render: (x) => numCell(x.redirected || 0) },
       { label: "Yine de", num: true, render: (x) => numCell(x.overridden) }], r.shadow.sites);
     shadowBox.append(t, el("div", { class: "chips", style: "margin-top:8px" },
       ...r.shadow.entities.slice(0, 8).map((e) => el("span", { class: "chip" }, `${e.label} · ${n(e.events)}`))));
+    const just = r.shadow.justifications || [];
+    if (just.length) shadowBox.append(el("p", { class: "meta", style: "margin:10px 0 4px" }, "\"Yine de\" gerekçeleri"),
+      el("div", { class: "chips" }, ...just.map((j) => el("span", { class: "chip" }, `${j.label} · ${n(j.events)}`))));
   } else {
     shadowBox.append(el("div", { class: "empty" }, "Tarayıcı eklentisi verisi yok: çalışanların AI sitelerine doğrudan yapıştırdığı veri bu raporda görünmüyor."));
   }

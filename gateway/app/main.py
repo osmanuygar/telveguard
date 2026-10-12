@@ -662,6 +662,15 @@ async def xray_page():
     return FileResponse(os.path.join(STATIC_DIR, "xray.html"), media_type="text/html")
 
 
+@app.get("/asistan")
+async def demo_assistant():
+    """Demo: tarayıcı eklentisinin yönlendirdiği "Kurum Asistanı" sohbet sayfası. Kimliği header'dan
+    verdiği için yalnızca DEMO_ASSISTANT=1 ve AUTH_MODE=header (yerel test ortamı) iken açılır."""
+    if os.getenv("DEMO_ASSISTANT") != "1" or os.getenv("AUTH_MODE", "header") != "header":
+        return _openai_error(404, "Bulunamadı.", "not_found", "invalid_request_error")
+    return FileResponse(os.path.join(STATIC_DIR, "asistan.html"), media_type="text/html")
+
+
 @app.get("/v1/xray")
 async def xray_api(request: Request, days: int = 30, team: str = ""):
     if err := await _require_admin(request):

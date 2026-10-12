@@ -8,7 +8,9 @@
 "use strict";
 
 const DEFAULTS = { telveguardUrl: "", reportToken: "", mode: "warn", user: "unknown", team: "default", reportVisits: false,
-  unscannableFiles: "allow" };
+  unscannableFiles: "allow", requireJustification: true, sanctionedAiUrl: "", sanctionedAiName: "", showBanner: true };
+// Onaylı AI aracı yalnızca https (yerel geliştirme: http://localhost); başka şema (javascript: vb.) açılmaz
+const safeUrl = (u) => /^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(u || "") ? u : "";
 const QUEUE_KEY = "telveguardQueue";
 const DICT_KEY = "telveguardDictionary";
 const MAX_QUEUE = 500;
@@ -77,7 +79,10 @@ async function enqueue(event) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "getConfig") {
     config().then((c) => sendResponse({ mode: c.mode, reportVisits: !!c.reportVisits, reporting: !!c.telveguardUrl,
-                                        unscannableFiles: c.unscannableFiles === "block" ? "block" : "allow" }));
+                                        unscannableFiles: c.unscannableFiles === "block" ? "block" : "allow",
+                                        requireJustification: c.requireJustification !== false,
+                                        sanctionedAiUrl: safeUrl(c.sanctionedAiUrl), sanctionedAiName: c.sanctionedAiName || "",
+                                        showBanner: c.showBanner !== false }));
     return true;
   }
   if (msg?.type === "event" && msg.event) {

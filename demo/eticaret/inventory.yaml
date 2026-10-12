@@ -1,0 +1,44 @@
+# Demo: e-ticaret / açık artırma platformunun AI sistemleri (EU AI Act envanteri).
+# analitik ve stajyer ekiplerinin kullanımı bilerek beyan edilmedi: raporda "beyan edilmemiş" görünür.
+systems:
+  - id: musteri-destek-taslak
+    name: Alıcı / satıcı destek cevap asistanı
+    owner_team: musteri-hizmetleri
+    models: ["gpt-4o*", "claude-*", "vllm/*"]
+    use_case: customer_support_internal     # temsilciye taslak; müşteriyle doğrudan konuşmaz
+    purpose: Açık artırma, ödeme, kargo ve iade taleplerine temsilci için yanıt taslağı
+    data_subjects: [Alıcı, Satıcı]
+    decides_about_people: false
+
+  - id: satici-basvuru-ozet
+    name: Satıcı başvurusu özetleme
+    owner_team: satici-operasyonlari
+    models: ["gpt-4o*", "claude-*"]
+    use_case: internal_productivity
+    purpose: Kurumsal satıcı başvuru belgelerinin özetlenmesi (karar insan tarafından verilir)
+    data_subjects: [Satıcı yetkilisi]
+    decides_about_people: false
+
+  - id: dolandiricilik-analizi
+    name: Gölge pey ve dolandırıcılık analizi
+    owner_team: dolandiricilik-risk
+    models: ["vllm/*", "claude-*"]
+    use_case: data_analysis                 # dolandırıcılık tespiti Ek III kredi skoru kapsamı dışında
+    purpose: Açık artırmalarda şüpheli teklif örüntülerinin analizi
+    data_subjects: [Alıcı, Satıcı]
+
+  - id: kod-asistani
+    name: Kod asistanı (Claude Code)
+    owner_team: yazilim
+    models: ["claude-*", "vllm/*"]
+    use_case: code_assistant
+    purpose: Açık artırma ve ödeme platformu geliştirme
+    data_subjects: [Çalışan]
+
+  - id: urun-aciklamasi
+    name: İlan ve ürün açıklaması üretimi
+    owner_team: [katalog-icerik, pazarlama]
+    models: ["gpt-4o*", "gemini-*"]
+    use_case: public_content_generation     # sitede yayımlanır: md. 50 şeffaflık
+    purpose: Mezat ilanları, ürün açıklamaları ve kampanya metinleri
+    data_subjects: []

@@ -86,6 +86,17 @@ def test_recommendations_shadow_override_and_quiet_when_clean():
     assert recs(summary=clean, rows=[], shadow=shadow) == []
 
 
+def test_false_positive_recommendation_needs_volume_and_rate():
+    def fp(events, false_positives):
+        shadow = {"sites": [{"site": "chatgpt.com"}], "totals": {"masked": 1, "cancelled": 0, "blocked": 0, "overridden": 0},
+                  "entities": [{"entity": "PHONE_TR", "label": "Telefon", "events": events, "false_positives": false_positives}]}
+        return [r for r in recs(summary={"requests": 1}, rows=[], shadow=shadow)
+                if r["title"].startswith("Yanlış alarm")]
+    (r,) = fp(20, 8)
+    assert "Telefon (%40)" in r["detail"] and r["priority"] == "medium"
+    assert fp(20, 2) == [] and fp(5, 5) == []      # düşük oran / az örnek: öneri yok
+
+
 def test_sql_keeps_browser_events_out_of_gateway_numbers():
     for name in ("summary", "entities", "teams", "examples"):
         assert "api_format != 'browser'" in pr.QUERIES[name]
@@ -101,8 +112,9 @@ def test_report_endpoint_assembles_sections(client, admin):  # noqa: F811
         "ARRAY JOIN entities AS entity WHERE event_time >= now() - INTERVAL {days:UInt32} DAY AND api_format != 'browser'": ENTITY_ROWS,
         "GROUP BY team ORDER BY exposed": [{"team": "finans", "requests": 40, "risky": 9, "exposed": 2, "would": 5}],
         "AS site": [{"site": "chatgpt.com", "users": 3, "visits": 0, "with_data": 7, "masked": 4, "cancelled": 1,
-                     "blocked": 0, "overridden": 2}],
-        "AS events": [{"entity": "TCKN", "events": 5}],
+                     "blocked": 0, "overridden": 2, "redirected": 3}],
+        "AS false_positives": [{"entity": "TCKN", "events": 5, "overridden": 2, "false_positives": 1}],
+        "AS justification": [{"justification": "false_positive", "events": 1}, {"justification": "consent", "events": 1}],
         "AS outcome": [{"event_id": "e1", "event_time": "2026-10-08 10:00:00.000", "team": "finans", "model": "gpt-4o",
                         "destination": "external", "api_format": "chat", "action": "allow", "would_action": "mask",
                         "entities": ["TCKN"], "masked_entities": [], "rules": [], "monitored_rules": ["k"],
@@ -118,6 +130,8 @@ def test_report_endpoint_assembles_sections(client, admin):  # noqa: F811
     assert body["summary"]["risky"]["exposed"] == 6 and body["window"] == {"days": 14}
     assert body["kvkk"][0]["provider"] == "OpenAI" and body["kvkk"][0]["country"] == "ABD"
     assert body["shadow"]["totals"]["with_data"] == 7 and body["shadow"]["entities"][0]["label"] == "T.C. kimlik no"
+    assert body["shadow"]["totals"]["redirected"] == 3
+    assert [j["label"] for j in body["shadow"]["justifications"]] == ["Yanlış alarm", "Müşteri / ilgili kişi onayı"]
     assert body["examples"][0]["labels"] == ["T.C. kimlik no"] and "user" not in body["examples"][0]
     assert body["inventory"]["undeclared"] == 1                           # envanterde finans x gemini yok
     assert body["recommendations"] and all(p == {"days": 14} or p == {"days": 14, "team": ""} for _s, p in fake.calls)
@@ -140,3 +154,20 @@ def test_poc_policy_starts_in_monitor_mode_except_secrets():
     assert "kvkk-yurtdisi-maskele" in d.monitored_rules and d.would_action == "mask"
     default = PolicyEngine("policies/default.yaml")
     assert [r["name"] for r in poc.rules] == [r["name"] for r in default.rules]   # aynı kurallar
+
+
+def test_demo_profile_tracks_poc_policy():
+    """demo/eticaret/policy.yaml = poc.yaml + sektör sözlüğü + iki model kuralı (sessiz ayrışma olmasın)."""
+    from app import compliance, dictionary
+    from telveguard_core.policy import PolicyEngine
+    poc, demo = PolicyEngine("policies/poc.yaml"), PolicyEngine("demo/eticaret/poc.yaml")
+    live, default = PolicyEngine("demo/eticaret/policy.yaml"), PolicyEngine("policies/default.yaml")
+    assert demo.mode == "monitor" and live.mode == "enforce"
+    names = [r["name"] for r in demo.rules]
+    assert [n for n in names if n not in ("stajyer-sadece-kurum-ici", "beyan-edilmemis-model")] == [r["name"] for r in poc.rules]
+    assert names == [r["name"] for r in live.rules] and demo.output_rules == poc.output_rules
+    assert [r for r in live.rules if r["name"] in [d["name"] for d in default.rules]] == default.rules   # uygulama = varsayılan + 2
+    for path in ("demo/eticaret/poc.yaml", "demo/eticaret/policy.yaml"):
+        assert {e.entity for e in dictionary.load(path).entries} == {"KURUM_PROJE", "KURUM_MUSTERI", "KURUM_SUNUCU"}
+    inv = compliance.load_inventory("demo/eticaret/inventory.yaml")
+    assert compliance.is_declared(inv, {"yazilim"}, "claude-sonnet-4") and not compliance.is_declared(inv, {"stajyer"}, "gpt-4o")

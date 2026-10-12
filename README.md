@@ -117,10 +117,22 @@ ayrılır: **korundu**, **gözlemde korunurdu** (gözlemdeki kural uygulamaya al
 rapora girmez; ekip düzeyindedir. "Gözlemde korunurdu" istek düzeyindedir (hangi veri türünü
 maskeleyeceği kaydedilmez), bu yüzden üst sınırdır.
 
-**3. Boş ekranla başlamayın (demo).** Satış demosu ya da POC'nin ilk günü için gerçekçi Türkçe trafik:
+**3. Boş ekranla başlamayın (demo).** Müşteri demosu için tek komut: ortam, sektör profili
+(politika, sözlük, AI envanteri), 14 günlük demo verisi, geliştirme eklentisi ve eklentinin
+yönlendirdiği "Kurum Asistanı" (`/asistan`, yalnızca demo ortamında). Adım adım akış, örnek metinler,
+sık sorulanlar ve yedek plan: [docs/demo.md](docs/demo.md).
+
+```bash
+scripts/demo_reset.sh eticaret      # profil: demo/<ad>/ (policy.yaml, poc.yaml, inventory.yaml, ornek/)
+```
+
+Demo verisi profilin gözlem politikasıyla (`poc.yaml`) üretilir, ardından gateway uygulama
+politikasıyla (`policy.yaml`) yeniden başlar: rapor POC hikâyesini anlatır, canlı demoda koruma
+gerçekten çalışır. Yalnızca trafik üretmek için:
 
 ```bash
 python3 scripts/demo_traffic.py --days 14 --requests 3000   # ~3 sn; yalnızca standart kütüphane
+python3 scripts/demo_traffic.py --profile eticaret           # sektör senaryoları
 python3 scripts/demo_traffic.py --purge                     # demo kayıtlarını sil
 ```
 
@@ -726,6 +738,14 @@ için Chrome / Edge eklentisi: `extension/` (Manifest V3).
   Listeyi ele geçiren terimleri okuyamaz; ancak tahmin ettiği bir terimin listede olup olmadığını
   deneyebilir (kısa, yaygın kelimeler bu yüzden zayıf kalır). Düzenli ifadeler (`patterns`) olduğu
   gibi gider; `whole_word: false` terimler tarayıcıda aranmaz.
+- **Onaylı araca yönlendirme:** MDM'de `sanctionedAiUrl` tanımlıysa uyarı pencerelerinde
+  "<ad> ile devam et" düğmesi çıkar: metin panoya kopyalanır (adres satırına konmaz), kurumun onaylı
+  AI aracı açılır. AI sitesine girişte oturum başına bir kez bilgilendirme bandı gösterilir
+  (`showBanner`). Yasaklamak yerine güvenli olana yönlendirir; olay `golge-ai:redirected`.
+- **"Yine de" gerekçesi:** kullanıcı uyarıya rağmen devam ederse gerekçe seçer (müşteri onayı, test
+  verisi, yanlış alarm, diğer); seçim kayda `golge-ai:gerekce:*` olarak yazılır, serbest metin alınmaz.
+  POC raporu "yanlış alarm" oranı yüksek tespitleri öneri olarak çıkarır. `requireJustification: false`
+  ile kapatılır.
 - Yakalanmayanlar: sitelerin masaüstü uygulamaları, Safari ve Firefox.
 - Telveguard'a yalnızca site, veri **türü** adetleri ve kullanıcının kararı gider; **metin asla
   gönderilmez.** Olaylar denetim hattına `api_format=browser` olarak yazılır, Röntgen'de ve
@@ -775,7 +795,10 @@ Kurumda dağıtım:
     "user": "${user_email}",
     "team": "analitik",
     "reportVisits": false,
-    "unscannableFiles": "allow"
+    "unscannableFiles": "allow",
+    "sanctionedAiUrl": "https://asistan.sirket.local",
+    "sanctionedAiName": "Kurum Asistanı",
+    "requireJustification": true
   } } }
 }
 ```

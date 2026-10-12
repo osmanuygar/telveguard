@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kurum Asistanı</title>
+<!-- Demo: tarayıcı eklentisinin "onaylı araca yönlendirme" hedefi. Telveguard'ın kendi API'sini
+     (/v1/chat/completions) kullanır; yalnızca DEMO_ASSISTANT=1 ve AUTH_MODE=header iken açılır.
+     Harici kaynak yok (air-gapped). -->
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface-1: #fcfcfb; --surface-2: #f1f0ec; --border: rgba(11,11,11,0.10);
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #898781; --accent: #8a4b1f;
+  --mark: rgba(27,175,122,0.16); --mark-line: #1baf7a; --critical: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface-1: #1a1a19; --surface-2: #232321; --border: rgba(255,255,255,0.10);
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #898781; --accent: #e0a871;
+    --mark: rgba(25,158,112,0.24); --mark-line: #3cc795; --critical: #ef7b7b;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text-primary); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { border-bottom: 1px solid var(--border); background: var(--surface-1); }
+header .in, main, form { max-width: 820px; margin: 0 auto; padding: 12px 16px; }
+header .in { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.brand { font-weight: 700; color: var(--accent); }
+.badge { font-size: 12px; color: var(--text-secondary); background: var(--surface-2); border-radius: 999px; padding: 2px 10px; }
+.spacer { flex: 1; }
+select, textarea, button { font: inherit; color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; }
+main { padding-bottom: 180px; }
+.empty { color: var(--text-secondary); margin-top: 40px; text-align: center; }
+.msg { margin: 16px 0; }
+.msg .who { font-size: 12px; color: var(--text-muted); margin-bottom: 2px; }
+.msg .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.user .body { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; }
+.sent { margin-top: 6px; font-size: 13px; color: var(--text-secondary); border-left: 3px solid var(--mark-line); padding: 4px 10px; }
+.sent b { color: var(--text-primary); font-weight: 600; }
+.sent .text { white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+mark { color: inherit; background: var(--mark); box-shadow: inset 0 -2px 0 var(--mark-line); border-radius: 3px; padding: 0 2px; }
+.error { color: var(--critical); }
+form { position: fixed; left: 0; right: 0; bottom: 0; background: var(--page); border-top: 1px solid var(--border); max-width: none; }
+form .in { max-width: 820px; margin: 0 auto; display: flex; gap: 8px; align-items: end; }
+textarea { flex: 1; resize: vertical; min-height: 64px; }
+button.primary { background: var(--text-primary); color: var(--surface-1); border-color: transparent; padding: 8px 16px; }
+.note { max-width: 820px; margin: 6px auto 0; font-size: 12px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<header><div class="in">
+  <span class="brand">Kurum Asistanı</span>
+  <span class="badge">Telveguard korumalı</span>
+  <span class="spacer"></span>
+  <label>Ekip <select id="team">
+    <option>musteri-hizmetleri</option><option>satici-operasyonlari</option><option>dolandiricilik-risk</option>
+    <option>yazilim</option><option>pazarlama</option><option>stajyer</option></select></label>
+  <label>Model <select id="model">
+    <option value="gpt-4o">GPT-4o (yurt dışı)</option><option value="claude-sonnet-4">Claude Sonnet 4 (yurt dışı)</option>
+    <option value="vllm/qwen3">Qwen3 (kurum içi)</option></select></label>
+</div></header>
+
+<main id="chat"><p class="empty">Müşteri ya da kurum verisiyle güvenle çalışın: yurt dışı modele kişisel veri maskeli gider,
+  cevaptaki yer tutucular size gerçek değerle döner.</p></main>
+
+<form id="form" autocomplete="off">
+  <div class="in">
+    <textarea id="input" rows="3" placeholder="Mesajınızı yazın ya da yapıştırın (Ctrl + Enter ile gönderin)"></textarea>
+    <button class="primary" type="submit">Gönder</button>
+  </div>
+  <p class="note">Her istek Telveguard'dan geçer ve denetim kaydına yazılır; ham metin saklanmaz.</p>
+</form>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const history = [];
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  for (const c of children.flat()) if (c != null) node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return node;
+}
+// [TCKN_1] gibi yer tutucuları işaretle (textContent ile; HTML olarak yorumlanmaz)
+function withMarks(text) {
+  const out = [];
+  let pos = 0;
+  for (const m of String(text).matchAll(/\[[A-Z][A-Z0-9_]*_\d+\]/g)) {
+    out.push(text.slice(pos, m.index), el("mark", {}, m[0]));
+    pos = m.index + m[0].length;
+  }
+  out.push(String(text).slice(pos));
+  return out;
+}
+function add(role, body, extra) {
+  document.querySelector(".empty")?.remove();
+  const node = el("div", { class: "msg " + role }, el("div", { class: "who" }, role === "user" ? "Siz" : "Asistan"),
+    el("div", { class: "body" }, body), extra || null);
+  $("chat").append(node);
+  node.scrollIntoView({ block: "end", behavior: "smooth" });
+  return node;
+}
+
+async function send() {
+  const text = $("input").value.trim();
+  if (!text) return;
+  $("input").value = "";
+  const userNode = add("user", text);
+  history.push({ role: "user", content: text });
+  const model = $("model").value;
+  try {
+    const r = await fetch("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-telveguard-team": $("team").value,
+                 "x-telveguard-user": "demo.kullanici@sirket.com.tr" },
+      body: JSON.stringify({ model, messages: history }),
+    });
+    const body = await r.json();
+    if (!r.ok) {
+      history.pop();
+      add("assistant", el("span", { class: "error" }, body.error?.message || `Hata (${r.status})`));
+      return;
+    }
+    const reply = body.choices[0].message.content;
+    history.push({ role: "assistant", content: reply });
+    // Demo ortamındaki sahte model, kendisine ne gittiğini döndürür: modelin gördüğü metin
+    const seen = body.mock_received_messages;
+    if (Array.isArray(seen) && typeof seen[seen.length - 1] === "string") {
+      const last = seen[seen.length - 1];
+      userNode.append(el("div", { class: "sent" },
+        el("b", {}, last === text ? "Modele olduğu gibi gitti" : "Modele maskeli gitti:"),
+        last === text ? null : el("div", { class: "text" }, withMarks(last))));
+    }
+    add("assistant", reply);
+  } catch (e) {
+    history.pop();
+    add("assistant", el("span", { class: "error" }, "Telveguard'a ulaşılamadı: " + e.message));
+  }
+}
+
+$("form").addEventListener("submit", (e) => { e.preventDefault(); send(); });
+$("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } });
+$("input").focus();
+</script>
+</body>
+</html>

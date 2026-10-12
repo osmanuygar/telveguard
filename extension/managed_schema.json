@@ -23,6 +23,26 @@
       "type": "string",
       "enum": ["allow", "block"]
     },
+    "sanctionedAiUrl": {
+      "title": "Onaylı AI aracı adresi",
+      "description": "Kurumun onaylı AI aracı (ör. Telveguard arkasındaki kurum içi sohbet). Tanımlıysa uyarı pencerelerinde '<ad> ile devam et' düğmesi (metin panoya kopyalanır) ve AI sitelerinde bir kez bilgilendirme bandı gösterilir. https:// olmalı.",
+      "type": "string"
+    },
+    "sanctionedAiName": {
+      "title": "Onaylı AI aracının adı",
+      "description": "Düğme ve bantta görünen ad (ör. 'Kurum Asistanı'). Boşsa 'Kurum AI asistanı'.",
+      "type": "string"
+    },
+    "showBanner": {
+      "title": "AI sitelerinde bilgilendirme bandı",
+      "description": "sanctionedAiUrl tanımlıyken AI sitesine girişte (oturum başına bir kez) onaylı aracı hatırlatan bant. Varsayılan: açık.",
+      "type": "boolean"
+    },
+    "requireJustification": {
+      "title": "'Yine de' için gerekçe iste",
+      "description": "Kullanıcı uyarıya rağmen devam ederse gerekçe seçer (müşteri onayı, test verisi, yanlış alarm, diğer). Seçim denetim kaydına yazılır, metin yazılmaz. Varsayılan: açık.",
+      "type": "boolean"
+    },
     "user": { "title": "Kullanıcı", "description": "Denetim kaydında görünecek kullanıcı (ör. e-posta; MDM değişkeniyle doldurulur).", "type": "string" },
     "team": { "title": "Ekip", "type": "string" },
     "reportVisits": {

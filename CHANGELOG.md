@@ -30,6 +30,12 @@
 - `scripts/demo_traffic.py`: gerçek politikadan geçen, geçmiş tarihli demo trafiği ve gölge AI
   olayları (`auth_source = demo`, `--purge` ile silinir).
 - KVKK ve VERBİS raporlarında `text-embedding-*` modelleri OpenAI olarak tanınır.
+- Gölge AI olaylarında `redirected` aksiyonu ve `justification` (yalnızca seçenekler); POC raporunda
+  onaylı araca yönlendirme, "yine de" gerekçeleri ve yanlış alarm oranı yüksek tespitler için öneri.
+- Demo kiti: `scripts/demo_reset.sh` (tek komut), `docker-compose.demo.yml`, `demo/eticaret/`
+  (e-ticaret / açık artırma: politika, gözlem politikası, AI envanteri, örnek dosyalar),
+  `demo_traffic.py --profile`, `/asistan` demo sohbet sayfası (`DEMO_ASSISTANT=1` ve header kimliğiyle),
+  `docs/demo.md` kılavuzu.
 
 ### Tarayıcı eklentisi
 
@@ -39,6 +45,10 @@
 - Dosya ekleme: sürükle-bırak, dosya seçme ve dosya yapıştırmada metin dosyaları (5 MB'a kadar)
   taranır; "Maskeleyerek ekle" siteye maskeli kopyayı verir. Yeni MDM ayarı `unscannableFiles`
   (`allow` | `block`): PDF, görsel ve Office belgeleri.
+- Onaylı araca yönlendirme (MDM `sanctionedAiUrl`, `sanctionedAiName`, `showBanner`): uyarı
+  pencerelerinde "<ad> ile devam et" (metin panoya), AI sitelerinde bilgilendirme bandı.
+- "Yine de" için gerekçe (MDM `requireJustification`, varsayılan açık): müşteri onayı, test verisi,
+  yanlış alarm, diğer.
 - `scripts/package_extension.sh`: gateway adresiyle paketleme; mağaza için `.zip`, kendi sunucunuz
   için imzalı `.crx` + `update.xml` ve eklenti kimliği.
 

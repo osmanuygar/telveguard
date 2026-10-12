@@ -31,21 +31,26 @@ ACTIONS = {
     "cancelled": "block",         # kullanıcı vazgeçti
     "allowed_override": "alert",  # kullanıcı uyarıya rağmen olduğu gibi yapıştırdı
     "visit": "allow",             # (opsiyonel) AI sitesi ziyareti; KVKK: çalışan bilgilendirilmeli
+    "redirected": "block",        # kullanıcı kurumun onaylı AI aracına geçti; dış siteye gitmedi
 }
+# "Yine de" gerekçesi (kullanıcının seçimi; serbest metin yok)
+JUSTIFICATIONS = {"consent": "Müşteri / ilgili kişi onayı", "test_data": "Test / sahte veri",
+                  "false_positive": "Yanlış alarm", "other": "Diğer"}
 
 
 TRIGGERS = {"paste": "Tarayıcı: yapıştırma sırasında", "send": "Tarayıcı: gönderim sırasında",
-            "file": "Tarayıcı: dosya eklerken"}
+            "file": "Tarayıcı: dosya eklerken", "banner": "Tarayıcı: bilgilendirme bandından"}
 # Kurumsal sözlük türleri (dictionary.py ile aynı biçim): politikaya göre değişir, adla doğrulanır
 _DICT_ENTITY = re.compile(r"^KURUM_[A-Z0-9_]{1,40}$")
 
 
 class ShadowEvent(BaseModel):
     site: str
-    action: Literal["blocked", "masked", "cancelled", "allowed_override", "visit"]
+    action: Literal["blocked", "masked", "cancelled", "allowed_override", "visit", "redirected"]
     # Nerede yakalandı: yapıştırma, gönderim (Enter / gönder düğmesi) ya da dosya ekleme
     # (sürükle-bırak / dosya seçme). Eski eklentiler göndermez.
-    trigger: Optional[Literal["paste", "send", "file"]] = None
+    trigger: Optional[Literal["paste", "send", "file", "banner"]] = None
+    justification: Optional[Literal["consent", "test_data", "false_positive", "other"]] = None
     entities: Dict[str, int] = Field(default_factory=dict)   # tür -> adet (değer YOK)
     chars: int = Field(0, ge=0, le=10_000_000)
     user: str = "unknown"
@@ -93,10 +98,15 @@ def to_audit_event(e: ShadowEvent) -> Dict[str, Any]:
     """Denetim şemasıyla aynı alanlar: Röntgen / KVKK / envanter sorguları değişmeden çalışır."""
     entities = sorted(e.entities)
     action = ACTIONS[e.action]
+    rules = [f"golge-ai:{e.action}"]
+    reason = TRIGGERS.get(e.trigger, "")
+    if e.justification and e.action == "allowed_override":
+        rules.append(f"golge-ai:gerekce:{e.justification}")
+        reason = " · ".join(x for x in (reason, "Gerekçe: " + JUSTIFICATIONS[e.justification]) if x)
     return {
         "event_id": str(uuid.uuid4()), "ts": int(time.time() * 1000),
         "user": e.user, "team": e.team, "model": e.site, "destination": "external",
-        "action": action, "rules": [f"golge-ai:{e.action}"], "reason": TRIGGERS.get(e.trigger, ""),
+        "action": action, "rules": rules, "reason": reason,
         "entities": entities, "injection_score": 0.0, "injection_engine": "browser",
         "prompt_sha256": "0" * 64, "prompt_chars": e.chars, "masked_prompt": "",
         "latency_ms": 0.0, "upstream_status": 0,

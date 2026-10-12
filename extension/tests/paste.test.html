@@ -11,14 +11,19 @@
 </style>
 <script>
   // chrome.runtime taklidi: gönderilen olaylar window.__sent'te; mod ?mode=block ile,
-  // taranamayan dosyalar ?unscannable=block ile
+  // taranamayan dosyalar ?unscannable=block, onaylı AI aracı ?sanctioned=<adres>, gerekçesiz ?justify=0 ile.
+  // window.open taklidi: açılan adresler window.__opened'da
   window.__sent = [];
+  window.__opened = [];
+  window.open = (url) => { window.__opened.push(url); return null; };
   const params = new URLSearchParams(location.search);
   const mode = params.get("mode") || "warn";
   window.chrome = { runtime: { sendMessage(msg, cb) {
     window.__sent.push(msg);
     if (msg.type === "getConfig" && cb) {
-      cb({ mode, reportVisits: true, reporting: true, unscannableFiles: params.get("unscannable") || "allow" });
+      cb({ mode, reportVisits: true, reporting: true, unscannableFiles: params.get("unscannable") || "allow",
+           requireJustification: params.get("justify") !== "0", sanctionedAiUrl: params.get("sanctioned") || "",
+           sanctionedAiName: params.get("sanctioned") ? "Kurum Asistanı" : "", showBanner: true });
     }
   } } };
 </script>

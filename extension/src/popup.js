@@ -2,6 +2,7 @@
 chrome.runtime.sendMessage({ type: "getConfig" }, (c) => {
   document.getElementById("mode").textContent = c && c.mode === "block" ? "Engelle" : "Uyar ve maskele";
   document.getElementById("reporting").textContent = c && c.reporting ? "Açık" : "Kapalı (yalnızca yerel koruma)";
+  document.getElementById("sanctioned").textContent = c && c.sanctionedAiUrl ? (c.sanctionedAiName || "Tanımlı") : "Tanımlı değil";
 });
 chrome.storage.local.get(["telveguardQueue", "telveguardDictionary"], (v) => {
   document.getElementById("queue").textContent = String((v.telveguardQueue || []).length);

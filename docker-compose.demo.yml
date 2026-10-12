@@ -1,0 +1,10 @@
+# Demo ortamı: test ortamının (docker-compose.test.yml: sahte model, header kimliği) üstüne eklenir.
+# Kullanım: scripts/demo_reset.sh [profil]   (profil: demo/<ad>/ altında policy.yaml + inventory.yaml)
+services:
+  gateway:
+    environment:
+      POLICY_PATH: /demo/${DEMO_POLICY:-policy.yaml}   # demo_reset.sh: trafik poc.yaml ile, canlı demo policy.yaml ile
+      INVENTORY_PATH: /demo/inventory.yaml
+      DEMO_ASSISTANT: "1"               # /asistan: eklentinin yönlendirdiği "Kurum Asistanı" sayfası
+    volumes:
+      - ./demo/${DEMO_PROFILE:-eticaret}:/demo:ro

@@ -132,3 +132,14 @@ async def test_clickhouse_client_sends_params_auth_and_alias_setting():
     assert seen["params"]["output_format_json_quote_64bit_integers"] == "0"
     assert seen["headers"]["x-clickhouse-user"] == "okuyucu" and seen["headers"]["x-clickhouse-key"] == "gizli"
     assert seen["body"].endswith("FORMAT JSONEachRow") and "DROP" not in seen["body"]
+
+
+def test_demo_assistant_only_in_demo_header_mode(client, monkeypatch):  # noqa: F811
+    monkeypatch.delenv("DEMO_ASSISTANT", raising=False)
+    assert client.get("/asistan").status_code == 404
+    monkeypatch.setenv("DEMO_ASSISTANT", "1")
+    monkeypatch.setenv("AUTH_MODE", "header")
+    r = client.get("/asistan")
+    assert r.status_code == 200 and "Kurum Asistanı" in r.text and "https://" not in r.text
+    monkeypatch.setenv("AUTH_MODE", "jwt")                 # üretim kimlik modunda kapalı
+    assert client.get("/asistan").status_code == 404
