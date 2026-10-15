@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PACKAGES = {
     "telveguard-core": ROOT / "packages/telveguard-core",
     "telveguard-contextforge": ROOT / "packages/telveguard-contextforge",
+    "telveguard-agent": ROOT / "packages/telveguard-agent",
 }
 
 
@@ -39,6 +40,10 @@ def test_versions_are_consistent():
     assert manifest["version"] == cf["version"]
     # Eklenti, kendi sürümüyle yayınlanan çekirdeğe bağımlı olmalı
     assert f"telveguard-core>={core['version']}" in cf["dependencies"]
+    agent = pyproject("telveguard-agent")
+    assert agent["version"] == core["version"] and f"telveguard-core>={core['version']}" in agent["dependencies"]
+    from telveguard_agent import __version__ as agent_version
+    assert agent_version == core["version"]
     # Aynı sürümle dağıtılan diğer bileşenler de unutulmasın
     v = core["version"]
     chart = yaml.safe_load((ROOT / "deploy/helm/telveguard-gateway/Chart.yaml").read_text(encoding="utf-8"))

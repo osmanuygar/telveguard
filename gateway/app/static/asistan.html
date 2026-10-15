@@ -30,7 +30,7 @@ header .in { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .brand { font-weight: 700; color: var(--accent); }
 .badge { font-size: 12px; color: var(--text-secondary); background: var(--surface-2); border-radius: 999px; padding: 2px 10px; }
 .spacer { flex: 1; }
-select, textarea, button { font: inherit; color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--border);
+select, input, textarea, button { font: inherit; color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--border);
   border-radius: 8px; padding: 6px 10px; }
 main { padding-bottom: 180px; }
 .empty { color: var(--text-secondary); margin-top: 40px; text-align: center; }
@@ -55,6 +55,7 @@ button.primary { background: var(--text-primary); color: var(--surface-1); borde
   <span class="brand">Kurum Asistanı</span>
   <span class="badge">Telveguard korumalı</span>
   <span class="spacer"></span>
+  <label>Kullanıcı <input id="user" size="22" placeholder="ad.soyad@sirket.com.tr"></label>
   <label>Ekip <select id="team">
     <option>musteri-hizmetleri</option><option>satici-operasyonlari</option><option>dolandiricilik-risk</option>
     <option>yazilim</option><option>pazarlama</option><option>stajyer</option></select></label>
@@ -116,7 +117,7 @@ async function send() {
     const r = await fetch("/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json", "x-telveguard-team": $("team").value,
-                 "x-telveguard-user": "demo.kullanici@sirket.com.tr" },
+                 "x-telveguard-user": currentUser() },
       body: JSON.stringify({ model, messages: history }),
     });
     const body = await r.json();
@@ -141,6 +142,17 @@ async function send() {
     add("assistant", el("span", { class: "error" }, "Telveguard'a ulaşılamadı: " + e.message));
   }
 }
+
+// Demo (header modu): kayıtta görünecek kişi sayfada seçilir, tarayıcıda hatırlanır
+const USER_KEY = "telveguard.asistan.user";
+const DEFAULT_USER = "demo.kullanici@sirket.com.tr";
+function currentUser() {
+  const v = $("user").value.trim();
+  return /^[\w.@+-]{1,200}$/u.test(v) ? v : DEFAULT_USER;
+}
+try { $("user").value = localStorage.getItem(USER_KEY) || ""; } catch { /* depolama kapalı */ }
+$("user").placeholder = DEFAULT_USER;
+$("user").addEventListener("change", () => { try { localStorage.setItem(USER_KEY, $("user").value.trim()); } catch {} });
 
 $("form").addEventListener("submit", (e) => { e.preventDefault(); send(); });
 $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } });

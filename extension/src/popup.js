@@ -4,6 +4,11 @@ chrome.runtime.sendMessage({ type: "getConfig" }, (c) => {
   document.getElementById("reporting").textContent = c && c.reporting ? "Açık" : "Kapalı (yalnızca yerel koruma)";
   document.getElementById("sanctioned").textContent = c && c.sanctionedAiUrl ? (c.sanctionedAiName || "Tanımlı") : "Tanımlı değil";
 });
+chrome.runtime.sendMessage({ type: "whoami" }, (w) => {
+  if (!w) return;
+  const how = { mdm: "kurum ayarı", chrome: "Chrome profili", none: "bilinmiyor" }[w.source] || "";
+  document.getElementById("who").textContent = `${w.user} · ${w.team} (${how})`;
+});
 chrome.storage.local.get(["telveguardQueue", "telveguardDictionary"], (v) => {
   document.getElementById("queue").textContent = String((v.telveguardQueue || []).length);
   const d = v.telveguardDictionary;

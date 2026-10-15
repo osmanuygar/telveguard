@@ -26,6 +26,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
+from . import agent as agent_mod
 from . import attachments as attachments_mod
 from . import compliance
 from . import dictionary as dictionary_mod
@@ -169,13 +170,15 @@ async def _scan_analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFo
 
 
 def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT,
-             scans: List[attachments_mod.Scan] = ()) -> Analysis:
-    """Tarama + politika. Gerçek istek ve simülatör aynı yolu kullanır."""
+             scans: List[attachments_mod.Scan] = (), destination: Optional[str] = None) -> Analysis:
+    """Tarama + politika. Gerçek istek, simülatör ve ajan kontrolü aynı yolu kullanır.
+    destination: verinin gerçekte gittiği yer modelden çıkarılamıyorsa (ör. Cursor: istek
+    önce Cursor'un sunucularına gider) çağıran verir."""
     model = body.get("model", "") if isinstance(body.get("model"), str) else ""
     # Eşleşen sağlayıcının hedefi önce gelir: veri gerçekte nereye gidiyorsa karar ona göre
     provider, provider_error = st.providers.resolve(model, fmt.name)
     routed = provider or st.providers.first(model)
-    destination = routed.destination if routed else st.policy.destination_of(model)
+    destination = destination or (routed.destination if routed else st.policy.destination_of(model))
     parts = fmt.request_parts(body)
     # Eklerden okunan metin de taranır: görsele gömülü injection ("visual prompt injection") dahil
     full_text = "\n".join([p.text for p in parts if p.role in fmt.injection_roles]
@@ -882,3 +885,78 @@ async def shadow_ai_dictionary(request: Request):
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers={"ETag": etag})
     return JSONResponse(payload, headers={"ETag": etag, "Cache-Control": "no-cache"})
+
+
+# ---------------- kod asistanı hook'ları (telve: Cursor, Claude Code) ----------------
+
+@app.get("/v1/agent/config")
+async def agent_config(request: Request):
+    """`telve setup` için kurulum bilgisi: kimlik modu ve (jwt) cihaz akışıyla giriş için
+    OIDC adresi ve public istemci kimliği. Sır içermez; kimlik doğrulamasız açıktır."""
+    auth = request.app.state.auth
+    oidc = None
+    if auth.mode == "jwt":
+        oidc = {"issuer": auth.issuer, "client_id": os.getenv("OIDC_AGENT_CLIENT_ID", ""),
+                "scope": os.getenv("OIDC_AGENT_SCOPE", "openid offline_access")}
+    return {"auth_mode": auth.mode, "oidc": oidc, "version": app.version}
+
+
+@app.post("/v1/agent/check")
+async def agent_check(request: Request):
+    """Cursor / Claude Code hook'u: prompt, okunacak dosya, komut ya da araç çıktısı politikadan
+    geçer. Kimlik proxy'dekiyle aynıdır (kullanıcının kendi token'ı). Upstream'e hiçbir şey gitmez.
+    Cevap: action = allow | warn | mask | block; mask ise masked_text (yalnızca tool_output)."""
+    st = request.app.state
+    t0 = time.perf_counter()
+    try:
+        identity = await st.auth.authenticate(request.headers)
+    except AuthError as e:
+        return _auth_error(e)
+    try:
+        req = agent_mod.AgentCheck.model_validate(await request.json())
+    except ValueError as e:
+        return _openai_error(400, f"Geçersiz istek: {str(e)[:300]}", "invalid_request", "invalid_request_error")
+
+    role = "user" if req.event in ("prompt", "shell") else "tool"
+    body = {"model": req.model or req.client,
+            "messages": [{"role": role, "content": req.text, "tool_call_id": "telve"}]}
+    a = _analyze(st, body, identity, CHAT, destination=agent_mod.destination(req))
+    d = a.decision
+    action, audited_action = agent_mod.resolve(d, req)
+    entities = dict(sorted(a.entity_counts.items()))
+    masked_text, vault = None, {}
+    if action == "mask":
+        masked_text = st.pii.mask(req.text, list(d.mask_entities), vault).text
+    elif action == "block" and req.event == "tool_output" and a.entities:
+        # Araç zaten çalıştı, çıktısı hook'ta: hook en azından bulunan her şeyi maskeli koysun
+        masked_text = st.pii.mask(req.text, list(a.entities), vault).text
+    metrics.AGENT_CHECKS.labels(req.client, req.event, action).inc()
+    for entity in a.entities:
+        metrics.ENTITIES.labels(entity, "input").inc()
+
+    event_id = None
+    if agent_mod.should_audit(req, action, entities, d, a.injection.score):
+        recorded = Decision(audited_action, d.mask_entities if audited_action == "mask" else set(),
+                            agent_mod.audit_rules(d, req), d.reason, d.monitored_rules, d.would_action)
+        ev = st.audit.build_event(
+            user=a.user, team=a.team, model=a.model, destination=a.destination, decision=recorded,
+            entities=a.entities, injection=a.injection, prompt=req.text, masked_prompt=None,
+            latency_ms=(time.perf_counter() - t0) * 1000, upstream_status=0)
+        ev.update(teams=a.identity.teams, auth_source=identity.source, api_format=req.client,
+                  subject_hashes=a.subject_hashes, prompt_tokens=0, completion_tokens=0,
+                  usage_known=1, est_cost_usd=0.0, masked_count=len(vault))
+        await _emit(st, ev)
+        event_id = ev["event_id"]
+
+    return {
+        "action": action,
+        "message": agent_mod.message(action, d, req, entities),
+        "masked_text": masked_text,
+        "entities": entities,
+        "destination": a.destination,
+        # Kayda kim olarak geçtiği: kullanıcı görebilsin (telve doctor)
+        "identity": {"user": a.user, "teams": a.identity.teams, "source": identity.source},
+        "policy": {"action": d.action, "rules": d.rules, "reason": d.reason,
+                   "monitored_rules": d.monitored_rules, "would_action": d.would_action},
+        "event_id": event_id,
+    }

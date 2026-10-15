@@ -471,7 +471,8 @@ const isPii = (e) => !isSecret(e) && !e.startsWith("KURUM_");   // kurumsal söz
 const DICT_LABELS = {};   // politikadaki dictionary[].label (/v1/policy/info)
 
 const FORMAT_LABELS = { chat: "OpenAI chat", responses: "OpenAI responses", messages: "Anthropic / Claude",
-  embeddings: "Embeddings (RAG)", browser: "Tarayıcı (gölge AI)" };
+  embeddings: "Embeddings (RAG)", browser: "Tarayıcı (gölge AI)", cursor: "Cursor (hook)",
+  "claude-code": "Claude Code (hook)" };
 const DEST_LABELS = { internal: "Kurum içi", external: "Yurt dışı" };
 
 // İşlem serileri: sabit kategorik sıra (renk varlığa bağlı, sıralamaya değil). Simge + etiket her zaman yanında.
