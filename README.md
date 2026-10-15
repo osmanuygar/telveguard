@@ -36,6 +36,8 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
   dekont, ekran görüntüsündeki veri karartılır. Claude Code'un okuduğu görsel / PDF'ler dahil.
 - **Çıktı koruması:** model cevabında girdide olmayan bir kişisel veri veya sır üretirse gizlenir.
 - **MCP / agent:** ContextForge eklentisi; araç çıktısı maskeleme, dış araçlara sızdırma engeli, araç izin listesi.
+- **Kod asistanları:** Cursor ve Claude Code hook'ları (`telve`): prompt, okunan dosya, komut ve araç
+  çıktısı makineden çıkmadan politikadan geçer; Claude Code'da araç çıktısı maskelenir.
 - **Gölge AI:** tarayıcı eklentisi ChatGPT, Claude.ai, Gemini'ye yapıştırılan veriyi yerelde maskeler.
 
 **Görünürlük ve uyum**
@@ -219,12 +221,67 @@ kendisi sunar, `UPSTREAM_ANTHROPIC_INTERNAL_URL=http://vllm:8000` yeterlidir.
 
 **Masaüstü araçlar:**
 
-- **Cursor:** Kendi modelleri ve "OpenAI base URL" ayarı dahil istekleri Cursor'un sunucuları
-  üzerinden gider. Telveguard'ın internetten erişilebilir olması gerekir; kurum içi bir adres çalışmaz.
+- **Cursor ve Claude Code:** [Kod asistanları](#kod-asistanları-cursor-ve-claude-code) bölümündeki
+  `telve` hook'larıyla. Cursor'da "OpenAI base URL" ayarı veriyi korumaz: istek önce Cursor'un
+  sunucularına gider, Telveguard'a ancak ondan sonra ulaşır.
 - **Claude Desktop / ChatGPT masaüstü:** Kullanıcının kendi hesabıyla sağlayıcıya gider, taban
   adres ayarı yoktur; sohbet metni Telveguard'dan geçmez. MCP araç trafiği
   [ContextForge](#mcp--agent-trafiği-contextforge) üzerinden geçirilebilir.
 - Aynı sitelerin tarayıcı sürümleri için [tarayıcı eklentisi](#gölge-ai-tarayıcı-eklentisi) vardır.
+
+### Kod asistanları (Cursor ve Claude Code)
+
+Cursor ve Claude Code prompt göndermeden, dosya okumadan, komut çalıştırmadan önce makinede bir
+hook çalıştırır. `telve` (paket: `telveguard-agent`) bu hook'tur: içeriği kullanıcının kendi
+kimliğiyle `POST /v1/agent/check`'e sorar, karar merkezi politikayla verilir, olay denetim kaydına
+(`cursor` / `claude-code`) ve Röntgen'e düşer. Veri makineden çıkmadan durdurulur.
+
+```bash
+pip install telveguard-agent
+telve setup --gateway https://telveguard.sirket.local
+telve login                     # kurum hesabı (OIDC cihaz akışı), token sessizce yenilenir
+telve install cursor            # ~/.cursor/hooks.json
+telve install claude --route    # ~/.claude/settings.json; model trafiği de Telveguard'dan
+telve doctor
+```
+
+| İçerik | Cursor | Claude Code | Claude Code `--route` |
+|---|---|---|---|
+| Prompt (ve eklenen dosyalar) | kişisel veri / sır / injection: durdur | durdur | yolda maskelenir |
+| Okunan dosya, Cursor Tab | durdur | maskelenir (araç çıktısı) | yolda maskelenir |
+| Komut, MCP / web aracı argümanı | durdur | durdur | durdur |
+| Araç çıktısı (Bash, Read, Grep, MCP, web) | — | maskelenir | maskelenir |
+
+- **Neden "durdur"?** Hook'lar çoğu yerde metni değiştiremez. Politika "maskele" diyorsa ve içerik
+  maskelenemiyorsa maskesiz gitmektense durdurulur; kullanıcıya hangi veri yüzünden olduğu söylenir.
+  Claude Code araç çıktısını değiştirebildiği için orada maskelenir, model `[TCKN_1]` görür.
+- **Cursor'da hedef her zaman yurt dışıdır:** model kurum içi görünse de veri önce Cursor'un
+  sunucularına gider. Cursor'un MCP araç çıktısı için [ContextForge](#mcp--agent-trafiği-contextforge).
+- **`--route`:** Claude Code'un kendisi de Telveguard'dan geçer (`ANTHROPIC_BASE_URL`, token
+  `apiKeyHelper: telve token` ile). Maskeleme yolda yapılır, cevapta geri açılır; kota ve maliyet
+  Röntgen'e girer. Komut ve araç argümanları modelden değil makineden çıktığı için yine hook'ta denetlenir.
+- **Gateway'e ulaşılamazsa:** `fail_closed: true` durdurur; aksi hâlde `telveguard-core` ile yerelde
+  taranır (riskli içerik yine durur, temiz içerik geçer; kurumsal sözlük yerelde yoktur).
+- **Kim?** `telve login` yapılmışsa kişi token'dan gelir ve doğrulanır (jwt modu; header'la taklit
+  edilemez). Giriş yoksa (header modu: geliştirme / demo) beyan edilir: `agent.json`'daki `user` /
+  `team` (MDM değişkeniyle, tarayıcı eklentisi gibi) > Cursor oturumunun e-postası > işletim sistemi
+  kullanıcı adı. `telve doctor` kayda kim olarak geçildiğini gösterir.
+- **Kayıt:** her prompt (kullanım görünürlüğü); dosya / komut / araç olayları yalnızca bir şey
+  bulunduysa. Metin saklanmaz. Temiz dosyalar 5 dakika yerelde önbelleğe alınır (Tab hızı).
+
+**Kurumsal dağıtım (MDM: Jamf, Intune).** Kullanıcının değiştiremeyeceği üç dosya:
+
+| Dosya | macOS | Linux | Windows |
+|---|---|---|---|
+| `telve` yapılandırması ([örnek](deploy/agent/agent.json)) | `/Library/Application Support/Telveguard/agent.json` | `/etc/telveguard/agent.json` | `C:\ProgramData\Telveguard\agent.json` |
+| Cursor (Enterprise plan) | `/Library/Application Support/Cursor/hooks.json` | `/etc/cursor/hooks.json` | `C:\ProgramData\Cursor\hooks.json` |
+| Claude Code | `/Library/Application Support/ClaudeCode/managed-settings.d/telveguard.json` | `/etc/claude-code/managed-settings.d/` | `C:\Program Files\ClaudeCode\managed-settings.d\` |
+
+Hook dosyalarının içeriği: `telve install cursor --scope enterprise --print --command /opt/telveguard/bin/telve`
+(Claude Code için `claude --route`). `sudo telve install ... --scope enterprise` doğrudan da yazar;
+mevcut hook'lara dokunulmaz. Kimlik için IdP'de cihaz akışı açık, sırsız bir istemci tanımlayın
+ve gateway'e `OIDC_AGENT_CLIENT_ID` (Helm: `auth.oidc.agentClientId`) olarak verin. Claude Code'da
+kullanıcı hook'larını kapatmak için managed ayarlara `"allowManagedHooksOnly": true` eklenebilir.
 
 ## Kendi ürününüze entegrasyon
 

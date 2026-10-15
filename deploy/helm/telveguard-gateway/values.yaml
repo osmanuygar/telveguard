@@ -28,6 +28,9 @@ auth:
     # Bu gruptaki kullanıcılar yönetim uçlarına (Röntgen, simülatör, KVKK raporu) kendi JWT'leriyle
     # erişir; statik admin-token'a gerek kalmaz. Ör. telveguard-admin
     adminGroup: ""
+    # telve (Cursor / Claude Code ajanı) bu public istemciyle cihaz akışından giriş yapar:
+    # IdP'de "OAuth 2.0 Device Authorization Grant" açık, sırsız (public) bir istemci. Ör. telve
+    agentClientId: ""
 
 # ---------------- upstream LLM'ler ----------------
 upstream:

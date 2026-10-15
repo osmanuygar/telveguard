@@ -40,7 +40,7 @@ jobs:
           python -m pip install --upgrade pip
           # openai + anthropic: API biçimi testleri gerçek SDK'larla koşar (yoksa sessizce atlanırdı)
           pip install -r gateway/requirements.txt pytest pytest-asyncio cpex build twine openai anthropic \
-              -e packages/telveguard-core -e packages/telveguard-contextforge
+              -e packages/telveguard-core -e packages/telveguard-contextforge -e packages/telveguard-agent
       - name: Testler (birim + Helm + paketleme; uçtan uca testler ortam olmadığı için atlanır)
         run: pytest -q -rs
 
@@ -60,7 +60,7 @@ jobs:
           import os, pathlib, tomllib
           tag = os.environ["GITHUB_REF_NAME"].removeprefix("v")
           bad = []
-          for pkg in ("telveguard-core", "telveguard-contextforge"):
+          for pkg in ("telveguard-core", "telveguard-contextforge", "telveguard-agent"):
               v = tomllib.loads(pathlib.Path("packages", pkg, "pyproject.toml").read_text())["project"]["version"]
               if v != tag:
                   bad.append(f"{pkg}={v}")
@@ -73,6 +73,7 @@ jobs:
           python -m pip install --upgrade build twine
           python -m build packages/telveguard-core -o dist/
           python -m build packages/telveguard-contextforge -o dist/
+          python -m build packages/telveguard-agent -o dist/
           python -m twine check --strict dist/*
           ls -l dist/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

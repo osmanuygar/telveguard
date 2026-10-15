@@ -37,7 +37,35 @@
   `demo_traffic.py --profile`, `/asistan` demo sohbet sayfası (`DEMO_ASSISTANT=1` ve header kimliğiyle),
   `docs/demo.md` kılavuzu.
 
+- Kod asistanı hook'ları için `POST /v1/agent/check`: Cursor / Claude Code'un prompt'u, okuduğu
+  dosya, çalıştıracağı komut, MCP / web aracı argümanı ve araç çıktısı kullanıcının kendi kimliğiyle
+  politikadan geçer; karar `allow | warn | mask | block`. Hook metni değiştiremiyorsa "maskele"
+  kararı durdurmaya döner; Claude Code araç çıktısı maskeli döner. Cursor isteklerinin hedefi her
+  zaman yurt dışıdır (veri önce Cursor'un sunucularına gider). Denetim kaydında `api_format`
+  `cursor` / `claude-code`; temiz dosya okumaları kayda yazılmaz. Metrik: `telveguard_agent_checks`.
+- `GET /v1/agent/config`: `telve setup` / `telve login` için kimlik modu ve OIDC cihaz akışı
+  bilgisi (`OIDC_AGENT_CLIENT_ID`, Helm: `auth.oidc.agentClientId`).
+
+### telveguard-agent (yeni paket, `telve`)
+
+- `telve setup / login / token / install / uninstall / hook / check / doctor`. OIDC cihaz akışıyla
+  giriş, sessiz token yenileme, Claude Code `apiKeyHelper`.
+- `telve install cursor`: `beforeSubmitPrompt`, `beforeReadFile`, `beforeTabFileRead`,
+  `beforeShellExecution`, `beforeMCPExecution`.
+- `telve install claude [--route]`: `UserPromptSubmit`, `PreToolUse` (Bash, web, MCP), `PostToolUse`
+  (Read, Grep, Bash, web, MCP çıktısı maskelenir). `--route` model trafiğini de Telveguard'a verir.
+- `--scope enterprise` / `--print`: MDM ile dağıtım; Claude Code için kurumun
+  `managed-settings.json`'una dokunmayan `managed-settings.d/telveguard.json`.
+- Gateway'e ulaşılamazsa `fail_closed` (kurumsal yapılandırma) durdurur; yoksa telveguard-core ile
+  yerel tarama yapılır.
+
 ### Tarayıcı eklentisi
+
+- Kayıtta görünen kişi: MDM'de `user` yoksa Chrome'da oturum açmış profilin e-postası
+  (`identity`, `identity.email` izinleri; MDM ile zorunlu kurulumda onay sorulmaz), o da yoksa
+  `unknown`. Popup'ta "Kayıtta görünen" satırı. `dev_extension.sh` artık sabit `demo.kullanici`
+  yazmaz (5. argümanla verilebilir).
+- Kurum Asistanı demo sayfasında kullanıcı alanı (tarayıcıda hatırlanır); sabit `demo.kullanici` kalktı.
 
 - Kurumsal sözlük: proje adları, müşteri unvanları, iç sunucu adları yapıştırma, gönderim ve
   dosyalarda yakalanır, `[KURUM_PROJE_1]` olarak maskelenir. Sözlük saatte bir gateway'den çekilir;

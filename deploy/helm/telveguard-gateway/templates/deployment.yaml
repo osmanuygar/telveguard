@@ -61,6 +61,10 @@ spec:
             - name: OIDC_ADMIN_GROUP
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.auth.oidc.agentClientId }}
+            - name: OIDC_AGENT_CLIENT_ID
+              value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             - name: POLICY_PATH
               value: /policies/policy.yaml

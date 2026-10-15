@@ -4,7 +4,7 @@
   "version": "0.3.0",
   "description": "AI sohbet sitelerine yapıştırılan kişisel veri ve sırları tespit eder; maskeler, uyarır ya da engeller. Metin tarayıcıdan çıkmaz.",
   "minimum_chrome_version": "116",
-  "permissions": ["storage", "alarms"],
+  "permissions": ["storage", "alarms", "identity", "identity.email"],
   "host_permissions": ["https://telveguard.sirket.local/*"],
   "background": { "service_worker": "src/background.js" },
   "content_scripts": [

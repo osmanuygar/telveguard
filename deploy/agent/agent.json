@@ -1,0 +1,7 @@
+{
+  "gateway": "https://telveguard.sirket.local",
+  "fail_closed": true,
+  "ca_file": "/Library/Application Support/Telveguard/kurum-ca.pem",
+  "tab_files": true,
+  "max_file_bytes": 1000000
+}

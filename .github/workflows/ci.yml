@@ -36,7 +36,7 @@ jobs:
           python -m pip install --upgrade pip
           # openai + anthropic: API biçimi testleri gerçek SDK'larla koşar (yoksa sessizce atlanırdı)
           pip install -r gateway/requirements.txt pytest pytest-asyncio cpex build twine openai anthropic \
-              -e packages/telveguard-core -e packages/telveguard-contextforge
+              -e packages/telveguard-core -e packages/telveguard-contextforge -e packages/telveguard-agent
       - name: Testler
         run: pytest -q -rs
       - name: Tarayıcı eklentisi tespit motoru (JS == Python)

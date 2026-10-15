@@ -7,7 +7,7 @@
  */
 "use strict";
 
-const DEFAULTS = { telveguardUrl: "", reportToken: "", mode: "warn", user: "unknown", team: "default", reportVisits: false,
+const DEFAULTS = { telveguardUrl: "", reportToken: "", mode: "warn", user: "", team: "default", reportVisits: false,
   unscannableFiles: "allow", requireJustification: true, sanctionedAiUrl: "", sanctionedAiName: "", showBanner: true };
 // Onaylı AI aracı yalnızca https (yerel geliştirme: http://localhost); başka şema (javascript: vb.) açılmaz
 const safeUrl = (u) => /^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(u || "") ? u : "";
@@ -22,6 +22,19 @@ async function config() {
   } catch {
     return { ...DEFAULTS };   // yönetilmeyen kurulum (geliştirme): yalnızca yerel koruma
   }
+}
+
+// Kayıtta görünecek kişi: MDM'deki user (kurum belirler) > Chrome'da oturum açmış profilin e-postası
+// (identity.email izni; senkronizasyon kapalı olsa da) > "unknown". İkisi de beyandır, JWT gibi
+// doğrulanmaz; gateway biçimini yine denetler.
+const USER_RE = /^[\w.@+-]{1,200}$/u;
+async function whoAmI(cfg) {
+  if (cfg.user) return { user: cfg.user, source: "mdm" };
+  try {
+    const info = await chrome.identity.getProfileUserInfo({ accountStatus: "ANY" });
+    if (info?.email && USER_RE.test(info.email)) return { user: info.email, source: "chrome" };
+  } catch { /* izin yok / eski Chrome */ }
+  return { user: "unknown", source: "none" };
 }
 
 async function readQueue() {
@@ -70,7 +83,8 @@ async function refreshDictionary() {
 
 async function enqueue(event) {
   const cfg = await config();
-  const full = { ...event, user: cfg.user, team: cfg.team, extension_version: VERSION };
+  const { user } = await whoAmI(cfg);
+  const full = { ...event, user, team: cfg.team, extension_version: VERSION };
   const queue = (await readQueue()).concat([full]).slice(-MAX_QUEUE);
   await chrome.storage.local.set({ [QUEUE_KEY]: queue });
   await flush();
@@ -83,6 +97,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                                         requireJustification: c.requireJustification !== false,
                                         sanctionedAiUrl: safeUrl(c.sanctionedAiUrl), sanctionedAiName: c.sanctionedAiName || "",
                                         showBanner: c.showBanner !== false }));
+    return true;
+  }
+  if (msg?.type === "whoami") {
+    config().then(async (c) => sendResponse({ ...(await whoAmI(c)), team: c.team }));
     return true;
   }
   if (msg?.type === "event" && msg.event) {
