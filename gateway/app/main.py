@@ -39,6 +39,7 @@ from . import shadow_ai
 from . import subjects as subjects_mod
 from . import metrics
 from . import notify as notify_mod
+from . import policy_git as policy_git_mod
 from . import policy_store as policy_store_mod
 from . import poc_report as poc_report_mod
 from . import providers as providers_mod
@@ -86,6 +87,12 @@ async def lifespan(app: FastAPI):
         app.state.policy_runtime = policy_store_mod.Runtime(
             app.state, f.read(), policy_store_mod.PolicyStore.from_env(app.state.http))
     await app.state.policy_runtime.start(float(os.getenv("POLICY_STORE_POLL_SECONDS", "5")))
+    # Onaylanan sürümü Git'e (Bitbucket Data Center) yansıtma; POLICY_GIT_PROVIDER yoksa kapalı
+    app.state.policy_git = None
+    if git_cfg := policy_git_mod.GitConfig.from_env():
+        if not app.state.policy_runtime.store:
+            raise RuntimeError("POLICY_GIT_* için POLICY_STORE=clickhouse gerekli (Git'e onaylanan sürüm yazılır)")
+        app.state.policy_git = policy_git_mod.Mirror(git_cfg)
     # Ağ tarafı (ICAP): kurum proxy'si masaüstü uygulamalarının AI trafiğini sorar; ICAP_PORT yoksa kapalı
     app.state.icap = None
     if settings := icap_mod.Settings.from_env(app.version):
@@ -95,6 +102,8 @@ async def lifespan(app: FastAPI):
     if app.state.icap:
         await app.state.icap.stop()
     await app.state.policy_runtime.stop()
+    if app.state.policy_git:
+        await app.state.policy_git.close()
     await app.state.notifier.stop()
     await app.state.audit.stop()
     await app.state.http.aclose()
@@ -1120,8 +1129,9 @@ async def policy_store_overview(request: Request):
     rules = pol.rules + pol.output_rules
     counts = {"rules": len(pol.rules), "output_rules": len(pol.output_rules),
               "monitor": sum(1 for r in rules if r.get("mode", pol.mode) == "monitor")}
+    git = request.app.state.policy_git
     return {"runtime": rt.describe(), "content": rt.content, "editable_keys": list(policy_store_mod.EDITABLE_KEYS),
-            "counts": counts,
+            "counts": counts, "git": git.cfg.describe() if git else None,
             "versions": versions, "error": error, "actor": {"name": actor[0], "via": actor[1]}}
 
 
@@ -1192,27 +1202,89 @@ async def policy_version_create(request: Request):
 @app.post("/v1/policy/versions/{version}/{action}")
 async def policy_version_transition(request: Request, version: int, action: str):
     """approve (başka bir yönetici; emergency=true ile yazanın kendisi, gerekçeyle) |
-    reject | apply (onaylı eski sürüme geri dönüş). Yayına alınan sürüm bu pod'da hemen,
-    diğerlerinde POLICY_STORE_POLL_SECONDS içinde yüklenir."""
-    if action not in ("approve", "reject", "apply"):
-        return _openai_error(404, "İşlem approve, reject ya da apply olmalı.", "not_found", "admin_error")
+    reject | apply (onaylı eski sürüme geri dönüş) | mirror (yayındaki sürümü Git'e yeniden yaz).
+    Yayına alınan sürüm bu pod'da hemen, diğerlerinde POLICY_STORE_POLL_SECONDS içinde yüklenir;
+    Git yansıtma açıksa depoya da yazılır (strict: önce depoya, yazılamazsa yayına girmez)."""
+    if action not in ("approve", "reject", "apply", "mirror"):
+        return _openai_error(404, "İşlem approve, reject, apply ya da mirror olmalı.", "not_found", "admin_error")
     err, rt, actor = await _policy_admin(request, write=True)
     if err:
         return err
+    st = request.app.state
+    git = st.policy_git
     body = await _json_body(request)
     comment = str(body.get("comment") or "").strip()[:1000]
+    if action == "mirror":
+        return await _policy_mirror_now(rt, git, version, actor)
+    published = {}
+
+    async def strict_publish(v, event):
+        if event == "rejected":
+            return
+        try:
+            published["result"] = await git.publish(rt, v, event, actor[0], actor[1], comment)
+        except policy_git_mod.GitError as e:
+            raise policy_store_mod.StoreError(502, f"Git'e yazılamadığı için yayına alınmadı (POLICY_GIT_STRICT): {e}")
     try:
+        target = await rt.store.get(version)
         if action in ("approve", "apply"):
             # Yayına almadan önce bu pod'un tabanıyla kurulabildiğini doğrula
-            policy_store_mod.parse((await rt.store.get(version))["content"], rt.base)
+            policy_store_mod.parse(target["content"], rt.base)
         result = await rt.store.transition(version, action, actor[0], actor[1], comment,
-                                           emergency=bool(body.get("emergency")))
+                                           emergency=bool(body.get("emergency")),
+                                           before_commit=strict_publish if git and git.cfg.strict else None)
     except policy_store_mod.StoreError as e:
         return _store_error(e)
     admin_log.info("policy_version_%s version=%s actor=%s via=%s", result["event"], version, *actor)
+    git_state = None
     if result["event"] != "rejected":
         await rt.refresh()
-    return {**result, "runtime": rt.describe()}
+        if git and "result" in published:
+            await git.record(rt.store, version, published["result"])
+            git_state = {"status": "mirrored", **published["result"]}
+        elif git:
+            git.schedule(rt, rt.store, target, result["event"], actor[0], actor[1], comment)
+            git_state = {"status": "pending"}
+    return {**result, "runtime": rt.describe(), "git": git_state}
+
+
+async def _policy_mirror_now(rt, git, version: int, actor):
+    """Konsoldaki "Yeniden dene": yalnızca yayındaki sürüm (eskisi depodaki yeniyi ezmesin)."""
+    if not git:
+        return _openai_error(404, "Git yansıtma kapalı (POLICY_GIT_PROVIDER).", "git_disabled", "admin_error")
+    if rt.version != version:
+        return _openai_error(409, "Yalnızca yayındaki sürüm depoya yeniden yazılabilir.", "not_active", "admin_error")
+    try:
+        v = await rt.store.get(version)
+        act = [e for e in v["events"] if e["event"] in policy_store_mod.ACTIVATING][-1]
+        result = await git.publish(rt, v, act["event"], act["actor"], act["actor_via"], act["comment"])
+        await git.record(rt.store, version, result)
+    except policy_git_mod.GitError as e:
+        try:
+            await git.record(rt.store, version, None, str(e))
+        except policy_store_mod.StoreError:
+            pass
+        return _openai_error(502, str(e), "git_error", "admin_error")
+    except policy_store_mod.StoreError as e:
+        return _store_error(e)
+    admin_log.info("policy_version_mirrored version=%s actor=%s", version, actor[0])
+    return {"version": version, "event": "mirrored", "git": {"status": "mirrored", **result}}
+
+
+@app.get("/v1/policy/git")
+async def policy_git_check(request: Request):
+    """Git yansıtma ayarları (token yok) ve bağlantı denemesi: depo, dal, dosya (yazmadan)."""
+    err, _, _ = await _policy_admin(request)
+    if err:
+        return err
+    git = request.app.state.policy_git
+    if not git:
+        return {"enabled": False}
+    try:
+        check = {"ok": True, **(await git.client.check())}
+    except policy_git_mod.GitError as e:
+        check = {"ok": False, "error": str(e)}
+    return {"enabled": True, **git.cfg.describe(), "check": check}
 
 
 IMPACT_GROUPS = 20000

@@ -76,12 +76,29 @@ policy:
     pollSeconds: 5
     fourEyes: true          # sürümü yazan onaylayamaz (acil yayın gerekçeyle, kayıtta ayrı)
     insertQuorum: ""        # kopyalı ClickHouse: ör. "2"
+    # Onaylanan sürümü Git'e yansıtma (Bitbucket Data Center). store.enabled gerekli.
+    # Token: secret'ta policy-git-token (depoya yazma yetkili HTTP erişim token'ı).
+    git:
+      enabled: false
+      provider: bitbucket-dc
+      url: ""                 # https://bitbucket.sirket.local (bağlam yolu varsa dahil)
+      webUrl: ""              # konsoldaki bağlantılar için (API adresinden farklıysa)
+      project: ""             # ör. SEC ; kişisel depo: ~kullanici
+      repo: ""                # ör. telveguard-config
+      branch: main
+      path: policies/policy.yaml
+      mode: commit            # commit | pull_request (dal korumalıysa)
+      reviewers: []           # pull_request: gözden geçirenler (kullanıcı adları)
+      content: full           # full: ConfigMap dosyası + kurallar (dağıtılabilir) | rules: yalnızca kurallar
+      strict: false           # true: Git'e yazılamazsa yayına alma reddedilir
+      message: ""             # commit mesajı şablonu; boşsa varsayılan
+      caFile: ""              # kurum içi CA (ör. extraEnv / volume ile bağlanan PEM yolu)
 
 # ---------------- sırlar ----------------
 # Önerilen: Secret'ı chart dışında (Vault / sealed-secrets / oc create secret) oluşturup adını verin.
 # Beklenen anahtarlar (hepsi opsiyonel): admin-token, upstream-external-key,
 # upstream-internal-key, upstream-anthropic-key, upstream-anthropic-internal-key, clickhouse-password,
-# redis-password, shadow-ai-token (tarayıcı eklentisi olayları), policy-store-password,
+# redis-password, shadow-ai-token (tarayıcı eklentisi olayları), policy-store-password, policy-git-token,
 # guardrail-token (LiteLLM / agentgateway guardrail servisi; deploy/guardrail/),
 # subject-hash-key (KVKK ilgili kişi araması; en az 32 karakter, değişirse eski kayıtlar bulunamaz)
 existingSecret: ""

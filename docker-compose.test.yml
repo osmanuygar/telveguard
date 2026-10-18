@@ -28,6 +28,16 @@ services:
       # Konsoldan politika yönetimi (Politika sekmesi): sürümler ClickHouse'ta
       POLICY_STORE: clickhouse
       POLICY_STORE_POLL_SECONDS: "2"
+      # Onaylanan sürüm Git'e: sahte Bitbucket Data Center (mock-llm). Commit bağlantıları
+      # tarayıcıda http://localhost:9000/bitbucket/... olarak açılır
+      POLICY_GIT_PROVIDER: bitbucket-dc
+      POLICY_GIT_URL: http://mock-llm:9000/bitbucket
+      POLICY_GIT_WEB_URL: http://localhost:9000/bitbucket
+      POLICY_GIT_PROJECT: SEC
+      POLICY_GIT_REPO: telveguard-config
+      POLICY_GIT_BRANCH: main
+      POLICY_GIT_PATH: policies/policy.yaml
+      POLICY_GIT_TOKEN: e2e-bitbucket-token   # yalnızca lokal test
     depends_on:
       mock-llm: { condition: service_started }
 

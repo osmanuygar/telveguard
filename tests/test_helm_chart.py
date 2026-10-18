@@ -206,3 +206,18 @@ def test_inventory_in_configmap_matches_repo():
     cm = docs[("ConfigMap", "tg-telveguard-gateway-policy")]
     assert yaml.safe_load(cm["data"]["inventory.yaml"]) == yaml.safe_load(chart_copy)
     assert env(docs)["INVENTORY_PATH"]["value"] == "/policies/inventory.yaml"
+
+
+def test_policy_git_env():
+    base = ["--set", "policy.store.enabled=true", "--set", "clickhouse.url=http://ch:8123"]
+    assert "POLICY_GIT_PROVIDER" not in env(render(*base))
+    e = env(render(*base, "--set", "policy.store.git.enabled=true", "--set", "policy.store.git.url=https://bb.sirket.local",
+                   "--set", "policy.store.git.project=SEC", "--set", "policy.store.git.repo=tg-config",
+                   "--set", "policy.store.git.mode=pull_request", "--set", "policy.store.git.reviewers={uyum,guvenlik}"))
+    assert e["POLICY_GIT_PROVIDER"]["value"] == "bitbucket-dc" and e["POLICY_GIT_MODE"]["value"] == "pull_request"
+    assert e["POLICY_GIT_PR_REVIEWERS"]["value"] == "uyum,guvenlik" and e["POLICY_GIT_STRICT"]["value"] == "0"
+    assert e["POLICY_GIT_TOKEN"]["valueFrom"]["secretKeyRef"]["key"] == "policy-git-token"
+    with pytest.raises(RuntimeError, match="url, project ve repo"):
+        render(*base, "--set", "policy.store.git.enabled=true")
+    with pytest.raises(RuntimeError, match="policy.store.enabled gerekli"):
+        render("--set", "policy.store.git.enabled=true")
