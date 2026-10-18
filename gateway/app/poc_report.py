@@ -24,7 +24,9 @@ from . import compliance
 from .xray import ENTITY_LABELS, XRAY_QUERIES, ClickHouse, inventory_usage, provider_of
 
 _WINDOW = "event_time >= now() - INTERVAL {days:UInt32} DAY"
-_GATEWAY = "api_format != 'browser'"
+# Gölge AI: tarayıcı eklentisi ve proxy (ICAP) olayları; geri kalanı gateway'den geçen istekler
+_SHADOW = "api_format IN ('browser', 'icap')"
+_GATEWAY = f"NOT {_SHADOW}"
 _PROTECTIVE = "('mask', 'block')"
 
 
@@ -123,19 +125,19 @@ QUERIES = {
                countIf(has(rules, 'golge-ai:blocked')) AS blocked,
                countIf(has(rules, 'golge-ai:allowed_override')) AS overridden,
                countIf(has(rules, 'golge-ai:redirected')) AS redirected
-        FROM audit WHERE {_WINDOW} AND api_format = 'browser'
+        FROM audit WHERE {_WINDOW} AND {_SHADOW}
         GROUP BY site ORDER BY with_data DESC, visits DESC LIMIT 20""",
     # Kullanıcının "yanlış alarm" dediği uyarılar: hangi tespit fazla uyarıyor
     "shadow_entities": f"""
         SELECT entity, count() AS events,
                countIf(has(rules, 'golge-ai:allowed_override')) AS overridden,
                countIf(has(rules, 'golge-ai:gerekce:false_positive')) AS false_positives
-        FROM audit ARRAY JOIN entities AS entity WHERE {_WINDOW} AND api_format = 'browser'
+        FROM audit ARRAY JOIN entities AS entity WHERE {_WINDOW} AND {_SHADOW}
         GROUP BY entity ORDER BY events DESC""",
     "shadow_justifications": f"""
         SELECT replaceOne(r, 'golge-ai:gerekce:', '') AS justification, count() AS events
         FROM audit ARRAY JOIN rules AS r
-        WHERE {_WINDOW} AND api_format = 'browser' AND startsWith(r, 'golge-ai:gerekce:')
+        WHERE {_WINDOW} AND {_SHADOW} AND startsWith(r, 'golge-ai:gerekce:')
         GROUP BY justification ORDER BY events DESC""",
     # Her akıbetten en fazla 3 (korumasız önce), her ekipten akıbet başına 1: liste tek ekip ya da
     # tek akıbetle dolmasın; raporun anlattığı üç durum da örneklensin. Ana bulgu gibi yalnızca

@@ -18,4 +18,14 @@ spec:
         - namespaceSelector:
             matchLabels: {{- toYaml . | nindent 14 }}
         {{- end }}
+    {{- if .Values.icap.enabled }}
+    - ports:
+        - port: icap
+          protocol: TCP
+      from:
+        {{- range .Values.icap.allowedClients }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+    {{- end }}
 {{- end }}

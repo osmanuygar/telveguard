@@ -12,7 +12,7 @@ Anlık bildirim (politika dosyasındaki `notify` bölümü): Slack, Microsoft Te
             rules: ["prompt-injection-*", "kota:*"]   # joker destekli
             entity_in: ["SECRET_*"]         # girdide ya da cevapta sızan türler
             teams: [stajyer]
-            sources: [gateway, browser]     # gateway = API isteği, browser = tarayıcı eklentisi
+            sources: [gateway, browser]     # gateway = API isteği, browser = tarayıcı eklentisi, network = proxy (ICAP)
           cooldown_seconds: 300             # aynı ekip + kural için tekrar bildirim aralığı
           include_user: true                # false: mesajda kullanıcı adı yer almaz
 
@@ -49,7 +49,7 @@ from . import metrics
 log = logging.getLogger("telveguard.notify")
 
 TYPES = {"slack", "teams", "webhook"}
-SOURCES = {"gateway", "browser"}
+SOURCES = {"gateway", "browser", "network"}
 WHEN_KEYS = {"actions", "rules", "entity_in", "teams", "sources"}
 URL_ENV_RX = re.compile(r"^[A-Z][A-Z0-9_]*_WEBHOOK_URL$")
 QUEUE_SIZE = 1000
@@ -100,7 +100,7 @@ def effective_action(ev: Dict[str, Any]) -> str:
 
 
 def source_of(ev: Dict[str, Any]) -> str:
-    return "browser" if ev.get("api_format") == "browser" else "gateway"
+    return {"browser": "browser", "icap": "network"}.get(ev.get("api_format"), "gateway")
 
 
 def _rules(ev: Dict[str, Any]) -> List[str]:
@@ -174,13 +174,14 @@ def summary(ev: Dict[str, Any]) -> str:
 
 
 def facts(ev: Dict[str, Any], include_user: bool) -> List[Tuple[str, str]]:
-    browser = source_of(ev) == "browser"
+    source = source_of(ev)
+    browser = source != "gateway"   # model yerine site
     out = [("Ekip", ev.get("team") or "–")]
     if include_user:
         out.append(("Kullanıcı", ev.get("user") or "–"))
     dest = DEST_LABELS.get(ev.get("destination"), ev.get("destination") or "–")
     out.append(("Site" if browser else "Model", f"{ev.get('model') or '–'} ({dest})"))
-    out.append(("Kaynak", "Tarayıcı eklentisi" if browser else "API isteği"))
+    out.append(("Kaynak", {"browser": "Tarayıcı eklentisi", "network": "Proxy (ICAP)"}.get(source, "API isteği")))
     if rules := _rules(ev):
         out.append(("Kural", ", ".join(rules)))
     if entities := sorted(set(ev.get("entities") or [])):

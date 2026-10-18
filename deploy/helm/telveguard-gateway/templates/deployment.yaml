@@ -35,6 +35,11 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- if .Values.icap.enabled }}
+            - name: icap
+              containerPort: {{ .Values.icap.port }}
+              protocol: TCP
+            {{- end }}
           env:
             - name: WORKERS
               value: {{ .Values.workers | quote }}
@@ -64,6 +69,24 @@ spec:
             {{- with .Values.auth.oidc.agentClientId }}
             - name: OIDC_AGENT_CLIENT_ID
               value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.icap.enabled }}
+            - name: ICAP_PORT
+              value: {{ .Values.icap.port | quote }}
+            - name: ICAP_ALLOWED_CLIENTS
+              value: {{ join "," .Values.icap.allowedClients | quote }}
+            - name: ICAP_UNSCANNABLE
+              value: {{ .Values.icap.unscannable | quote }}
+            - name: ICAP_MAX_BODY
+              value: {{ .Values.icap.maxBody | int | quote }}
+            {{- with .Values.icap.teamPrefix }}
+            - name: ICAP_TEAM_PREFIX
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.icap.extraHosts }}
+            - name: ICAP_EXTRA_HOSTS
+              value: {{ join "," . | quote }}
             {{- end }}
             {{- end }}
             - name: POLICY_PATH

@@ -39,6 +39,8 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 - **Kod asistanları:** Cursor ve Claude Code hook'ları (`telve`): prompt, okunan dosya, komut ve araç
   çıktısı makineden çıkmadan politikadan geçer; Claude Code'da araç çıktısı maskelenir.
 - **Gölge AI:** tarayıcı eklentisi ChatGPT, Claude.ai, Gemini'ye yapıştırılan veriyi yerelde maskeler.
+- **Ağ tarafı (ICAP):** kurum proxy'si masaüstü uygulamalarının (Claude Desktop, ChatGPT, Copilot) ve
+  betiklerin AI isteklerini Telveguard'a sorar; riskli istek makineden çıkmadan durdurulur.
 
 **Görünürlük ve uyum**
 - **Denetim kaydı:** ham prompt hiç saklanmaz; veri türleri, karar, token, maliyet ClickHouse'ta.
@@ -678,7 +680,7 @@ notify:
 | `rules` | Tetiklenen kural adı, joker destekli: `prompt-injection-*`, `kota:*`, `golge-ai:*` |
 | `entity_in` | Girdideki ya da cevapta sızan veri türü: `["SECRET_*"]`, `[TCKN, IBAN_TR]` |
 | `teams` | Kullanıcının ekiplerinden herhangi biri |
-| `sources` | `gateway` (API isteği) ya da `browser` (tarayıcı eklentisi) |
+| `sources` | `gateway` (API isteği), `browser` (tarayıcı eklentisi) ya da `network` (proxy, ICAP) |
 
 - **Metin gönderilmez:** mesajda ekip, kullanıcı, model, karar, kural, veri **türleri** ve olay
   kimliği vardır; ham ya da maskeli prompt yoktur. Slack / Teams yurt dışı bir hizmetse kullanıcı
@@ -865,6 +867,62 @@ Ayar şeması: `extension/managed_schema.json`. Windows GPO'da ayarlar
 `com.google.Chrome.extensions.<eklenti-id>` yapılandırma profiline yazılır. MDM yapılandırması
 yoksa eklenti yalnızca yerel koruma yapar (olay göndermez, kurumsal sözlüğü çekemez). Kullanıcı / ekip bilgisi MDM'den gelir; JWT gibi doğrulanmaz.
 
+## Ağ tarafı: masaüstü uygulamaları (ICAP)
+
+Tarayıcı eklentisi yalnızca tarayıcıyı, `telve` yalnızca kod asistanlarını görür. Claude Desktop,
+ChatGPT ve Copilot masaüstü uygulamaları, Office eklentileri, kayıtsız Python betikleri ise kurumun
+proxy'sinden çıkar. Proxy **TLS denetimi** yapıyorsa çözülmüş isteği ICAP (RFC 3507, REQMOD) ile
+Telveguard'a sorar. Karar aynı politikayla verilir ve Röntgen'e / POC raporunun Gölge AI bölümüne
+`Proxy (ICAP)` olarak yazılır.
+
+```
+masaüstü uygulaması ──TLS──> kurum proxy'si (TLS denetimi) ──> chatgpt.com / api.openai.com ...
+                                    │  ICAP REQMOD
+                                    └──> Telveguard :1344  ── geçir (204) / durdur (403)
+```
+
+- **Maskeleme yok, yalnızca geçir / durdur.** chatgpt.com, claude.ai gibi siteler belgelenmemiş,
+  sık değişen iç API'ler kullanır; gövdeyi yeniden yazmak her güncellemede kırılır. Gövdedeki tüm
+  metin biçimden bağımsız taranır (JSON, form, multipart, gzip). Politika "maskele" diyorsa istek
+  durdurulur. Kullanıcı maskeli kullanım için Kurum Asistanı'na ya da gateway'e yönlendirilir.
+- **Kullanıcı ne görür:** uygulama / SDK JSON hata (`error.message`), tarayıcı sayfası kısa bir HTML
+  sayfası. Mesajda bulunan veri türü yazar, değerin kendisi yazmaz.
+- **Kimlik:** proxy'nin doğruladığı kullanıcı (`X-Authenticated-User`, base64; `DOMAIN\user`,
+  `WinNT://`, `LDAP://` biçimleri) ve varsa gruplar (`X-Authenticated-Groups`, `ICAP_TEAM_PREFIX`
+  ile ekibe). Kullanıcı yoksa `ip:<istemci IP>`. Bu başlıklara yalnızca `ICAP_ALLOWED_CLIENTS`'taki
+  proxy'lerden gelen bağlantılarda güvenilir; diğerleri reddedilir.
+- **Kayıt:** prompt gönderimleri (ör. ChatGPT `/backend-api/conversation`, Claude
+  `.../completion`, `api.openai.com/v1/chat/completions`) her zaman, sitenin diğer POST'ları
+  yalnızca bir şey bulunursa. Site listesi: `gateway/app/icap.py` `SITES`; ek alan adları
+  `ICAP_EXTRA_HOSTS`.
+- **Telveguard'a ulaşılamazsa** proxy karar verir: Squid'de `bypass=off` durdurur, `bypass=on` geçirir.
+
+```bash
+# Yerel deneme: Squid -> Telveguard (TLS denetimi yok, http:// istekleriyle)
+docker compose -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.icap.yml up -d --build
+curl -x http://localhost:3128 http://api.openai.com/v1/chat/completions -H 'content-type: application/json' \
+     -d '{"model":"gpt-4o","messages":[{"role":"user","content":"TC 10000000146 olan müşteri"}]}'
+# {"type": "error", "error": {"type": "telveguard_blocked", ... "TCKN içerdiği için gönderilmedi ..."}}
+```
+
+Squid örneği: [`deploy/icap/squid.conf`](deploy/icap/squid.conf). ProxySG, Forcepoint, Zscaler gibi
+ürünlerde aynı ayarlar ICAP ekranında yapılır: REQMOD servisi `icap://telveguard:1344/reqmod`,
+yalnızca AI alan adları için, kullanıcı adı başlığı açık, önizleme (preview) kapalı.
+Helm: `icap.enabled=true`, `icap.allowedClients=[proxy CIDR'ları]`; ayrı bir `-icap` Service
+(varsayılan LoadBalancer) açılır.
+
+| Değişken | Açıklama |
+|---|---|
+| `ICAP_PORT` | ICAP dinleme portu (ör. 1344); **boşsa ICAP kapalı** |
+| `ICAP_ALLOWED_CLIENTS` | Bağlanabilecek proxy'ler, CIDR, virgülle (varsayılan yalnızca 127.0.0.1) |
+| `ICAP_TEAM_PREFIX` | Proxy grupları -> ekip öneki (varsayılan `OIDC_TEAM_PREFIX`) |
+| `ICAP_UNSCANNABLE` | Okunamayan gövde (ikili dosya, desteklenmeyen sıkıştırma): `allow` (varsayılan) / `block` |
+| `ICAP_MAX_BODY` | Taranan en fazla gövde, bayt (5 MB); fazlası taranmaz ve okunamayan içerik sayılır (`ICAP_UNSCANNABLE`) |
+| `ICAP_EXTRA_HOSTS` | Listede olmayan, taranacak AI alan adları (virgülle) |
+
+Gateway'in kendi upstream trafiği aynı proxy'den çıkıyorsa ICAP'e gönderilmemeli (Squid'de
+`acl ... src <gateway>` ile `adaptation_access ... deny`); aksi hâlde maskeli istekler ikinci kez sayılır.
+
 ## Yönetim uçları
 
 İki yoldan biriyle açılır: `OIDC_ADMIN_GROUP` grubundaki kullanıcının **kendi JWT'si** (önerilen;
@@ -981,6 +1039,10 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 - Kota, maskesiz gerçek streaming isteklerinde yalnızca istek sayısını sayar (token bilgisi gelmez).
 - Kurumsal sözlük şimdilik yalnızca gateway'de çalışır; tarayıcı eklentisi ve ContextForge
   eklentisi sözlüğü kullanmaz.
+- ICAP yalnızca proxy'nin TLS denetimiyle çözebildiği trafiği görür. Sertifika sabitleme (pinning)
+  yapan uygulamalar, websocket üzerinden gönderilen mesajlar (ör. Copilot'un sohbeti) ve
+  büyük dosya yüklemelerinin ayrı depolama adreslerine (ör. bulut blob) giden içeriği taranmaz.
+  Maskeleme yapılmaz; yalnızca geçir / durdur.
 - ContextForge'da yer tutucu numaraları (`[TCKN_1]`) tek araç çağrısı içinde tutarlıdır,
   çağrılar arasında değil.
 

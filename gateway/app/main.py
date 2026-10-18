@@ -30,6 +30,7 @@ from . import agent as agent_mod
 from . import attachments as attachments_mod
 from . import compliance
 from . import dictionary as dictionary_mod
+from . import icap as icap_mod
 from . import shadow_ai
 from . import subjects as subjects_mod
 from . import metrics
@@ -70,7 +71,14 @@ async def lifespan(app: FastAPI):
     app.state.quota = QuotaManager.from_env(app.state.policy.quotas)
     # AI sistem beyanları (EU AI Act envanteri); yoksa tüm kullanımlar "beyan edilmemiş"
     app.state.inventory = compliance.load_inventory(os.getenv("INVENTORY_PATH", "policies/inventory.yaml"))
+    # Ağ tarafı (ICAP): kurum proxy'si masaüstü uygulamalarının AI trafiğini sorar; ICAP_PORT yoksa kapalı
+    app.state.icap = None
+    if settings := icap_mod.Settings.from_env(app.version):
+        app.state.icap = icap_mod.IcapServer(settings, lambda *a: icap_check(app.state, *a))
+        await app.state.icap.start()
     yield
+    if app.state.icap:
+        await app.state.icap.stop()
     await app.state.notifier.stop()
     await app.state.audit.stop()
     await app.state.http.aclose()
@@ -960,3 +968,61 @@ async def agent_check(request: Request):
                    "monitored_rules": d.monitored_rules, "would_action": d.would_action},
         "event_id": event_id,
     }
+
+
+# ---------------- ağ tarafı (ICAP: kurum proxy'si, masaüstü uygulamaları) ----------------
+
+def _icap_identity(req: icap_mod.IcapRequest) -> Identity:
+    """Proxy'nin doğruladığı kullanıcı. Gruplar OIDC'deki gibi önekle ekibe çevrilir."""
+    user = icap_mod.proxy_user(req.headers)
+    if not user:
+        ip = req.headers.get("x-client-ip", "")
+        user = f"ip:{ip}" if ip and len(ip) <= 45 else "unknown"
+    prefix = os.getenv("ICAP_TEAM_PREFIX", os.getenv("OIDC_TEAM_PREFIX", ""))
+    groups = icap_mod.proxy_groups(req.headers)
+    teams = [g[len(prefix):] for g in groups if g.startswith(prefix) and len(g) > len(prefix)] if prefix else groups
+    return Identity(user=user, teams=teams, source="icap", groups=groups)
+
+
+async def icap_check(st, req: icap_mod.IcapRequest, http: icap_mod.HttpRequest, site: icap_mod.Site,
+                     text: str, unscannable: bool):
+    """Proxy'den gelen bir AI isteği: geçir ya da durdur. Maskeleme yok (bkz. icap.py); politika
+    "maskele" diyorsa durdurulur. Prompt gönderimleri her zaman, diğer istekler yalnızca bir şey
+    bulunursa kayda geçer. Dönen: (durdur mu, kullanıcıya mesaj)."""
+    t0 = time.perf_counter()
+    identity = _icap_identity(req)
+    body = {"model": site.host, "messages": [{"role": "user", "content": text}]}
+    a = _analyze(st, body, identity, CHAT, destination="external")
+    d = a.decision
+    rules = list(d.rules)
+    if d.action in ("block", "mask"):
+        action = "block"
+    elif unscannable and os.getenv("ICAP_UNSCANNABLE", "allow") == "block":
+        action = "block"
+        rules.append("ag:okunamadi")
+    else:
+        action = "alert" if d.action == "alert" else "allow"
+    entities = sorted(a.entities)
+    if action == "block":
+        found = ", ".join(entities) or ("okunamayan içerik" if not d.reason else d.reason)
+        message = (f"Telveguard: {site.name} isteği {found} içerdiği için gönderilmedi. "
+                   "Veriyi çıkarın ya da kurumun onaylı yapay zekâ aracını kullanın.")
+    else:
+        message = ""
+    metrics.ICAP_CHECKS.labels(action).inc()
+    for entity in entities:
+        metrics.ENTITIES.labels(entity, "input").inc()
+    if site.prompt or action != "allow" or entities or d.monitored_rules or a.injection.score >= 0.5:
+        # Gölge AI bölümleri (Röntgen, POC raporu) "golge-ai:" kurallarını sayar
+        rules += ["ag:icap", "golge-ai:blocked" if action == "block" else "golge-ai:network"]
+        recorded = Decision(action, set(), rules, d.reason or (message if action == "block" else ""),
+                            d.monitored_rules, d.would_action)
+        ev = st.audit.build_event(
+            user=a.user, team=a.team, model=site.host, destination="external", decision=recorded,
+            entities=a.entities, injection=a.injection, prompt=text, masked_prompt=None,
+            latency_ms=(time.perf_counter() - t0) * 1000, upstream_status=0)
+        ev.update(teams=a.identity.teams, auth_source="icap", api_format="icap",
+                  subject_hashes=a.subject_hashes, prompt_tokens=0, completion_tokens=0,
+                  usage_known=0, est_cost_usd=None, masked_count=0)
+        await _emit(st, ev)
+    return action == "block", message

@@ -1,0 +1,18 @@
+# Ağ tarafı (ICAP) yerel deneme: Squid -> Telveguard.
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.icap.yml up -d --build
+#   curl -x http://localhost:3128 http://api.openai.com/v1/chat/completions -H 'content-type: application/json' \
+#        -d '{"model":"gpt-4o","messages":[{"role":"user","content":"TC 10000000146"}]}'
+services:
+  gateway:
+    environment:
+      ICAP_PORT: "1344"
+      # Yalnızca proxy'lerin adresleri; burada docker ağı (yerel deneme)
+      ICAP_ALLOWED_CLIENTS: 172.16.0.0/12,192.168.0.0/16
+    ports: ["1344:1344"]
+
+  squid:
+    image: ubuntu/squid:6.10-24.10_beta
+    volumes:
+      - ./deploy/icap/squid.conf:/etc/squid/squid.conf:ro
+    ports: ["3128:3128"]
+    depends_on: [gateway]

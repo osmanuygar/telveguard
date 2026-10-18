@@ -118,6 +118,23 @@ ingress:
   tls: []                 # [{secretName: ..., hosts: [...]}]
 
 # Gateway'e yalnızca izin verilen kaynaklardan erişilsin (istemci namespace'leri + router)
+# ---------------- ağ tarafı (ICAP) ----------------
+# Kurum proxy'si (Squid, ProxySG, Forcepoint, Zscaler ...) TLS denetimiyle çözdüğü AI isteklerini
+# ICAP REQMOD ile sorar: masaüstü uygulamaları (Claude Desktop, ChatGPT, Copilot) ve eklentisiz
+# tarayıcılar. Proxy'ler genellikle küme dışındadır: ayrı bir Service (LoadBalancer / NodePort).
+icap:
+  enabled: false
+  port: 1344
+  # Zorunlu: yalnızca bu adreslerdeki proxy'ler bağlanabilir (kimlik başlıklarına güvenilir)
+  allowedClients: []        # ör. ["10.20.30.0/24"]
+  teamPrefix: ""            # proxy grupları -> ekip (boş: auth.oidc.teamPrefix)
+  unscannable: allow        # okunamayan gövde (ikili dosya, sıkıştırma): allow | block
+  maxBody: 5242880          # taranan en fazla gövde (bayt); fazlası taranmadan geçer
+  extraHosts: []            # SITES dışında taranacak alan adları
+  service:
+    type: LoadBalancer
+    annotations: {}
+
 networkPolicy:
   enabled: false
   # Boş liste: aynı namespace. OKD router için: {kubernetes.io/metadata.name: openshift-ingress}
