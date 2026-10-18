@@ -14,6 +14,9 @@
 {{- if and (eq .Values.auth.mode "jwt") (not (and .Values.auth.oidc.issuer .Values.auth.oidc.audience)) }}
 {{- fail "auth.mode=jwt için auth.oidc.issuer ve auth.oidc.audience zorunlu (yalnızca test için: auth.mode=header)" }}
 {{- end }}
+{{- if and .Values.policy.store.enabled (not .Values.clickhouse.url) }}
+{{- fail "policy.store.enabled için clickhouse.url gerekli" }}
+{{- end }}
 {{- if lt (int .Values.workers) 1 }}
 {{- fail "workers en az 1 olmalı" }}
 {{- end }}

@@ -56,7 +56,8 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 **Kurumsal işletim**
 - **Kimlik:** OIDC / JWT (Keycloak, Entra ID); header ile taklit edilemez.
 - **Sağlayıcılar:** model adına göre Azure OpenAI, Gemini, Mistral, Anthropic, kurum içi vLLM.
-- **Politika:** YAML; izin ver / uyar / maskele / engelle, gözlem modu ve simülatör.
+- **Politika:** YAML; izin ver / uyar / maskele / engelle, gözlem modu ve simülatör. Konsoldan
+  düzenleme: geçmiş trafiğe etkisi, dört göz onayı, yeniden başlatmadan yayın, tek tıkla geri alma.
 - **Kota:** ekip başına istek / dk ve aylık token / maliyet bütçesi.
 - **İşletim:** Prometheus metrikleri, OKD / OpenShift Helm chart'ı, air-gapped kurulum.
 
@@ -494,6 +495,40 @@ curl -s localhost:8080/v1/policy/simulate -H 'Authorization: Bearer <yönetici t
   -H 'content-type: application/json' -d '{"model":"gpt-4o","messages":[...]}'
 ```
 
+### Konsoldan politika yönetimi
+
+Konsolun **Politika** sekmesi (`/xray#politika`) kuralları ConfigMap'i değiştirmeden yönetir:
+
+1. **Taslak:** yayındaki kurallar düzenleyicide açılır (ConfigMap'teki yorum satırlarıyla). Her
+   değişiklikte doğrulanır, yayındakiyle farkı gösterilir.
+2. **Etkisini gör:** taslak son 7 / 30 / 90 günün gerçek trafiğine uygulanır: kaç isteğin kararı
+   değişirdi, hangi ekipler, hangi kurallar, örnekler. Ham metin saklanmadığı için yeniden taranmaz;
+   kayıttaki ekip, model, hedef, veri türleri ve injection skoru kullanılır.
+3. **Onaya gönder:** gerekçeyle yeni sürüm. **Dört göz:** sürümü yazan onaylayamaz; başka bir
+   yönetici onaylayınca tüm gateway'lerde `POLICY_STORE_POLL_SECONDS` (5 sn) içinde, yeniden
+   başlatmadan yürürlüğe girer. Acil durumda yazan, gerekçe yazarak kendisi yayınlayabilir (kayıtta "acil").
+4. **Geri alma:** onaylı eski bir sürüm tek tıkla yeniden yayına alınır.
+
+Konsoldan yalnızca `default_action`, `mode`, `rules`, `output_rules` düzenlenir. Sağlayıcılar,
+kurumsal sözlük, bildirim kanalları, kota ve fiyatlar ConfigMap'te kalır (sır ve dosya yolu içerir).
+Çalışan politika = ConfigMap dosyası + yayındaki sürümün kuralları.
+
+Sürümler ve olaylar (kim yazdı, kim onayladı, gerekçe) ClickHouse'ta `policy_versions` /
+`policy_events` tablolarında tutulur; yalnızca ekleme yapılır, saklama süresi yoktur. ClickHouse'a
+ulaşılamazsa gateway bildiği son politikayla çalışır; açılışta ulaşılamazsa ConfigMap politikasıyla.
+
+```bash
+# Mevcut kurulumda tabloları bir kez oluşturun (yeni kurulumda init.sql içerir):
+# clickhouse/init.sql sonundaki iki CREATE TABLE. Yazma için ayrı kullanıcı:
+#   GRANT SELECT, INSERT ON telveguard.policy_versions TO telveguard_policy;
+#   GRANT SELECT, INSERT ON telveguard.policy_events TO telveguard_policy;
+# Helm: policy.store.enabled=true, secret'ta policy-store-password; çok pod'da quota.redisUrl (kilit)
+```
+
+Kimlik: OIDC yönetici grubuyla girişte kişi token'dan gelir (doğrulanmış). Statik yönetici token'ında
+konsoldaki "Adınız" alanı kullanılır ve kayıtta "(beyan)" görünür; dört gözün anlamlı olması için
+üretimde OIDC (`OIDC_ADMIN_GROUP`) kullanın.
+
 ### Kurumsal sözlük
 
 Kişisel veri olmayan ama kurum dışına çıkmaması gereken terimler: proje kod adları, müşteri
@@ -585,6 +620,7 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `TELVEGUARD_SUBJECT_HASH_KEY`, `TELVEGUARD_SUBJECT_HASH_KEY_OLD` | İlgili kişi araması için özet anahtarı (en az 32 karakter); boşsa kapalı |
 | `TELVEGUARD_PUBLIC_URL` | Bildirimlerdeki "Konsolda aç" bağlantısının tabanı (politikada `notify.console_url` yoksa) |
 | `TELVEGUARD_ADMIN_TOKEN` | Yönetim uçları (Röntgen, simülatör, rapor); **boşsa bu uçlar kapalıdır** |
+| `POLICY_STORE=clickhouse` | Konsoldan politika yönetimi; `POLICY_STORE_CLICKHOUSE_USER` / `_PASSWORD` (yazma), `POLICY_STORE_POLL_SECONDS` (5), `POLICY_FOUR_EYES` (1), `POLICY_STORE_INSERT_QUORUM` |
 | `ENABLE_TR_NER=1`, `TR_NER_MODEL_PATH` | Türkçe kişi / kurum / yer adı tespiti (BERT, lokal model) |
 | `ENABLE_LLM_GUARD=1`, `LLM_GUARD_MODEL_PATH` | Ek injection sınıflandırıcı (LLM Guard); model lokal dizinden, internetsiz (`/models/prompt-injection`) |
 | `LLM_GUARD_THRESHOLD`, `LLM_GUARD_USE_ONNX=1` | Sınıflandırıcı eşiği (0,92) ve CPU'da daha hızlı ONNX çalıştırma |

@@ -80,3 +80,27 @@ FROM telveguard.audit_queue;
 -- FROM telveguard.audit
 -- WHERE destination='external' AND event_time > now() - INTERVAL 30 DAY
 -- GROUP BY team, entity ORDER BY engellenen DESC, maskelenen DESC;
+
+-- Konsoldan politika yönetimi (POLICY_STORE=clickhouse; gateway/app/policy_store.py).
+-- Yalnızca ekleme yapılır; saklama süresi (TTL) YOK: değişiklik geçmişi denetim kanıtıdır.
+-- Yazma için ayrı kullanıcı önerilir (POLICY_STORE_CLICKHOUSE_USER), yalnızca bu iki tabloda:
+--   GRANT SELECT, INSERT ON telveguard.policy_versions TO telveguard_policy;
+--   GRANT SELECT, INSERT ON telveguard.policy_events TO telveguard_policy;
+-- Kopyalı kümede ReplicatedMergeTree ve POLICY_STORE_INSERT_QUORUM kullanın.
+CREATE TABLE IF NOT EXISTS telveguard.policy_versions
+(
+    version UInt32, created_at DateTime64(3, 'Europe/Istanbul'),
+    author String, author_via LowCardinality(String), comment String,
+    content String CODEC(ZSTD(3)), content_sha256 FixedString(64), base_version UInt32
+)
+ENGINE = MergeTree
+ORDER BY version;
+
+CREATE TABLE IF NOT EXISTS telveguard.policy_events
+(
+    event_id UUID, version UInt32, ts DateTime64(3, 'Europe/Istanbul'),
+    -- created | approved | rejected | applied (geri alma) | emergency (yazanın acil yayını)
+    event LowCardinality(String), actor String, actor_via LowCardinality(String), comment String
+)
+ENGINE = MergeTree
+ORDER BY (ts, version);

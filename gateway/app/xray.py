@@ -33,13 +33,14 @@ class ClickHouse:
         return cls(http, url, os.getenv("CLICKHOUSE_USER", "default"),
                    os.getenv("CLICKHOUSE_PASSWORD", ""), os.getenv("CLICKHOUSE_DB", "telveguard"))
 
-    async def query(self, sql: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def query(self, sql: str, params: Dict[str, Any],
+                    settings: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         # prefer_column_name_to_alias: "round(sum(est_cost_usd), 6) AS est_cost_usd" gibi sütunla aynı adlı
         # takma adlar, sorgunun başka yerindeki est_cost_usd'yi gölgelemesin (ILLEGAL_AGGREGATION)
         # json_quote_64bit_integers=0: count() (UInt64) JSON'da string değil sayı dönsün
         qs = {"database": self.database, "prefer_column_name_to_alias": "1",
               "output_format_json_quote_64bit_integers": "0",
-              **{f"param_{k}": str(v) for k, v in params.items()}}
+              **(settings or {}), **{f"param_{k}": str(v) for k, v in params.items()}}
         try:
             r = await self.http.post(self.url, params=qs, headers=self.auth,
                                      content=f"{sql}\nFORMAT JSONEachRow", timeout=30)
@@ -48,6 +49,16 @@ class ClickHouse:
         if r.status_code != 200:
             raise ClickHouseError(f"ClickHouse hatası ({r.status_code}): {r.text[:300]}")
         return [json.loads(line) for line in r.text.splitlines() if line.strip()]
+
+    async def insert(self, table: str, rows: List[Dict[str, Any]], settings: Optional[Dict[str, str]] = None) -> None:
+        qs = {"database": self.database, "query": f"INSERT INTO {table} FORMAT JSONEachRow", **(settings or {})}
+        body = "\n".join(json.dumps(r, ensure_ascii=False) for r in rows)
+        try:
+            r = await self.http.post(self.url, params=qs, headers=self.auth, content=body.encode("utf-8"), timeout=30)
+        except httpx.HTTPError as e:
+            raise ClickHouseError(f"ClickHouse'a ulaşılamadı: {type(e).__name__}") from e
+        if r.status_code != 200:
+            raise ClickHouseError(f"ClickHouse hatası ({r.status_code}): {r.text[:300]}")
 
 
 # ---------------- Röntgen ----------------
