@@ -182,6 +182,22 @@ def test_policy_store_env():
         render("--set", "policy.store.enabled=true")
 
 
+def test_icap_optional_with_own_service_and_networkpolicy():
+    docs = render()
+    assert "ICAP_PORT" not in env(docs) and ("Service", "tg-telveguard-gateway-icap") not in docs
+    docs = render("--set", "icap.enabled=true", "--set", "icap.allowedClients={10.20.30.0/24,10.20.31.5/32}",
+                  "--set", "networkPolicy.enabled=true")
+    e = env(docs)
+    assert e["ICAP_PORT"]["value"] == "1344" and e["ICAP_ALLOWED_CLIENTS"]["value"] == "10.20.30.0/24,10.20.31.5/32"
+    assert {"name": "icap", "containerPort": 1344, "protocol": "TCP"} in container(docs)["ports"]
+    svc = docs[("Service", "tg-telveguard-gateway-icap")]["spec"]
+    assert svc["type"] == "LoadBalancer" and svc["externalTrafficPolicy"] == "Local"
+    rules = docs[("NetworkPolicy", "tg-telveguard-gateway")]["spec"]["ingress"]
+    assert rules[1]["from"] == [{"ipBlock": {"cidr": "10.20.30.0/24"}}, {"ipBlock": {"cidr": "10.20.31.5/32"}}]
+    with pytest.raises(RuntimeError, match="allowedClients"):
+        render("--set", "icap.enabled=true")
+
+
 def test_inventory_in_configmap_matches_repo():
     chart_copy = open(f"{CHART}/files/inventory.yaml", encoding="utf-8").read()
     assert chart_copy == open("policies/inventory.yaml", encoding="utf-8").read(), \

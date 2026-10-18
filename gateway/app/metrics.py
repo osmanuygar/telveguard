@@ -28,6 +28,8 @@ SHADOW_AI_EVENTS = Counter("telveguard_shadow_ai_events", "Tarayıcı eklentisi 
                            ["action"])  # blocked | masked | cancelled | allowed_override | visit
 AGENT_CHECKS = Counter("telveguard_agent_checks", "Kod asistanı hook kontrolleri (telve hook)",
                        ["client", "event", "action"])  # client: cursor | claude-code
+ICAP_CHECKS = Counter("telveguard_icap_checks", "Proxy (ICAP) üzerinden incelenen AI istekleri",
+                      ["action"])  # allow | alert | block
 NOTIFICATIONS = Counter("telveguard_notifications", "Slack / Teams / webhook bildirimleri",
                         ["channel_type", "result"])  # result: sent | failed | suppressed | dropped
 ATTACHMENTS = Counter("telveguard_attachments", "Taranan ekler (görsel, PDF, dosya)",

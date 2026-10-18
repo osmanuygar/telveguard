@@ -17,6 +17,12 @@
 {{- if and .Values.policy.store.enabled (not .Values.clickhouse.url) }}
 {{- fail "policy.store.enabled için clickhouse.url gerekli" }}
 {{- end }}
+{{- if and .Values.icap.enabled (not .Values.icap.allowedClients) }}
+{{- fail "icap.enabled için icap.allowedClients (proxy adresleri, CIDR) zorunlu" }}
+{{- end }}
+{{- if not (has .Values.icap.unscannable (list "allow" "block")) }}
+{{- fail "icap.unscannable: allow ya da block" }}
+{{- end }}
 {{- if lt (int .Values.workers) 1 }}
 {{- fail "workers en az 1 olmalı" }}
 {{- end }}

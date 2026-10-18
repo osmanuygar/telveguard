@@ -1,0 +1,23 @@
+{{- if .Values.icap.enabled }}
+# Kurum proxy'leri için ICAP (küme dışından erişilir; Route / Ingress HTTP içindir, ICAP değil)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tg.fullname" . }}-icap
+  labels: {{- include "tg.labels" . | nindent 4 }}
+  {{- with .Values.icap.service.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.icap.service.type }}
+  {{- if ne .Values.icap.service.type "ClusterIP" }}
+  # İstemci adresi korunsun: ICAP_ALLOWED_CLIENTS proxy'nin gerçek IP'sine bakar
+  externalTrafficPolicy: Local
+  {{- end }}
+  selector: {{- include "tg.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: icap
+      port: {{ .Values.icap.port }}
+      targetPort: icap
+      protocol: TCP
+{{- end }}
