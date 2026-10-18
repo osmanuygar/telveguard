@@ -172,6 +172,16 @@ def test_quota_redis_env_and_password_secret():
     assert e["REDIS_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "redis-password"
 
 
+def test_policy_store_env():
+    assert "POLICY_STORE" not in env(render())
+    e = env(render("--set", "policy.store.enabled=true", "--set", "clickhouse.url=http://ch:8123"))
+    assert e["POLICY_STORE"]["value"] == "clickhouse" and e["POLICY_FOUR_EYES"]["value"] == "1"
+    assert e["POLICY_STORE_CLICKHOUSE_USER"]["value"] == "telveguard_policy"
+    assert e["POLICY_STORE_CLICKHOUSE_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "policy-store-password"
+    with pytest.raises(RuntimeError, match="clickhouse.url"):
+        render("--set", "policy.store.enabled=true")
+
+
 def test_icap_optional_with_own_service_and_networkpolicy():
     docs = render()
     assert "ICAP_PORT" not in env(docs) and ("Service", "tg-telveguard-gateway-icap") not in docs

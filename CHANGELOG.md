@@ -10,6 +10,8 @@
 
 ### telveguard-core
 
+- `PolicyEngine(config=...)`: politika dosya yerine sözlükten de kurulur. Doğrulama sıkılaştı:
+  geçersiz `default_action` / `mode`, adı olmayan ya da aynı adlı kurallar hata verir.
 - Model izin listesi: kurallarda `model_in` / `model_not_in` (model adı, joker destekli) ve
   `declared` (AI envanterinde beyan edilmiş mi) koşulları. `Context.declared` alanı.
 
@@ -23,6 +25,13 @@
   Kayıtta `api_format=icap`; Röntgen'de "Proxy (ICAP)", POC raporunda Gölge AI bölümünde; bildirim
   kaynağı `network`. Metrik `telveguard_icap_checks`. Helm `icap.*` (ayrı `-icap` Service,
   NetworkPolicy ipBlock). Yerel deneme: `docker-compose.icap.yml`, Squid örneği `deploy/icap/squid.conf`.
+- Konsoldan politika yönetimi (**Politika** sekmesi, `POLICY_STORE=clickhouse`): taslak, canlı
+  doğrulama ve fark, geçmiş trafiğe etki analizi (`POST /v1/policy/impact`), dört göz onayı, acil
+  yayın, geri alma. Sürümler ClickHouse'ta (`policy_versions`, `policy_events`, yalnızca ekleme);
+  onaylanan sürüm pod'lara yeniden başlatmadan yayılır. Uçlar: `GET /v1/policy/store`,
+  `GET /v1/policy/versions/{v}`, `POST /v1/policy/validate`, `POST /v1/policy/versions`,
+  `POST /v1/policy/versions/{v}/approve|reject|apply`. Statik yönetici token'ında kişi
+  `X-Telveguard-Actor` başlığından. Helm `policy.store.*`.
 - `declared` koşulu `inventory.yaml`'dan hesaplanır: kullanıcının ekiplerinden biri için bu
   modeli içeren bir sistem beyan edilmişse `true`. Envanter boşsa koşul eşleşmez.
 - Simülatör cevabında ve Politika deneme ekranında `declared`.

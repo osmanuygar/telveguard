@@ -67,12 +67,21 @@ policy:
   # AI sistem beyanları (EU AI Act envanteri); boşsa chart'taki files/inventory.yaml örneği.
   # existingConfigMap kullanılıyorsa bu ConfigMap'te inventory.yaml anahtarı da olmalı.
   inventoryContent: ""
+  # Konsoldan politika yönetimi (Politika sekmesi): sürümler ClickHouse'ta, onaylanan sürüm pod'lara
+  # yeniden başlatmadan yayılır. clickhouse.url gerekli; çok pod'da quota.redisUrl önerilir (kilit).
+  # Yazma ayrı kullanıcıyla (yalnızca policy_versions / policy_events; şifre: policy-store-password).
+  store:
+    enabled: false
+    clickhouseUser: telveguard_policy
+    pollSeconds: 5
+    fourEyes: true          # sürümü yazan onaylayamaz (acil yayın gerekçeyle, kayıtta ayrı)
+    insertQuorum: ""        # kopyalı ClickHouse: ör. "2"
 
 # ---------------- sırlar ----------------
 # Önerilen: Secret'ı chart dışında (Vault / sealed-secrets / oc create secret) oluşturup adını verin.
 # Beklenen anahtarlar (hepsi opsiyonel): admin-token, upstream-external-key,
 # upstream-internal-key, upstream-anthropic-key, upstream-anthropic-internal-key, clickhouse-password,
-# redis-password, shadow-ai-token (tarayıcı eklentisi olayları),
+# redis-password, shadow-ai-token (tarayıcı eklentisi olayları), policy-store-password,
 # subject-hash-key (KVKK ilgili kişi araması; en az 32 karakter, değişirse eski kayıtlar bulunamaz)
 existingSecret: ""
 # existingSecret boşsa chart bu değerlerden Secret üretir (geliştirme / test için).

@@ -61,13 +61,32 @@ class Decision:
 
 
 class PolicyEngine:
-    def __init__(self, path: str):
-        with open(path, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f)
+    def __init__(self, path: Optional[str] = None, *, config: Optional[dict] = None):
+        """Dosyadan (path) ya da hazır sözlükten (config: ör. konsoldan düzenlenen sürüm)."""
+        if config is None:
+            with open(path, encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+        cfg = config or {}
+        if not isinstance(cfg, dict):
+            raise ValueError("Politika bir YAML sözlüğü olmalı")
+        if cfg.get("default_action", "allow") not in SEVERITY:
+            raise ValueError(f"Geçersiz default_action '{cfg.get('default_action')}'")
+        if cfg.get("mode", "enforce") not in MODES:
+            raise ValueError(f"Geçersiz mode '{cfg.get('mode')}' ({', '.join(sorted(MODES))})")
+        for key in ("rules", "output_rules"):
+            items = cfg.get(key) or []
+            if not isinstance(items, list) or not all(isinstance(r, dict) for r in items):
+                raise ValueError(f"{key} kural listesi olmalı")
+            names = [r.get("name") for r in items]
+            if not all(isinstance(n, str) and n for n in names):
+                raise ValueError(f"{key}: her kuralın bir adı (name) olmalı")
+            if len(set(names)) != len(names):
+                dup = sorted({n for n in names if names.count(n) > 1})
+                raise ValueError(f"{key}: aynı adlı kurallar: {', '.join(dup)}")
         self.default_action = cfg.get("default_action", "allow")
         self.mode = cfg.get("mode", "enforce")
-        self.rules = cfg.get("rules", [])
-        self.output_rules = cfg.get("output_rules", [])
+        self.rules = cfg.get("rules") or []
+        self.output_rules = cfg.get("output_rules") or []
         self.destinations = cfg.get("destinations", {})
         self.pricing = cfg.get("pricing", {})
         self.quotas = cfg.get("quotas") or {}   # gateway'de doğrulanır ve uygulanır (quota.py)

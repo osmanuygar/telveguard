@@ -24,6 +24,9 @@ services:
       TEAMS_SECURITY_WEBHOOK_URL: http://mock-llm:9000/webhook/teams
       TELVEGUARD_PUBLIC_URL: http://localhost:8080
       TELVEGUARD_SUBJECT_HASH_KEY: e2e-ilgili-kisi-anahtari-yalnizca-lokal-test   # yalnızca lokal test
+      # Konsoldan politika yönetimi (Politika sekmesi): sürümler ClickHouse'ta
+      POLICY_STORE: clickhouse
+      POLICY_STORE_POLL_SECONDS: "2"
     depends_on:
       mock-llm: { condition: service_started }
 

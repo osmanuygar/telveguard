@@ -14,6 +14,7 @@ import copy
 import hmac
 import logging
 import os
+import re
 import time
 import uuid
 from collections import Counter
@@ -35,6 +36,7 @@ from . import shadow_ai
 from . import subjects as subjects_mod
 from . import metrics
 from . import notify as notify_mod
+from . import policy_store as policy_store_mod
 from . import poc_report as poc_report_mod
 from . import providers as providers_mod
 from . import xray as xray_mod
@@ -71,6 +73,11 @@ async def lifespan(app: FastAPI):
     app.state.quota = QuotaManager.from_env(app.state.policy.quotas)
     # AI sistem beyanları (EU AI Act envanteri); yoksa tüm kullanımlar "beyan edilmemiş"
     app.state.inventory = compliance.load_inventory(os.getenv("INVENTORY_PATH", "policies/inventory.yaml"))
+    # Konsoldan politika yönetimi (POLICY_STORE=clickhouse): yayındaki sürüm pod'lara yeniden başlatmadan yayılır
+    with open(policy_path, encoding="utf-8") as f:
+        app.state.policy_runtime = policy_store_mod.Runtime(
+            app.state, f.read(), policy_store_mod.PolicyStore.from_env(app.state.http))
+    await app.state.policy_runtime.start(float(os.getenv("POLICY_STORE_POLL_SECONDS", "5")))
     # Ağ tarafı (ICAP): kurum proxy'si masaüstü uygulamalarının AI trafiğini sorar; ICAP_PORT yoksa kapalı
     app.state.icap = None
     if settings := icap_mod.Settings.from_env(app.version):
@@ -79,6 +86,7 @@ async def lifespan(app: FastAPI):
     yield
     if app.state.icap:
         await app.state.icap.stop()
+    await app.state.policy_runtime.stop()
     await app.state.notifier.stop()
     await app.state.audit.stop()
     await app.state.http.aclose()
@@ -106,6 +114,16 @@ def _upstream_error(fmt: ApiFormat, resp: httpx.Response) -> JSONResponse:
 
 
 async def _require_admin(request: Request) -> Optional[JSONResponse]:
+    err, _ = await _admin(request)
+    return err
+
+
+_ACTOR = re.compile(r"^[\w.@+ -]{2,100}$", re.UNICODE)
+
+
+async def _admin(request: Request):
+    """(hata, (kim, nasıl)). Politika değişikliklerinin kaydı için kişi: OIDC'de token'dan
+    (doğrulanmış), statik token'da X-Telveguard-Actor başlığından (beyan)."""
     """Yönetim uçları (simülatör, Röntgen, raporlar) iki yoldan biriyle açılır:
       * OIDC_ADMIN_GROUP (AUTH_MODE=jwt): bu gruptaki kullanıcının kendi JWT'si (önerilen)
       * TELVEGUARD_ADMIN_TOKEN: statik token (ör. otomasyon / geçiş dönemi)
@@ -115,24 +133,25 @@ async def _require_admin(request: Request) -> Optional[JSONResponse]:
     auth = request.app.state.auth
     if not expected and not auth.admin_group:
         return _openai_error(404, "Yönetim uçları kapalı (OIDC_ADMIN_GROUP ya da TELVEGUARD_ADMIN_TOKEN "
-                                  "tanımlı değil).", "admin_disabled", "admin_error")
+                                  "tanımlı değil).", "admin_disabled", "admin_error"), None
     header = request.headers.get("authorization", "")
     given = header[7:].strip() if header.lower().startswith("bearer ") \
         else request.headers.get("x-telveguard-admin-token", "")
     if expected and given and hmac.compare_digest(given.encode(), expected.encode()):
         admin_log.info("admin_access via=static_token path=%s", request.url.path)
-        return None
+        actor = request.headers.get("x-telveguard-actor", "").strip()
+        return None, (actor if _ACTOR.match(actor) else "", "static_token")
     if auth.admin_group and given.count(".") == 2:  # JWT biçimi
         try:
             identity = await auth.verify_token(given)
         except AuthError as e:
-            return _openai_error(e.status, f"Telveguard: {e.message}", e.reason, "admin_error")
+            return _openai_error(e.status, f"Telveguard: {e.message}", e.reason, "admin_error"), None
         if not auth.is_admin(identity):
             admin_log.warning("admin_denied user=%s path=%s", identity.user, request.url.path)
-            return _openai_error(403, f"'{auth.admin_group}' grubunda değilsiniz.", "forbidden", "admin_error")
+            return _openai_error(403, f"'{auth.admin_group}' grubunda değilsiniz.", "forbidden", "admin_error"), None
         admin_log.info("admin_access via=oidc user=%s path=%s", identity.user, request.url.path)
-        return None
-    return _openai_error(401, "Geçersiz yönetici kimliği.", "unauthorized", "admin_error")
+        return None, (identity.user, "oidc")
+    return _openai_error(401, "Geçersiz yönetici kimliği.", "unauthorized", "admin_error"), None
 
 
 @dataclass
@@ -581,6 +600,7 @@ async def policy_info(request: Request):
                  "when": r.get("when", {}), "message": r.get("message", "")} for r in items]
     teams = sorted({t for r in pol.rules + pol.output_rules for t in (r.get("when") or {}).get("teams", [])})
     return {"default_action": pol.default_action, "mode": pol.mode, "destinations": pol.destinations,
+            "runtime": request.app.state.policy_runtime.describe(),
             "rules": rules(pol.rules), "output_rules": rules(pol.output_rules), "teams": teams,
             "providers": request.app.state.providers.describe(),
             "notify": request.app.state.notifier.describe(),
@@ -967,6 +987,218 @@ async def agent_check(request: Request):
         "policy": {"action": d.action, "rules": d.rules, "reason": d.reason,
                    "monitored_rules": d.monitored_rules, "would_action": d.would_action},
         "event_id": event_id,
+    }
+
+
+# ---------------- politika yönetimi (konsol: sürüm, onay, geri alma, etki) ----------------
+
+def _store_error(e: "policy_store_mod.StoreError") -> JSONResponse:
+    return _openai_error(e.status, e.message, "policy_store", "admin_error")
+
+
+async def _policy_admin(request: Request, write: bool = False):
+    """(hata, runtime, (kişi, nasıl)). Yazma işlemleri depo açık ve kişi belliyse."""
+    err, actor = await _admin(request)
+    if err:
+        return err, None, None
+    rt = request.app.state.policy_runtime
+    if write and not rt.store:
+        return _openai_error(404, "Konsoldan politika düzenleme kapalı (POLICY_STORE=clickhouse).",
+                             "policy_store_disabled", "admin_error"), None, None
+    if write and not actor[0]:
+        return _openai_error(400, "Kayıt için adınızı girin (statik token ile: X-Telveguard-Actor başlığı).",
+                             "actor_required", "admin_error"), None, None
+    return None, rt, actor
+
+
+async def _json_body(request: Request) -> Dict[str, Any]:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    return body if isinstance(body, dict) else {}
+
+
+@app.get("/v1/policy/store")
+async def policy_store_overview(request: Request):
+    """Konsolun Politika sekmesi: yayındaki kurallar (metin), sürümler ve durumları."""
+    err, rt, actor = await _policy_admin(request)
+    if err:
+        return err
+    versions, error = [], ""
+    if rt.store:
+        try:
+            versions = await rt.store.list()
+        except policy_store_mod.StoreError as e:
+            error = e.message
+    pol = request.app.state.policy
+    rules = pol.rules + pol.output_rules
+    counts = {"rules": len(pol.rules), "output_rules": len(pol.output_rules),
+              "monitor": sum(1 for r in rules if r.get("mode", pol.mode) == "monitor")}
+    return {"runtime": rt.describe(), "content": rt.content, "editable_keys": list(policy_store_mod.EDITABLE_KEYS),
+            "counts": counts,
+            "versions": versions, "error": error, "actor": {"name": actor[0], "via": actor[1]}}
+
+
+@app.get("/v1/policy/versions/{version}")
+async def policy_version(request: Request, version: int):
+    err, rt, _ = await _policy_admin(request, write=False)
+    if err:
+        return err
+    if not rt.store:
+        return _openai_error(404, "Politika deposu kapalı.", "policy_store_disabled", "admin_error")
+    try:
+        v = await rt.store.get(version)
+    except policy_store_mod.StoreError as e:
+        return _store_error(e)
+    v["diff"] = policy_store_mod.diff(rt.content, v["content"], f"yayında ({rt.describe()['source']})",
+                                      f"sürüm {version}")
+    try:
+        v["changes"] = policy_store_mod.rules_diff(policy_store_mod.parse(rt.content, rt.base)[0],
+                                                   policy_store_mod.parse(v["content"], rt.base)[0])
+    except policy_store_mod.StoreError:
+        v["changes"] = None   # bu pod'un tabanıyla kurulamıyor (ör. ConfigMap değişti)
+    return v
+
+
+@app.post("/v1/policy/validate")
+async def policy_validate(request: Request):
+    """Taslak: geçerli mi, yayındakinden farkı ne, kaç kural."""
+    err, rt, _ = await _policy_admin(request)
+    if err:
+        return err
+    content = (await _json_body(request)).get("content")
+    if not isinstance(content, str):
+        return _openai_error(400, "content (YAML metni) gerekli.", "invalid_request", "invalid_request_error")
+    try:
+        data, engine = policy_store_mod.parse(content, rt.base)
+    except policy_store_mod.StoreError as e:
+        return {"ok": False, "error": e.message}
+    active, _ = policy_store_mod.parse(rt.content, rt.base)
+    return {"ok": True, "error": "", "rules": len(engine.rules), "output_rules": len(engine.output_rules),
+            "unchanged": active == data, "changes": policy_store_mod.rules_diff(active, data),
+            "diff": policy_store_mod.diff(rt.content, content, "yayında", "taslak")}
+
+
+@app.post("/v1/policy/versions")
+async def policy_version_create(request: Request):
+    err, rt, who = await _policy_admin(request, write=True)
+    if err:
+        return err
+    actor, via = who
+    body = await _json_body(request)
+    content, comment = body.get("content"), str(body.get("comment") or "").strip()
+    if not isinstance(content, str):
+        return _openai_error(400, "content (YAML metni) gerekli.", "invalid_request", "invalid_request_error")
+    if len(comment) < 3:
+        return _openai_error(400, "Değişikliğin gerekçesini yazın (en az 3 karakter).", "comment_required",
+                             "invalid_request_error")
+    try:
+        data, _ = policy_store_mod.parse(content, rt.base)
+        if data == policy_store_mod.parse(rt.content, rt.base)[0]:
+            return _openai_error(400, "Taslak yayındaki politikayla aynı.", "unchanged", "invalid_request_error")
+        version = await rt.store.create(content, actor, via, comment[:1000], rt.version or 0)
+    except policy_store_mod.StoreError as e:
+        return _store_error(e)
+    admin_log.info("policy_version_created version=%s author=%s via=%s", version, actor, via)
+    return {"version": version, "status": "pending"}
+
+
+@app.post("/v1/policy/versions/{version}/{action}")
+async def policy_version_transition(request: Request, version: int, action: str):
+    """approve (başka bir yönetici; emergency=true ile yazanın kendisi, gerekçeyle) |
+    reject | apply (onaylı eski sürüme geri dönüş). Yayına alınan sürüm bu pod'da hemen,
+    diğerlerinde POLICY_STORE_POLL_SECONDS içinde yüklenir."""
+    if action not in ("approve", "reject", "apply"):
+        return _openai_error(404, "İşlem approve, reject ya da apply olmalı.", "not_found", "admin_error")
+    err, rt, actor = await _policy_admin(request, write=True)
+    if err:
+        return err
+    body = await _json_body(request)
+    comment = str(body.get("comment") or "").strip()[:1000]
+    try:
+        if action in ("approve", "apply"):
+            # Yayına almadan önce bu pod'un tabanıyla kurulabildiğini doğrula
+            policy_store_mod.parse((await rt.store.get(version))["content"], rt.base)
+        result = await rt.store.transition(version, action, actor[0], actor[1], comment,
+                                           emergency=bool(body.get("emergency")))
+    except policy_store_mod.StoreError as e:
+        return _store_error(e)
+    admin_log.info("policy_version_%s version=%s actor=%s via=%s", result["event"], version, *actor)
+    if result["event"] != "rejected":
+        await rt.refresh()
+    return {**result, "runtime": rt.describe()}
+
+
+IMPACT_GROUPS = 20000
+
+
+@app.post("/v1/policy/impact")
+async def policy_impact(request: Request):
+    """Taslağın son N günün gerçek trafiğine etkisi. Ham prompt saklanmadığı için metin yeniden
+    taranmaz: kayıttaki bağlam (ekip, model, hedef, bulunan veri türleri, injection skoru)
+    yayındaki ve taslak politikadan geçirilir. Tarayıcı eklentisi olayları (karar eklentide)
+    hariç. Aynı bağlamdaki istekler gruplanır."""
+    err, rt, _ = await _policy_admin(request)
+    if err:
+        return err
+    st = request.app.state
+    if st.ch is None:
+        return _openai_error(404, "Etki analizi için CLICKHOUSE_URL gerekli.", "xray_disabled", "admin_error")
+    body = await _json_body(request)
+    try:
+        days = max(1, min(int(body.get("days") or 7), 90))
+    except (TypeError, ValueError):
+        days = 7
+    try:
+        _, candidate = policy_store_mod.parse(str(body.get("content") or ""), rt.base)
+    except policy_store_mod.StoreError as e:
+        return _store_error(e)
+    try:
+        rows = await st.ch.query(f"""
+            SELECT team, teams, model, destination, entities, round(injection_score, 2) AS score,
+                   count() AS n, uniqExact(user) AS users
+            FROM audit WHERE event_time >= now() - INTERVAL {{days:UInt32}} DAY AND api_format != 'browser'
+            GROUP BY team, teams, model, destination, entities, score
+            ORDER BY n DESC LIMIT {IMPACT_GROUPS}""", {"days": days})
+    except xray_mod.ClickHouseError as e:
+        return _openai_error(502, str(e), "clickhouse_error", "admin_error")
+
+    current = st.policy
+    before, after = Counter(), Counter()
+    transitions, teams, rules_added, rules_removed = Counter(), Counter(), Counter(), Counter()
+    examples = []
+    for r in rows:
+        n = int(r["n"])
+        team_set = frozenset(r.get("teams") or []) | {r["team"]}
+        ctx = Context(r["team"], r["model"], r["destination"], set(r.get("entities") or []),
+                      float(r.get("score") or 0), frozenset(r.get("teams") or []),
+                      compliance.is_declared(st.inventory, team_set, r["model"]))
+        old, new = current.evaluate(ctx), candidate.evaluate(ctx)
+        before[old.action] += n
+        after[new.action] += n
+        for name in set(new.rules) - set(old.rules):
+            rules_added[name] += n
+        for name in set(old.rules) - set(new.rules):
+            rules_removed[name] += n
+        if old.action != new.action:
+            transitions[(old.action, new.action)] += n
+            teams[r["team"]] += n
+            if len(examples) < 12:
+                examples.append({"team": r["team"], "model": r["model"], "destination": r["destination"],
+                                 "entities": r.get("entities") or [], "injection_score": r.get("score"),
+                                 "requests": n, "users": int(r.get("users") or 0),
+                                 "from": old.action, "to": new.action, "rules": new.rules, "reason": new.reason})
+    total = sum(before.values())
+    return {
+        "days": days, "requests": total, "groups": len(rows), "truncated": len(rows) >= IMPACT_GROUPS,
+        "changed": sum(transitions.values()),
+        "before": dict(before), "after": dict(after),
+        "transitions": [{"from": a, "to": b, "requests": n} for (a, b), n in transitions.most_common()],
+        "teams": [{"team": t, "requests": n} for t, n in teams.most_common(10)],
+        "rules_added": [{"rule": k, "requests": n} for k, n in rules_added.most_common(10)],
+        "rules_removed": [{"rule": k, "requests": n} for k, n in rules_removed.most_common(10)],
+        "examples": examples,
     }
 
 

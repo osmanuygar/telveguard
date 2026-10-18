@@ -49,8 +49,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 0 16px 48px; }
 .topbar { position: sticky; top: 0; z-index: 5; background: var(--page); border-bottom: 1px solid var(--border); }
 .topbar-in { max-width: 1200px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .brand { font-weight: 700; font-size: 16px; color: var(--accent); letter-spacing: .2px; }
-nav.tabs { display: flex; gap: 2px; background: var(--surface-2); padding: 3px; border-radius: 10px; }
-nav.tabs a { padding: 5px 12px; border-radius: 8px; color: var(--text-secondary); text-decoration: none; font-weight: 500; }
+nav.tabs { display: flex; gap: 2px; background: var(--surface-2); padding: 3px; border-radius: 10px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+nav.tabs a { flex: none; white-space: nowrap; padding: 5px 12px; border-radius: 8px; color: var(--text-secondary); text-decoration: none; font-weight: 500; }
 nav.tabs a:hover { color: var(--text-primary); }
 nav.tabs a[aria-current="page"] { background: var(--surface-1); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
 .topbar .spacer { flex: 1; }
@@ -64,6 +64,7 @@ button, input, select, textarea { font: inherit; color: var(--text-primary); bac
 textarea { width: 100%; resize: vertical; line-height: 1.5; }
 button { cursor: pointer; }
 button:hover { background: var(--hover-wash); }
+button:disabled { opacity: .45; cursor: not-allowed; }
 button.primary { background: var(--text-primary); color: var(--surface-1); border-color: transparent; }
 button.ghost { border-color: transparent; background: transparent; color: var(--text-secondary); padding: 4px 8px; }
 button.chip-btn { border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--text-secondary); }
@@ -225,6 +226,136 @@ td.zero { color: var(--text-muted); }
   .report .grid { grid-template-columns: 1fr !important; }
   .report .table-wrap { overflow: visible; }
 }
+/* Politika yönetimi */
+:root { --syn-key: #8a4b1f; --syn-str: #1f7a52; --syn-num: #2a78d6; --syn-com: #898781; }
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) { --syn-key: #e0a871; --syn-str: #5fcf9c; --syn-num: #6aa6ee; --syn-com: #7d7c76; } }
+:root[data-theme="dark"] { --syn-key: #e0a871; --syn-str: #5fcf9c; --syn-num: #6aa6ee; --syn-com: #7d7c76; }
+.pol-title { display: flex; align-items: end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
+.pol-title h1 { margin: 0; }
+.pol-title .sub { margin: 4px 0 0; max-width: 80ch; }
+.pol-bar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 14px 0 12px; padding: 0; overflow: hidden; }
+.pol-bar > div { padding: 12px 16px; border-left: 1px solid var(--border); min-width: 0; }
+.pol-bar > div:first-child { border-left: 0; }
+.pol-bar .k { font-size: 12px; color: var(--text-secondary); }
+.pol-bar .v { font-size: 18px; font-weight: 600; margin-top: 2px; display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pol-bar .m { font-size: 12px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pol-bar .v input { font-size: 14px; font-weight: 400; padding: 3px 8px; width: 100%; max-width: 220px; }
+.pol-bar button.linkish { border: 0; background: none; padding: 0; font: inherit; color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
+@media (max-width: 900px) { .pol-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pol-bar > div:nth-child(3) { border-left: 0; } .pol-bar > div:nth-child(n+3) { border-top: 1px solid var(--border); } }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; border-radius: 10px; margin-bottom: 12px;
+  background: var(--surface-1); border: 1px solid var(--border); border-left: 4px solid var(--status-warning); font-size: 13px; }
+.banner .grow { flex: 1; min-width: 200px; }
+.pol-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 12px; align-items: start; }
+@media (max-width: 1000px) { .pol-grid { grid-template-columns: 1fr; } }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.card-head h2 { margin: 0; display: flex; align-items: center; gap: 8px; }
+.pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-secondary); white-space: nowrap; }
+.pill.dirty { background: color-mix(in srgb, var(--status-warning) 22%, transparent); color: var(--text-primary); }
+.pill.ok { background: color-mix(in srgb, var(--status-good) 18%, transparent); color: var(--text-primary); }
+.pill.bad { background: color-mix(in srgb, var(--status-critical) 18%, transparent); color: var(--text-primary); }
+.seg { display: inline-flex; gap: 2px; background: var(--surface-2); padding: 3px; border-radius: 10px; }
+.seg button { border: 0; background: transparent; padding: 4px 12px; border-radius: 8px; color: var(--text-secondary); font-size: 13px; }
+.seg button[aria-pressed="true"] { background: var(--surface-1); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.seg button .cnt { font-size: 11px; color: var(--text-muted); margin-left: 4px; }
+/* Düzenleyici: satır numarası + renklendirme (textarea'nın arkasında aynı metin) */
+.editor { display: grid; grid-template-columns: auto minmax(0, 1fr); height: 520px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface-1); overflow: hidden; font: 13px/20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.editor:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.editor .gutter { background: var(--surface-2); color: var(--text-muted); text-align: right; padding: 10px 8px 10px 12px; overflow: hidden;
+  user-select: none; min-width: 3.5em; font-variant-numeric: tabular-nums; }
+.editor .gutter div { height: 20px; }
+.editor .gutter .err { color: #fff; background: var(--status-critical); border-radius: 4px; margin: 0 -4px; padding: 0 4px; }
+.editor .code { position: relative; overflow: hidden; }
+.editor pre, .editor textarea { position: absolute; inset: 0; margin: 0; padding: 10px 14px; border: 0; border-radius: 0; font: inherit;
+  white-space: pre; overflow: auto; tab-size: 2; background: transparent; }
+.editor pre { pointer-events: none; color: var(--text-primary); overflow: hidden; }
+.editor textarea { color: transparent; caret-color: var(--text-primary); resize: none; outline: none; min-height: 0; }
+.editor textarea::selection { background: color-mix(in srgb, var(--series-1) 30%, transparent); color: transparent; }
+.editor pre .line.err { background: color-mix(in srgb, var(--status-critical) 14%, transparent); }
+.syn-key { color: var(--syn-key); } .syn-str { color: var(--syn-str); } .syn-num { color: var(--syn-num); }
+.syn-com { color: var(--syn-com); font-style: italic; } .syn-dash { color: var(--text-muted); }
+.syn-act { font-weight: 600; }
+.valid { font-size: 12px; min-height: 18px; margin: 8px 0 0; display: flex; gap: 6px; align-items: baseline; }
+.valid.ok { color: var(--status-good); } .valid.bad { color: var(--status-critical); white-space: pre-wrap; }
+.actionbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px; align-items: end; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.actionbar .field input { width: 100%; }
+.actionbar .btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: end; }
+@media (max-width: 700px) { .actionbar { grid-template-columns: 1fr; } .actionbar .btns { justify-content: start; } }
+/* Kural listesi */
+.rules { display: grid; gap: 0; }
+.rule { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; gap: 4px 12px; padding: 10px 4px; border-bottom: 1px solid var(--grid); align-items: start; }
+.rule:last-child { border-bottom: 0; }
+.rule .name { font: 600 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.rule .cond { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.rule .cond .chip { white-space: normal; }
+.rule .msg { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.rule .was { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.rule.removed .name, .rule.removed .cond { text-decoration: line-through; opacity: .6; }
+.rule .tags { display: flex; gap: 4px; flex-wrap: wrap; justify-content: end; }
+.tag { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 6px; white-space: nowrap; border: 1px solid transparent; }
+.tag.added { background: var(--mark-sent); color: var(--text-primary); border-color: var(--mark-sent-line); }
+.tag.changed { background: color-mix(in srgb, var(--status-warning) 20%, transparent); color: var(--text-primary); border-color: var(--status-warning); }
+.tag.removed { background: var(--mark-secret); color: var(--text-primary); border-color: var(--mark-secret-line); }
+.tag.mon { background: var(--surface-2); color: var(--text-secondary); border-color: var(--border); }
+.tag.out { background: var(--surface-2); color: var(--text-secondary); }
+.rule-group { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted); margin: 14px 0 2px; }
+.rule-group:first-child { margin-top: 0; }
+.setting-change { font-size: 13px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); margin-bottom: 8px; }
+/* Fark */
+pre.diff { white-space: pre; overflow: auto; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--surface-2); border-radius: 8px; padding: 6px 0; margin: 0; max-height: 520px; }
+pre.diff span { display: grid; grid-template-columns: 3.2em 3.2em 1.2em auto; padding-right: 12px; }
+pre.diff span i { font-style: normal; color: var(--text-muted); text-align: right; padding-right: 8px; user-select: none; }
+pre.diff span b { font-weight: 400; color: var(--text-muted); user-select: none; }
+pre.diff .add { background: var(--mark-sent); } pre.diff .del { background: var(--mark-secret); }
+pre.diff .hunk { color: var(--text-muted); background: color-mix(in srgb, var(--series-1) 8%, transparent); }
+/* Etki */
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+@media (max-width: 520px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.kpi { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; }
+.kpi .k { font-size: 12px; color: var(--text-secondary); }
+.kpi .v { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.kpi .m { font-size: 11px; color: var(--text-muted); }
+.kpi.up { box-shadow: inset 3px 0 0 var(--status-critical); } .kpi.down { box-shadow: inset 3px 0 0 var(--series-1); }
+.trans { display: grid; grid-template-columns: auto auto minmax(60px, 1fr) auto; gap: 6px 10px; align-items: center; font-size: 13px; }
+.trans .bar { height: 8px; border-radius: 999px; background: var(--series-1); min-width: 3px; }
+.trans .num { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+.footnote { font-size: 12px; color: var(--text-muted); margin-top: 12px; }
+/* Sürümler */
+#pol-versions tr.active-row td:first-child { box-shadow: inset 3px 0 0 var(--status-good); }
+#pol-versions td .who { display: block; font-size: 12px; color: var(--text-muted); }
+.st { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+tr.pol-detail > td { background: var(--surface-2); padding: 16px; }
+.detail-grid { display: grid; grid-template-columns: minmax(220px, 4fr) minmax(0, 8fr); gap: 20px; }
+@media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } }
+.timeline { list-style: none; margin: 0; padding: 0; position: relative; }
+.timeline li { position: relative; padding: 0 0 14px 22px; font-size: 13px; }
+.timeline li::before { content: ""; position: absolute; left: 6px; top: 14px; bottom: -2px; width: 2px; background: var(--grid); }
+.timeline li:last-child::before { display: none; }
+.timeline li > .dot { position: absolute; left: 2px; top: 5px; width: 10px; height: 10px; box-shadow: 0 0 0 3px var(--surface-2); }
+.timeline .when { display: block; font-size: 12px; color: var(--text-muted); }
+.timeline .note { display: block; font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.note-warn { font-size: 12px; color: var(--text-secondary); border-left: 3px solid var(--status-warning); padding: 4px 0 4px 10px; margin: 0 0 12px; }
+/* Onay penceresi ve bildirim */
+dialog.modal { border: 1px solid var(--border); border-radius: 14px; padding: 0; width: min(520px, calc(100vw - 32px)); background: var(--surface-1);
+  color: var(--text-primary); box-shadow: 0 24px 64px rgba(0,0,0,.25); }
+dialog.modal::backdrop { background: rgba(0,0,0,.35); }
+dialog.modal form { padding: 20px; display: grid; gap: 12px; }
+dialog.modal h2 { font-size: 17px; margin: 0; }
+dialog.modal p { margin: 0; color: var(--text-secondary); font-size: 13px; }
+dialog.modal .facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; background: var(--surface-2); border-radius: 8px; padding: 10px 12px; }
+dialog.modal .facts dt { color: var(--text-secondary); } dialog.modal .facts dd { margin: 0; }
+dialog.modal .row { display: flex; justify-content: end; gap: 8px; }
+dialog.modal .err { color: var(--status-critical); font-size: 12px; min-height: 16px; }
+button.danger { background: var(--status-critical); color: #fff; border-color: transparent; }
+#toast { position: fixed; right: 16px; bottom: 16px; z-index: 30; display: grid; gap: 8px; max-width: min(420px, calc(100vw - 32px)); }
+#toast div { background: var(--text-primary); color: var(--surface-1); border-radius: 10px; padding: 10px 14px; font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.2); animation: toast-in .18s ease; }
+#toast div.bad { background: var(--status-critical); color: #fff; }
+@keyframes toast-in { from { transform: translateY(8px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { #toast div { animation: none; } }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -237,6 +368,7 @@ td.zero { color: var(--text-muted); }
       <a href="#rapor" data-view="rapor">POC raporu</a>
       <a href="#olaylar" data-view="olaylar">Olaylar</a>
       <a href="#deneme" data-view="deneme">Politika deneme</a>
+      <a href="#politika" data-view="politika">Politika</a>
       <a href="#basvuru" data-view="basvuru">Başvuru</a>
     </nav>
     <span class="spacer"></span>
@@ -403,6 +535,103 @@ td.zero { color: var(--text-muted); }
     </div>
   </section>
 
+  <!-- ==================== Politika yönetimi ==================== -->
+  <section id="view-politika" data-view hidden>
+    <div class="pol-title">
+      <div>
+        <h1>Politika</h1>
+        <p class="sub">Kural değişiklikleri onaylandığında bütün gateway'lerde yeniden başlatmadan yürürlüğe girer.
+          Sağlayıcılar, kurumsal sözlük ve bildirim kanalları ConfigMap'teki politika dosyasında yönetilir.</p>
+      </div>
+    </div>
+
+    <div class="card pol-bar" id="pol-bar">
+      <div><div class="k">Yayındaki politika</div><div class="v" id="pol-live">–</div><div class="m" id="pol-live-meta">&nbsp;</div></div>
+      <div><div class="k">Onay bekleyen</div><div class="v" id="pol-pending">–</div><div class="m" id="pol-pending-meta">&nbsp;</div></div>
+      <div><div class="k">Kurallar</div><div class="v" id="pol-count">–</div><div class="m" id="pol-count-meta">&nbsp;</div></div>
+      <div><div class="k">Oturum</div><div class="v" id="pol-who">
+        <label class="sr-only" for="pol-actor">Adınız</label><input id="pol-actor" autocomplete="name" placeholder="ad.soyad"></div>
+        <div class="m" id="pol-who-meta">Kayıtta görünecek adınız</div></div>
+    </div>
+
+    <div id="pol-banner"></div>
+    <div id="pol-disabled" class="note-warn" hidden>Konsoldan düzenleme kapalı: gateway'de <code>POLICY_STORE=clickhouse</code>
+      tanımlı değil. Kuralları inceleyebilir ve değişikliklerin etkisini ölçebilirsiniz; yayına alma ConfigMap ile yapılır.</div>
+
+    <div class="pol-grid">
+      <div class="card">
+        <div class="card-head">
+          <h2>Taslak <span class="pill" id="pol-dirty">Yayındakiyle aynı</span></h2>
+          <div class="seg" role="group" aria-label="Taslak görünümü">
+            <button type="button" data-left="yaml" aria-pressed="true">YAML</button>
+            <button type="button" data-left="rules" aria-pressed="false">Kurallar</button>
+          </div>
+        </div>
+        <div id="pol-left-yaml">
+          <div class="editor">
+            <div class="gutter" id="pol-gutter" aria-hidden="true"></div>
+            <div class="code">
+              <pre id="pol-hl" aria-hidden="true"></pre>
+              <label class="sr-only" for="pol-editor">Politika taslağı (YAML)</label>
+              <textarea id="pol-editor" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
+            </div>
+          </div>
+        </div>
+        <div id="pol-left-rules" hidden></div>
+        <div id="pol-valid" class="valid" role="status"></div>
+        <div class="actionbar">
+          <label class="field">Değişikliğin gerekçesi
+            <input id="pol-comment" maxlength="1000" placeholder="Ör. Finans ekibi için TCKN engeli (SOME-1234)"></label>
+          <div class="btns">
+            <button type="button" id="pol-reset" class="ghost">Değişiklikleri geri al</button>
+            <button type="button" id="pol-impact-btn">Etkisini ölç</button>
+            <button type="button" id="pol-submit" class="primary">Onaya gönder</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>İnceleme</h2>
+          <div class="seg" role="group" aria-label="İnceleme görünümü">
+            <button type="button" data-pane="changes" aria-pressed="true">Değişiklikler<span class="cnt" id="pol-changes-count"></span></button>
+            <button type="button" data-pane="diff" aria-pressed="false">Satır farkı</button>
+            <button type="button" data-pane="impact" aria-pressed="false">Etki</button>
+          </div>
+        </div>
+        <div id="pol-pane-changes"></div>
+        <div id="pol-pane-diff" hidden></div>
+        <div id="pol-pane-impact" hidden>
+          <div class="filters" style="margin:0 0 12px">
+            <label>Dönem <select id="pol-days"><option value="7" selected>Son 7 gün</option><option value="30">Son 30 gün</option><option value="90">Son 90 gün</option></select></label>
+          </div>
+          <div id="pol-impact"><div class="empty">Taslağı geçmiş trafiğe uygulayın: hangi isteklerin kararı değişirdi? "Etkisini ölç"e basın.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card section">
+      <div class="card-head"><h2>Sürüm geçmişi</h2><span class="meta">Satıra tıklayın: değişiklikler, onay geçmişi ve işlemler</span></div>
+      <div class="table-wrap"><table id="pol-versions"><thead><tr>
+        <th class="num">Sürüm</th><th>Durum</th><th>Gerekçe</th><th>Yazan</th><th>Onaylayan</th><th>Tarih</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <dialog class="modal" id="pol-dialog" aria-labelledby="pol-dialog-title">
+      <form method="dialog" id="pol-dialog-form">
+        <h2 id="pol-dialog-title"></h2>
+        <p id="pol-dialog-text"></p>
+        <dl class="facts" id="pol-dialog-facts"></dl>
+        <label class="field" id="pol-dialog-comment-box">Not
+          <textarea id="pol-dialog-comment" rows="3" maxlength="1000"></textarea></label>
+        <div class="err" id="pol-dialog-err" role="alert"></div>
+        <div class="row">
+          <button type="button" id="pol-dialog-cancel">Vazgeç</button>
+          <button type="submit" id="pol-dialog-ok" class="primary"></button>
+        </div>
+      </form>
+    </dialog>
+  </section>
+
   <!-- ==================== İlgili kişi başvurusu ==================== -->
   <section id="view-basvuru" data-view hidden>
     <h1>İlgili kişi başvurusu</h1>
@@ -441,6 +670,7 @@ td.zero { color: var(--text-muted); }
 <datalist id="dl-teams"></datalist><datalist id="dl-models"></datalist>
 <datalist id="dl-entities"></datalist><datalist id="dl-rules"></datalist>
 <div id="tooltip" role="tooltip"></div>
+<div id="toast" aria-live="polite"></div>
 
 <script>
 "use strict";
@@ -1453,7 +1683,433 @@ function renderReport(r, org) {
 }
 
 // ==================== yönlendirme ====================
-const VIEWS = ["rontgen", "rapor", "olaylar", "deneme", "basvuru"];
+
+// ---------- Politika yönetimi ----------
+const POL_STATUS = {
+  active: { label: "Yayında", color: "var(--status-good)" },
+  pending: { label: "Onay bekliyor", color: "var(--status-warning)" },
+  approved: { label: "Önceki sürüm", color: "var(--text-muted)" },
+  rejected: { label: "Reddedildi", color: "var(--status-critical)" },
+};
+const POL_EVENTS = {
+  created: { label: "onaya gönderdi", color: "var(--series-1)" },
+  approved: { label: "onayladı ve yayına aldı", color: "var(--status-good)" },
+  rejected: { label: "reddetti", color: "var(--status-critical)" },
+  applied: { label: "bu sürüme geri döndü", color: "var(--series-2)" },
+  emergency: { label: "acil yayına aldı (dört göz atlandı)", color: "var(--status-critical)" },
+};
+const SEVERITY = { allow: 0, alert: 1, mask: 2, block: 3 };
+const ACTIVATING = ["approved", "applied", "emergency"];
+const pol = { data: null, check: null, timer: null, open: null, dirty: false };
+
+const polActor = () => $("pol-actor").value.trim();
+const isMe = (name) => !!polActor() && polActor().toLowerCase() === String(name || "").toLowerCase();
+async function polApi(path, body) {
+  const headers = { "X-Telveguard-Actor": polActor() };
+  if (body === undefined) return apiJson(path, { headers });
+  return apiJson(path, { method: "POST", body: JSON.stringify(body), headers: { ...headers, "Content-Type": "application/json" } });
+}
+function toast(msg, bad = false) {
+  const t = el("div", { class: bad ? "bad" : null }, msg);
+  $("toast").append(t);
+  setTimeout(() => t.remove(), bad ? 7000 : 4500);
+}
+const tsDate = (ts) => new Date(String(ts).replace(" ", "T"));
+function ago(ts) {
+  const d = tsDate(ts); if (isNaN(d)) return ts || "–";
+  const s = Math.round((Date.now() - d) / 1000);
+  if (s < 60) return "az önce";
+  if (s < 3600) return `${Math.floor(s / 60)} dk önce`;
+  if (s < 86400) return `${Math.floor(s / 3600)} sa önce`;
+  if (s < 7 * 86400) return `${Math.floor(s / 86400)} gün önce`;
+  return d.toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" });
+}
+const fullTime = (ts) => { const d = tsDate(ts); return isNaN(d) ? String(ts) : d.toLocaleString("tr-TR"); };
+const timeEl = (ts) => el("time", { datetime: String(ts).replace(" ", "T"), title: fullTime(ts) }, ago(ts));
+const statusBadge = (key) => { const s = POL_STATUS[key] || { label: key, color: "var(--text-muted)" };
+  return el("span", { class: "st" }, el("i", { class: "dot", style: `background:${s.color}` }), s.label); };
+const lastActivation = (v) => [...(v.events || [])].reverse().find((e) => ACTIVATING.includes(e.event));
+
+// --- YAML renklendirme (yalnızca görünüm; düzenlenen metin textarea'dadır) ---
+const YAML_TOKEN = /((?:^|(?<=\s))#.*$)|("(?:[^"\\]|\\.)*"|'[^']*')|([A-Za-z_][\w.-]*)(?=\s*:(?:\s|$))|\b(allow|alert|mask|block)\b|\b(monitor|enforce|external|internal|true|false|null)\b|(-?\b\d+(?:\.\d+)?\b)|(^\s*-(?=\s))/g;
+function highlightLine(line) {
+  const out = []; let pos = 0;
+  for (const m of line.matchAll(YAML_TOKEN)) {
+    if (m.index > pos) out.push(document.createTextNode(line.slice(pos, m.index)));
+    const [t, com, str, key, act, kw, num, dash] = m;
+    if (com) out.push(el("span", { class: "syn-com" }, t));
+    else if (str) out.push(el("span", { class: "syn-str" }, t));
+    else if (key) out.push(el("span", { class: "syn-key" }, t));
+    else if (act) out.push(el("span", { class: "syn-act", style: `color:${ACTION[act].color}` }, t));
+    else if (kw) out.push(el("span", { class: "syn-num" }, t));
+    else if (num) out.push(el("span", { class: "syn-num" }, t));
+    else if (dash) out.push(el("span", { class: "syn-dash" }, t));
+    pos = m.index + t.length;
+  }
+  if (pos < line.length) out.push(document.createTextNode(line.slice(pos)));
+  return out;
+}
+function renderEditor(errLine = 0) {
+  const lines = $("pol-editor").value.split("\n");
+  $("pol-hl").replaceChildren(...lines.map((l, i) => el("div", { class: i + 1 === errLine ? "line err" : "line" },
+    ...highlightLine(l), l ? null : "​")), el("div", {}, "​"));
+  $("pol-gutter").replaceChildren(...lines.map((_, i) => el("div", { class: i + 1 === errLine ? "err" : null }, String(i + 1))));
+  syncScroll();
+}
+function syncScroll() {
+  const ta = $("pol-editor");
+  $("pol-hl").scrollTop = ta.scrollTop; $("pol-hl").scrollLeft = ta.scrollLeft; $("pol-gutter").scrollTop = ta.scrollTop;
+}
+function setEditor(text) { $("pol-editor").value = text; renderEditor(); validateDraft(); }
+
+// --- kural özetleri ---
+const DEST_TEXT = { external: "Yurt dışı", internal: "Kurum içi" };
+function entityText(e) {
+  if (e === "SECRET_*") return "Tüm sırlar";
+  if (e === "KURUM_*") return "Kurumsal terimler";
+  return e.endsWith("*") ? e : entityLabel(e);
+}
+function condChips(when) {
+  const c = [];
+  if (when.teams) c.push(["Ekip", when.teams.join(", ")]);
+  if (when.destination) c.push(["Hedef", DEST_TEXT[when.destination] || when.destination]);
+  if (when.entity_in) c.push(["Veri", when.entity_in.map(entityText).join(", ")]);
+  if (when.injection_score_gte != null) c.push(["Injection", "≥ " + String(when.injection_score_gte).replace(".", ",")]);
+  if (when.model_in) c.push(["Model", when.model_in.join(", ")]);
+  if (when.model_not_in) c.push(["Model hariç", when.model_not_in.join(", ")]);
+  if (when.declared != null) c.push(["Envanterde beyanlı", when.declared ? "evet" : "hayır"]);
+  if (!c.length) return [el("span", { class: "chip" }, "Tüm istekler")];
+  return c.map(([k, v]) => el("span", { class: "chip" }, el("span", { class: "meta" }, k + ":"), " " + v));
+}
+const condText = (when) => condChips(when).map((n) => n.textContent).join(" · ");
+const STATUS_TAG = { added: "Yeni", changed: "Değişti", removed: "Silindi" };
+function ruleRow(r) {
+  const tags = [];
+  if (r.kind === "output") tags.push(el("span", { class: "tag out" }, "Çıktı"));
+  if (r.mode === "monitor") tags.push(el("span", { class: "tag mon", title: "Uygulanmaz; yalnızca ne olacağı kaydedilir" }, "Gözlem"));
+  if (STATUS_TAG[r.status]) tags.push(el("span", { class: "tag " + r.status }, STATUS_TAG[r.status]));
+  const was = r.before ? el("div", { class: "was" }, "Önce: ", ACTION[r.before.action]?.label || r.before.action,
+    r.before.mode === "monitor" ? " (gözlem)" : "", " · ", condText(r.before.when)) : null;
+  return el("div", { class: "rule " + (r.status || "") },
+    el("div", {}, actBadge(r.action)),
+    el("div", {}, el("div", { class: "name" }, r.name), el("div", { class: "cond" }, condChips(r.when)),
+      r.message ? el("div", { class: "msg" }, "Kullanıcıya: “", r.message, "”") : null, was),
+    el("div", { class: "tags" }, tags));
+}
+function renderRuleList(target, changes, onlyChanged) {
+  target.replaceChildren();
+  if (!changes) { target.append(el("div", { class: "empty" }, "Taslak geçerli olduğunda kurallar burada listelenir.")); return; }
+  const settings = Object.entries(changes.settings).filter(([, v]) => v.before !== v.after);
+  for (const [k, v] of settings) {
+    const name = k === "default_action" ? "Hiçbir kural eşleşmezse" : "Politika modu";
+    const fmt = (x) => k === "default_action" ? (ACTION[x]?.label || x) : (x === "monitor" ? "Gözlem" : "Uygulama");
+    target.append(el("div", { class: "setting-change" }, el("b", {}, name), ": ", fmt(v.before), " → ", el("b", {}, fmt(v.after))));
+  }
+  const rows = changes.rules.filter((r) => !onlyChanged || r.status !== "same");
+  if (!rows.length && !settings.length) {
+    target.append(el("div", { class: "empty" }, onlyChanged ? "Yayındaki politikayla aynı: değişiklik yok." : "Kural yok."));
+    return;
+  }
+  for (const kind of ["input", "output"]) {
+    const group = rows.filter((r) => r.kind === kind);
+    if (!group.length) continue;
+    target.append(el("div", { class: "rule-group" }, kind === "input" ? "İstek kuralları" : "Cevap (çıktı) kuralları"),
+      el("div", { class: "rules" }, group.map(ruleRow)));
+  }
+}
+function renderDiff(target, diff, emptyText) {
+  target.replaceChildren();
+  if (!diff) { target.append(el("div", { class: "empty" }, emptyText)); return; }
+  const pre = el("pre", { class: "diff" });
+  let a = 0, b = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("---") || line.startsWith("+++") || line === "") continue;
+    const h = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)/);
+    if (h) { a = +h[1]; b = +h[2]; pre.append(el("span", { class: "hunk" }, el("i", {}, "…"), el("i", {}, "…"), el("b", {}), line.replace(/^@@.*@@/, "").trim() || " ")); continue; }
+    const kind = line[0], text = line.slice(1) || " ";
+    if (kind === "+") pre.append(el("span", { class: "add" }, el("i", {}), el("i", {}, String(b++)), el("b", {}, "+"), text));
+    else if (kind === "-") pre.append(el("span", { class: "del" }, el("i", {}, String(a++)), el("i", {}), el("b", {}, "−"), text));
+    else pre.append(el("span", {}, el("i", {}, String(a++)), el("i", {}, String(b++)), el("b", {}), text));
+  }
+  target.append(pre);
+}
+
+// --- görünüm ---
+function showLeft(name) {
+  document.querySelectorAll("#view-politika [data-left]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.left === name)));
+  $("pol-left-yaml").hidden = name !== "yaml"; $("pol-left-rules").hidden = name !== "rules";
+}
+function showPane(name) {
+  document.querySelectorAll("#view-politika [data-pane]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.pane === name)));
+  for (const p of ["changes", "diff", "impact"]) $("pol-pane-" + p).hidden = p !== name;
+}
+
+async function loadPolicyStore(keepEditor = false) {
+  const d = await polApi("/v1/policy/store");
+  pol.data = d;
+  const rt = d.runtime, vs = d.versions || [];
+  const live = vs.find((v) => v.version === rt.version);
+  const act = live && lastActivation(live);
+  $("pol-live").replaceChildren(el("i", { class: "dot", style: `background:${rt.error ? "var(--status-warning)" : "var(--status-good)"}` }),
+    rt.version ? `Sürüm ${rt.version}` : "ConfigMap");
+  $("pol-live-meta").textContent = rt.error ? "Uyarı: " + rt.error
+    : act ? `${act.actor} · ${ago(act.ts)}${act.event === "emergency" ? " · acil" : ""}` : "Kurulumdaki politika dosyası";
+  $("pol-live-meta").title = rt.error || (act ? fullTime(act.ts) : "");
+  const pending = vs.filter((v) => v.status === "pending");
+  const mine = pending.filter((v) => !isMe(v.author) || !rt.four_eyes);
+  $("pol-pending").replaceChildren(pending.length
+    ? el("button", { type: "button", class: "linkish", title: "İlk bekleyen sürümü aç" }, String(pending.length))
+    : "0");
+  $("pol-pending").firstChild.onclick = pending.length ? () => openVersion(pending[pending.length - 1].version) : null;
+  $("pol-pending-meta").textContent = !rt.enabled ? "Düzenleme kapalı" : rt.four_eyes ? "Dört göz kuralı açık" : "Dört göz kuralı kapalı";
+  if (d.actor.via === "oidc") {
+    $("pol-who").replaceChildren(el("span", {}, d.actor.name));
+    $("pol-who-meta").textContent = "Kurum hesabı (doğrulanmış)";
+  } else {
+    $("pol-who-meta").textContent = "Yönetici token'ı · ad beyan edilir";
+  }
+  const cnt = d.counts;
+  $("pol-count").textContent = `${cnt.rules} + ${cnt.output_rules}`;
+  $("pol-count-meta").textContent = `istek + çıktı kuralı` + (cnt.monitor ? ` · ${cnt.monitor} gözlemde` : "");
+  $("pol-disabled").hidden = rt.enabled;
+  const banner = $("pol-banner"); banner.replaceChildren();
+  if (rt.enabled && mine.length) {
+    const v = mine[mine.length - 1];
+    const btn = el("button", { type: "button", class: "primary" }, "İncele");
+    btn.addEventListener("click", () => openVersion(v.version));
+    banner.append(el("div", { class: "banner", role: "status" }, el("i", { class: "dot", style: "background:var(--status-warning)" }),
+      el("div", { class: "grow" }, el("b", {}, `Sürüm ${v.version} onay bekliyor`), ` · ${v.author} · “${v.comment}” · `, timeEl(v.created_at)), btn));
+  }
+  if (!keepEditor || !$("pol-editor").value) setEditor(d.content); else validateDraft();
+  renderVersions();
+}
+
+function validateDraft() {
+  clearTimeout(pol.timer);
+  pol.timer = setTimeout(async () => {
+    const box = $("pol-valid");
+    let r;
+    try { r = await polApi("/v1/policy/validate", { content: $("pol-editor").value }); }
+    catch (e) { box.className = "valid bad"; box.textContent = e.message; return; }
+    pol.check = r;
+    const dirty = $("pol-dirty");
+    if (!r.ok) {
+      const line = Number((r.error.match(/satır (\d+)/) || [])[1] || 0);
+      renderEditor(line);
+      box.className = "valid bad"; box.replaceChildren(el("b", {}, "Geçersiz:"), " " + r.error);
+      dirty.className = "pill bad"; dirty.textContent = "Hatalı";
+      $("pol-submit").disabled = true;
+      $("pol-changes-count").textContent = "";
+      for (const id of ["pol-pane-changes", "pol-pane-diff", "pol-left-rules"])
+        $(id).replaceChildren(el("div", { class: "empty" }, "Taslak geçersiz; düzeltildiğinde değişiklikler burada görünür."));
+      return;
+    }
+    renderEditor();
+    const c = r.changes.counts, settings = Object.values(r.changes.settings).filter((v) => v.before !== v.after).length;
+    const total = c.added + c.changed + c.removed + settings;
+    box.className = "valid ok";
+    box.textContent = `✓ Geçerli · ${r.rules} istek kuralı, ${r.output_rules} çıktı kuralı`;
+    dirty.className = r.unchanged ? "pill" : "pill dirty";
+    dirty.textContent = r.unchanged ? "Yayındakiyle aynı"
+      : [c.added && `${c.added} yeni`, c.changed && `${c.changed} değişen`, c.removed && `${c.removed} silinen`, settings && `${settings} ayar`].filter(Boolean).join(" · ");
+    $("pol-changes-count").textContent = total ? String(total) : "";
+    $("pol-submit").disabled = r.unchanged || !pol.data?.runtime.enabled;
+    renderRuleList($("pol-pane-changes"), r.changes, true);
+    renderRuleList($("pol-left-rules"), r.changes, false);
+    renderDiff($("pol-pane-diff"), r.unchanged ? "" : r.diff, "Taslak yayındaki politikayla aynı.");
+  }, 300);
+}
+
+function renderImpact(target, r) {
+  const up = r.transitions.filter((t) => SEVERITY[t.to] > SEVERITY[t.from]).reduce((s, t) => s + t.requests, 0);
+  const down = r.changed - up;
+  const kpi = (k, v, m, cls) => el("div", { class: "kpi " + (cls || "") }, el("div", { class: "k" }, k), el("div", { class: "v" }, v), el("div", { class: "m" }, m));
+  const max = Math.max(1, ...r.transitions.map((t) => t.requests));
+  const table = (title, rows, cols) => rows.length ? [el("h3", {}, title), el("div", { class: "table-wrap" }, el("table", {},
+    el("thead", {}, el("tr", {}, cols.map((c) => el("th", { class: c.num ? "num" : null }, c.label)))),
+    el("tbody", {}, rows.map((row) => el("tr", {}, cols.map((c) => el("td", { class: c.num ? "num" : null }, c.render(row))))))))] : [];
+  target.replaceChildren(
+    el("div", { class: "kpis" },
+      kpi("Değerlendirilen", n(r.requests), `son ${r.days} gün`),
+      kpi("Kararı değişen", n(r.changed), r.requests ? pct(r.changed, r.requests) + " istek" : "–"),
+      kpi("Daha sıkı", n(up), "engel / maske artar", up ? "up" : ""),
+      kpi("Daha gevşek", n(down), "koruma azalır", down ? "down" : "")),
+    r.changed ? el("div", { class: "trans" }, r.transitions.flatMap((t) => [
+      actBadge(t.from), el("span", { class: "meta" }, "→ ", actBadge(t.to)),
+      el("div", { class: "bar", style: `width:${Math.max(2, 100 * t.requests / max)}%; background:${ACTION[t.to]?.color}` }),
+      el("span", { class: "num" }, n(t.requests))]))
+      : el("div", { class: "empty" }, "Bu dönemde hiçbir isteğin kararı değişmezdi."),
+    ...table("Etkilenen ekipler", r.teams, [{ label: "Ekip", render: (x) => x.team }, { label: "İstek", num: true, render: (x) => n(x.requests) }]),
+    ...table("Yeni eşleşen kurallar", r.rules_added, [{ label: "Kural", render: (x) => el("code", {}, x.rule) }, { label: "İstek", num: true, render: (x) => n(x.requests) }]),
+    ...table("Artık eşleşmeyen kurallar", r.rules_removed, [{ label: "Kural", render: (x) => el("code", {}, x.rule) }, { label: "İstek", num: true, render: (x) => n(x.requests) }]),
+    ...table("Örnek istekler", r.examples.slice(0, 8), [
+      { label: "Ekip / model", render: (x) => el("div", {}, x.team, el("div", { class: "meta" }, `${x.model} · ${DEST_LABELS[x.destination] || x.destination}`)) },
+      { label: "Veri", render: (x) => x.entities.length ? el("div", { class: "chips" }, x.entities.map((e) => el("span", { class: "chip" }, entityLabel(e)))) : el("span", { class: "meta" }, "–") },
+      { label: "Karar", render: (x) => el("div", {}, actBadge(x.from), el("div", {}, "→ ", actBadge(x.to))) },
+      { label: "İstek", num: true, render: (x) => n(x.requests) }]),
+    el("p", { class: "footnote" }, "Ham metin saklanmadığı için yeniden taranmaz: kayıttaki ekip, model, hedef, veri türleri ve injection skoru taslaktan geçirilir. Tarayıcı eklentisi olayları hariç."
+      + (r.truncated ? " En sık görülen bağlamlarla sınırlandı." : "")));
+}
+async function runImpact() {
+  showPane("impact");
+  const target = $("pol-impact");
+  target.replaceChildren(el("div", { class: "meta" }, "Geçmiş trafik taslaktan geçiriliyor…"));
+  try { renderImpact(target, await polApi("/v1/policy/impact", { content: $("pol-editor").value, days: Number($("pol-days").value) })); }
+  catch (e) { target.replaceChildren(el("div", { class: "valid bad" }, e.message)); }
+}
+
+// --- onay penceresi ---
+function confirmDialog({ title, text, facts = [], ok, danger = false, comment = "", commentRequired = 0, run }) {
+  const dlg = $("pol-dialog");
+  $("pol-dialog-title").textContent = title; $("pol-dialog-text").textContent = text;
+  $("pol-dialog-facts").replaceChildren(...facts.flatMap(([k, v]) => [el("dt", {}, k), el("dd", {}, v)]));
+  $("pol-dialog-facts").hidden = !facts.length;
+  $("pol-dialog-comment").value = comment;
+  $("pol-dialog-comment").placeholder = commentRequired ? `Zorunlu (en az ${commentRequired} karakter)` : "İsteğe bağlı";
+  $("pol-dialog-err").textContent = "";
+  const okBtn = $("pol-dialog-ok"); okBtn.textContent = ok; okBtn.className = danger ? "danger" : "primary"; okBtn.disabled = false;
+  $("pol-dialog-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const note = $("pol-dialog-comment").value.trim();
+    if (note.length < commentRequired) { $("pol-dialog-err").textContent = `Gerekçe yazın (en az ${commentRequired} karakter).`; return; }
+    okBtn.disabled = true;
+    try { await run(note); dlg.close(); }
+    catch (err) { $("pol-dialog-err").textContent = err.message; okBtn.disabled = false; }
+  };
+  $("pol-dialog-cancel").onclick = () => dlg.close();
+  dlg.showModal();
+  $("pol-dialog-comment").focus();
+}
+const changeSummary = (c) => c ? [c.counts.added && `${c.counts.added} yeni`, c.counts.changed && `${c.counts.changed} değişen`,
+  c.counts.removed && `${c.counts.removed} silinen`].filter(Boolean).join(", ") || "kural değişikliği yok" : "–";
+
+async function submitDraft() {
+  if (!polActor()) { toast("Kayıt için Oturum alanına adınızı girin.", true); $("pol-actor").focus(); return; }
+  if (!pol.check?.ok) return;
+  const comment = $("pol-comment").value.trim();
+  confirmDialog({
+    title: "Onaya gönder", ok: "Onaya gönder", comment, commentRequired: 3,
+    text: pol.data.runtime.four_eyes ? "Başka bir yönetici onaylayınca yayına girer. O zamana kadar hiçbir isteği etkilemez."
+      : "Onaylanınca yayına girer. O zamana kadar hiçbir isteği etkilemez.",
+    facts: [["Değişiklik", changeSummary(pol.check.changes)], ["Yazan", polActor()]],
+    run: async (note) => {
+      const r = await polApi("/v1/policy/versions", { content: $("pol-editor").value, comment: note });
+      $("pol-comment").value = "";
+      toast(`Sürüm ${r.version} onaya gönderildi.`);
+      pol.open = r.version;
+      await loadPolicyStore(true);
+    },
+  });
+}
+
+async function versionAction(v, action) {
+  const run = (extra = {}) => async (note) => {
+    const r = await polApi(`/v1/policy/versions/${v.version}/${action === "emergency" ? "approve" : action}`, { comment: note, ...extra });
+    toast(r.event === "rejected" ? `Sürüm ${v.version} reddedildi.` : `Sürüm ${v.version} yayında. Diğer gateway'ler birkaç saniye içinde yükler.`);
+    await loadPolicyStore(true);
+  };
+  const facts = [["Sürüm", `${v.version} · ${v.author}`], ["Gerekçe", v.comment], ["Değişiklik", changeSummary(v.changes)]];
+  if (action === "approve") confirmDialog({ title: `Sürüm ${v.version} yayına alınsın mı?`, ok: "Onayla ve yayına al", facts, run: run(),
+    text: "Bütün gateway'lerde birkaç saniye içinde yürürlüğe girer. Etkisinden emin değilseniz önce taslağı düzenleyiciye alıp etkisini ölçün." });
+  if (action === "reject") confirmDialog({ title: `Sürüm ${v.version} reddedilsin mi?`, ok: "Reddet", danger: true, facts, commentRequired: 3, run: run(),
+    text: "Ret gerekçesi yazana iletilir ve geçmişte görünür." });
+  if (action === "emergency") confirmDialog({ title: "Acil yayın", ok: "Acil yayına al", danger: true, facts, commentRequired: 10, run: run({ emergency: true }),
+    text: "Dört göz kuralını atlayarak kendi sürümünüzü yayına alıyorsunuz. Kayıtta \"acil\" olarak görünür; gerekçe denetimde sorulur." });
+  if (action === "apply") confirmDialog({ title: `Sürüm ${v.version}'e geri dönülsün mü?`, ok: "Geri dön", facts, commentRequired: 3, run: run(),
+    text: "Daha önce onaylanmış bu sürüm yeniden yayına alınır; şu anki sürüm geçmişte kalır." });
+}
+
+function renderVersions() {
+  const tbody = $("pol-versions").tBodies[0];
+  tbody.replaceChildren();
+  const vs = pol.data?.versions || [];
+  if (!vs.length) {
+    tbody.append(el("tr", {}, el("td", { colspan: "6", class: "empty" },
+      pol.data?.runtime.enabled ? "Henüz sürüm yok. Yayındaki kurallar kurulumdaki politika dosyasından geliyor." : "Politika deposu kapalı.")));
+    return;
+  }
+  const active = pol.data.runtime.version;
+  for (const v of vs) {
+    const status = v.version === active ? "active" : v.status;
+    const act = lastActivation(v), rej = v.events.find((e) => e.event === "rejected");
+    const tr = el("tr", { class: "drill" + (status === "active" ? " active-row" : ""), tabindex: "0", "data-version": String(v.version) },
+      el("td", { class: "num" }, String(v.version)), el("td", {}, statusBadge(status)),
+      el("td", {}, v.comment),
+      el("td", {}, v.author, v.author_via === "static_token" ? el("span", { class: "who" }, "beyan") : null),
+      el("td", {}, act ? [act.actor, el("span", { class: "who" }, act.event === "emergency" ? "acil yayın" : act.event === "applied" ? "geri dönüş" : "")]
+        : rej ? [rej.actor, el("span", { class: "who" }, "reddetti")] : el("span", { class: "meta" }, "–")),
+      el("td", { class: "meta" }, timeEl(v.created_at)));
+    activatable(tr, () => toggleVersion(v.version, tr));
+    tbody.append(tr);
+  }
+  if (pol.open) { const tr = tbody.querySelector(`tr[data-version="${pol.open}"]`); if (tr) toggleVersion(pol.open, tr, true); }
+}
+function openVersion(version) {
+  const tr = $("pol-versions").querySelector(`tr[data-version="${version}"]`);
+  if (!tr) return;
+  toggleVersion(version, tr, true);
+  tr.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+async function toggleVersion(version, tr, force = false) {
+  const next = tr.nextElementSibling;
+  const wasOpen = next?.classList.contains("pol-detail");
+  document.querySelectorAll("#pol-versions tr.pol-detail").forEach((r) => r.remove());
+  if (wasOpen && !force) { pol.open = null; return; }
+  pol.open = version;
+  const cell = el("td", { colspan: "6" }, el("div", { class: "meta" }, "Yükleniyor…"));
+  tr.after(el("tr", { class: "pol-detail" }, cell));
+  let v;
+  try { v = await polApi(`/v1/policy/versions/${version}`); }
+  catch (e) { cell.replaceChildren(el("div", { class: "valid bad" }, e.message)); return; }
+  const rt = pol.data.runtime, active = rt.version === version, mine = isMe(v.author);
+  const timeline = el("ol", { class: "timeline" }, v.events.map((e) => { const meta = POL_EVENTS[e.event] || { label: e.event, color: "var(--text-muted)" };
+    return el("li", {}, el("i", { class: "dot", style: `background:${meta.color}` }), el("span", { class: "when" }, timeEl(e.ts)),
+      el("b", {}, e.actor), e.actor_via === "static_token" ? el("span", { class: "meta" }, " (beyan)") : null, " ", meta.label,
+      e.comment ? el("span", { class: "note" }, "“" + e.comment + "”") : null); }));
+  const btn = (label, cls, action) => { const b = el("button", { type: "button", class: cls }, label); b.addEventListener("click", () => versionAction(v, action)); return b; };
+  const actions = [];
+  if (rt.enabled && v.status === "pending") {
+    if (mine && rt.four_eyes) actions.push(btn("Acil yayına al", "", "emergency"));
+    else actions.push(btn("Onayla ve yayına al", "primary", "approve"));
+    actions.push(btn("Reddet", "", "reject"));
+  } else if (rt.enabled && v.status === "approved" && !active) actions.push(btn("Bu sürüme geri dön", "primary", "apply"));
+  const toEditor = el("button", { type: "button", class: "ghost" }, "Düzenleyicide aç");
+  toEditor.addEventListener("click", () => { setEditor(v.content); showLeft("yaml"); $("pol-editor").focus(); toast(`Sürüm ${version} düzenleyiciye alındı.`); });
+  actions.push(toEditor);
+  const changes = el("div"); renderRuleList(changes, v.changes, true);
+  const diffBox = el("div"); renderDiff(diffBox, v.diff, "Yayındaki politikayla aynı.");
+  cell.replaceChildren(el("div", { class: "detail-grid" },
+    el("div", {}, el("h3", { style: "margin-top:0" }, "Onay geçmişi"), timeline),
+    el("div", {}, ...[
+      v.status === "pending" && mine && rt.four_eyes
+        ? el("div", { class: "note-warn" }, "Bu sürümü siz yazdınız; dört göz kuralı gereği başka bir yönetici onaylamalı. Acil durumda gerekçe yazarak kendiniz yayına alabilirsiniz.") : null,
+      el("h3", { style: "margin-top:0" }, active ? "Bu sürüm yayında" : "Yayındakine göre değişiklikler"),
+      active ? el("div", { class: "meta" }, "Yayındaki kurallar bu sürümden geliyor.") : changes,
+      active ? null : el("details", {}, el("summary", {}, "Satır farkı"), diffBox),
+    ].filter(Boolean))),
+    el("div", { class: "detail-actions" }, actions));
+}
+
+function initPolicy() {
+  const ta = $("pol-editor");
+  ta.addEventListener("input", () => { renderEditor(); validateDraft(); });
+  ta.addEventListener("scroll", syncScroll);
+  ta.addEventListener("keydown", (e) => {   // Tab: iki boşluk girinti (YAML sekme kabul etmez)
+    if (e.key !== "Tab" || e.shiftKey) return;
+    e.preventDefault(); ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end"); renderEditor(); validateDraft();
+  });
+  $("pol-impact-btn").addEventListener("click", runImpact);
+  $("pol-days").addEventListener("change", runImpact);
+  $("pol-submit").addEventListener("click", submitDraft);
+  $("pol-reset").addEventListener("click", () => { if (pol.data) setEditor(pol.data.content); });
+  document.querySelectorAll("#view-politika [data-pane]").forEach((b) => b.addEventListener("click", () => showPane(b.dataset.pane)));
+  document.querySelectorAll("#view-politika [data-left]").forEach((b) => b.addEventListener("click", () => showLeft(b.dataset.left)));
+  $("pol-actor").addEventListener("change", () => { store.set("tg-actor", polActor()); if (pol.data) loadPolicyStore(true); });
+  const savedActor = store.get("tg-actor"); if (savedActor) $("pol-actor").value = savedActor;
+}
+
+const VIEWS = ["rontgen", "rapor", "olaylar", "deneme", "politika", "basvuru"];
 let xrayLoaded = false, reportLoaded = false;
 function route() {
   const [name, qs] = location.hash.slice(1).split("?");
@@ -1463,7 +2119,7 @@ function route() {
   document.querySelectorAll("section[data-view]").forEach((s) => { s.hidden = s.id !== "view-" + view; });
   document.querySelectorAll("nav.tabs a").forEach((a) => { if (a.dataset.view === view) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
   document.title = { rontgen: "AI Kullanım Röntgeni", rapor: "POC raporu", olaylar: "Olaylar", deneme: "Politika deneme",
-    basvuru: "İlgili kişi başvurusu" }[view] + " · Telveguard";
+    politika: "Politika", basvuru: "İlgili kişi başvurusu" }[view] + " · Telveguard";
   if (!token()) { setStatus("Yönetici token'ını sağ üstteki alana girin.", true); $("token").focus(); return; }
   loadPolicyInfo().catch(() => null);   // kurumsal sözlük etiketleri vb.
   if (view === "rontgen" && !xrayLoaded) { xrayLoaded = true; loadXray(); }
@@ -1476,6 +2132,7 @@ function route() {
   }
   if (view === "basvuru") setStatus("");
   if (view === "rapor" && !reportLoaded) { reportLoaded = true; loadReport(); }
+  if (view === "politika") { setStatus(""); loadPolicyStore(true).catch((e) => setStatus("Politika alınamadı: " + e.message, true)); }
   if (view === "deneme") { setStatus(""); loadPolicyInfo().catch((e) => setStatus("Politika bilgisi alınamadı: " + e.message, true)); }
 }
 
@@ -1502,6 +2159,7 @@ $("sim-form").addEventListener("submit", (e) => { e.preventDefault(); runSimulat
 $("sub-form").addEventListener("submit", (e) => { e.preventDefault(); runSubjectSearch(); });
 $("rp-form").addEventListener("submit", (e) => { e.preventDefault(); loadReport(); });
 $("rp-print").addEventListener("click", () => window.print());
+initPolicy();
 // Yazdırmada raporun açılır bölümleri de PDF'e girsin
 addEventListener("beforeprint", () => document.querySelectorAll("details.print-open").forEach((d) => { d.dataset.wasOpen = d.open; d.open = true; }));
 addEventListener("afterprint", () => document.querySelectorAll("details.print-open").forEach((d) => { d.open = d.dataset.wasOpen === "true"; }));
