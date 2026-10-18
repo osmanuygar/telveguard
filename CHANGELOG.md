@@ -17,6 +17,13 @@
 
 ### Gateway
 
+- Onaylanan politika sürümünü Bitbucket Data Center'a yansıtma (`POLICY_GIT_*`, Helm
+  `policy.store.git.*`): onay, acil yayın ve geri alma depoya commit (ya da dal + PR) olarak yazılır;
+  kim yazdı / kim yayına aldı / gerekçe commit mesajında, şablon ayarlanabilir. Dosya ConfigMap
+  politikasının tamamı (kural bölümleri yerinde, yorumlar korunur) ya da yalnızca kurallar.
+  `POLICY_GIT_STRICT=1` ile Git'e yazılamayan sürüm yayına girmez; aksi hâlde arka planda denenir,
+  sonuç sürüm geçmişinde (`mirrored` / `mirror_failed`), konsoldan yeniden yazılabilir. Eski sürüm
+  depodaki yeniyi ezmez. `GET /v1/policy/git` bağlantı denemesi, `POST /v1/policy/versions/{v}/mirror`.
 - Ağ tarafı (ICAP, RFC 3507 REQMOD): kurum proxy'si (Squid, ProxySG, Forcepoint, Zscaler ...)
   TLS denetimiyle çözdüğü AI isteklerini sorar; masaüstü uygulamaları ve betikler. Gövdedeki metin
   biçimden bağımsız taranır, karar geçir (204) / durdur (403; SDK'lara JSON, tarayıcıya HTML).

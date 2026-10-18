@@ -66,11 +66,9 @@ def to_yaml(editable: Dict[str, Any]) -> str:
     return yaml.safe_dump(editable, allow_unicode=True, sort_keys=False, width=100)
 
 
-def editable_text(raw: str) -> str:
-    """ConfigMap dosyasından yalnızca kural bölümlerinin METNİ (açıklama satırlarıyla):
-    ilk taslak güvenlik ekibinin yorumlarını kaybetmesin. Üst düzey anahtarın hemen üstündeki
-    yorumlar o anahtara aittir. Metin aynı sonucu vermiyorsa yeniden üretilmiş YAML döner."""
-    blocks: List[Tuple[Optional[str], List[str]]] = []
+def _blocks(raw: str) -> Tuple[List[Tuple[str, List[str]]], List[str]]:
+    """Üst düzey anahtar blokları (hemen üstündeki yorumlar o anahtara ait) ve sondaki satırlar."""
+    blocks: List[Tuple[str, List[str]]] = []
     pending: List[str] = []
     for line in raw.splitlines():
         top = line[:1] not in ("", " ", "\t", "#", "-") and ":" in line
@@ -82,9 +80,49 @@ def editable_text(raw: str) -> str:
         elif blocks:
             blocks[-1][1].extend(pending + [line])
             pending = []
+    return blocks, pending
+
+
+def editable_text(raw: str) -> str:
+    """ConfigMap dosyasından yalnızca kural bölümlerinin METNİ (açıklama satırlarıyla):
+    ilk taslak güvenlik ekibinin yorumlarını kaybetmesin. Metin aynı sonucu vermiyorsa
+    yeniden üretilmiş YAML döner."""
+    expected = editable_part(yaml.safe_load(raw) or {})
+    blocks, _ = _blocks(raw)
     text = "\n".join(line for key, lines in blocks if key in EDITABLE_KEYS for line in lines).strip("\n") + "\n"
     try:
-        expected = editable_part(yaml.safe_load(raw) or {})
+        if yaml.safe_load(text) == expected:
+            return text
+    except yaml.YAMLError:
+        pass
+    return to_yaml(expected)
+
+
+def with_rules(base_raw: str, content: str) -> str:
+    """ConfigMap dosyasının metni, kural bölümleri sürümün metniyle değiştirilmiş (Git'e yazılan,
+    dağıtılabilir tam politika). Her bölüm dosyadaki yerinde değişir (fark küçük kalır); diğer
+    bölümler ve yorumları olduğu gibi kalır."""
+    blocks, tail = _blocks(base_raw)
+    new_blocks, new_tail = _blocks(content)
+    new = dict(new_blocks)
+    out: List[str] = []
+    used = set()
+    last_editable = None
+    for key, lines in blocks:
+        if key in EDITABLE_KEYS:
+            if key in new:
+                out.extend(new[key])
+                used.add(key)
+            last_editable = len(out)
+            continue
+        out.extend(lines)
+    extra = [line for key, lines in new_blocks if key not in used for line in lines]
+    if extra:
+        at = len(out) if last_editable is None else last_editable
+        out[at:at] = ([""] if at else []) + extra
+    text = "\n".join(out + tail + new_tail).rstrip("\n") + "\n"
+    expected = merge(yaml.safe_load(base_raw) or {}, yaml.safe_load(content) or {})
+    try:
         if yaml.safe_load(text) == expected:
             return text
     except yaml.YAMLError:
@@ -180,7 +218,7 @@ class Lock:
                 return
             token, deadline = uuid.uuid4().hex, time.monotonic() + wait
             try:
-                while not await self._redis.set(LOCK_KEY, token, nx=True, px=15000):
+                while not await self._redis.set(LOCK_KEY, token, nx=True, px=60000):
                     if time.monotonic() > deadline:
                         raise StoreError(409, "Başka bir politika işlemi sürüyor; birkaç saniye sonra yeniden deneyin")
                     await asyncio.sleep(0.1)
@@ -289,7 +327,7 @@ class PolicyStore:
             v["status"] = _status(v["events"])
         return versions
 
-    async def _event(self, version: int, event: str, actor: str, via: str, comment: str) -> None:
+    async def event(self, version: int, event: str, actor: str, via: str, comment: str) -> None:
         await self._insert("policy_events", [{
             "event_id": str(uuid.uuid4()), "version": version, "ts": int(time.time() * 1000),
             "event": event, "actor": actor, "actor_via": via, "comment": comment}])
@@ -302,11 +340,11 @@ class PolicyStore:
                 "version": version, "created_at": int(time.time() * 1000), "author": author,
                 "author_via": via, "comment": comment, "content": content,
                 "content_sha256": sha256(content), "base_version": base_version}])
-            await self._event(version, "created", author, via, comment)
+            await self.event(version, "created", author, via, comment)
         return version
 
     async def transition(self, version: int, action: str, actor: str, via: str, comment: str,
-                         emergency: bool = False) -> Dict[str, Any]:
+                         emergency: bool = False, before_commit=None) -> Dict[str, Any]:
         """approve | reject | apply. Kilit altında durum yeniden okunur (iki kişi aynı anda onaylarsa
         ikincisi "zaten onaylandı" görür)."""
         async with self.lock.hold():
@@ -338,7 +376,10 @@ class PolicyStore:
                 event = "applied"
             else:
                 raise StoreError(400, f"Bilinmeyen işlem: {action}")
-            await self._event(version, event, actor, via, comment)
+            if before_commit is not None:
+                # Ör. Git'e yazma zorunluysa: başarısızsa olay yazılmaz, sürüm yayına girmez
+                await before_commit(v, event)
+            await self.event(version, event, actor, via, comment)
         return {"version": version, "event": event}
 
 
@@ -350,6 +391,7 @@ class Runtime:
 
     def __init__(self, state, base_text: str, store: Optional[PolicyStore]):
         self.state, self.store = state, store
+        self.base_text = base_text
         self.base = yaml.safe_load(base_text) or {}
         self.base_content = editable_text(base_text)
         self.content = self.base_content          # yayındaki kural metni (konsolda düzenlenen)

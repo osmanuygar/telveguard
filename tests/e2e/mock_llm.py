@@ -7,13 +7,20 @@ Mesaj "SIZINTI_TESTI" ile başlarsa girdide olmayan sahte bir AWS anahtarı "ür
 (çıktı koruması testi; anahtar kaynakta parça parça durur).
 Cevaplardaki "mock_received_*" alanları upstream'e ne gittiğini gösterir.
 /webhook/<kanal> Slack / Teams bildirimlerini kaydeder; GET /webhook/received son 100'ünü döner.
+/bitbucket/... Bitbucket Data Center taklidi (politika Git yansıtma): SEC/telveguard-config deposu,
+bellekte; commit / PR bağlantıları tarayıcıda düz metin olarak açılır.
 """
 import json
 import time
+from email.parser import BytesParser
+from email.policy import HTTP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 FAKE_KEY = "AKIA" + "Q3EXAMPLE7ABCDEF"
 WEBHOOKS = []  # [{"channel": ..., "body": ...}]
+BB_API = "/bitbucket/rest/api/1.0/projects/SEC/repos/telveguard-config"
+BB_WEB = "/bitbucket/projects/SEC/repos/telveguard-config"
+BB = {"branches": {"main": {}}, "commits": {}, "prs": []}   # dal -> yol -> (commit, içerik)
 
 
 def _texts(content):
@@ -33,7 +40,59 @@ def _answer(last):
 
 
 class Handler(BaseHTTPRequestHandler):
+    # ---------------- Bitbucket DC taklidi ----------------
+    def _bb(self, method):
+        from urllib.parse import parse_qs, unquote, urlsplit
+        url = urlsplit(self.path)
+        path, q = unquote(url.path), {k: v[0] for k, v in parse_qs(url.query).items()}
+        if path.startswith(BB_WEB):   # tarayıcıda commit / PR: düz metin
+            ref = path.rsplit("/", 1)[-1]
+            c = BB["commits"].get(ref) or (BB["prs"][int(ref) - 1] if ref.isdigit() and int(ref) <= len(BB["prs"]) else None)
+            return self._send(200 if c else 404, (json.dumps(c, ensure_ascii=False, indent=2) if c and "fromRef" in c
+                              else f"{c['message']}\n\n----- {c['path']} -----\n{c['content']}" if c else "yok").encode(),
+                              "text/plain; charset=utf-8")
+        if not self.headers.get("Authorization", "").startswith("Bearer "):
+            return self._json({"errors": [{"message": "Authentication required"}]}, 401)
+        sub = path[len(BB_API):]
+        if method == "GET" and sub == "":
+            return self._json({"name": "telveguard-config", "slug": "telveguard-config"})
+        if method == "GET" and sub == "/branches":
+            return self._json({"values": [{"displayId": b} for b in BB["branches"] if q.get("filterText", "") in b]})
+        if method == "GET" and sub == "/commits":
+            branch = q["until"].removeprefix("refs/heads/")
+            if branch not in BB["branches"]:
+                return self._json({"errors": [{"message": "branch yok"}]}, 404)
+            f = BB["branches"][branch].get(q["path"])
+            return self._json({"values": [{"id": f[0]}] if f else []})
+        if method == "PUT" and sub.startswith("/browse/"):
+            raw = self.rfile.read(int(self.headers["Content-Length"]))
+            msg = BytesParser(policy=HTTP).parsebytes(b"content-type: " + self.headers["Content-Type"].encode() + b"\r\n\r\n" + raw)
+            form = {pt.get_param("name", header="content-disposition"): pt.get_payload(decode=True).decode() for pt in msg.iter_parts()}
+            fpath, branch = sub[len("/browse/"):], form["branch"]
+            if branch not in BB["branches"]:
+                BB["branches"][branch] = dict(BB["branches"][form["sourceBranch"]])
+            cur = BB["branches"][branch].get(fpath)
+            if cur and form.get("sourceCommitId") != cur[0]:
+                return self._json({"errors": [{"message": "dosya değişmiş"}]}, 409)
+            cid = f"{len(BB['commits']) + 1:040x}"
+            BB["commits"][cid] = {"message": form["message"], "path": fpath, "content": form["content"], "branch": branch}
+            BB["branches"][branch][fpath] = (cid, form["content"])
+            return self._json({"id": cid})
+        if method == "POST" and sub == "/pull-requests":
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            BB["prs"].append(body)
+            n = len(BB["prs"])
+            return self._json({"id": n, "links": {"self": [{"href": f"http://localhost:9000{BB_WEB}/pull-requests/{n}"}]}}, 201)
+        return self._json({"errors": [{"message": f"{method} {sub}"}]}, 404)
+
+    def do_PUT(self):
+        if self.path.startswith("/bitbucket/"):
+            return self._bb("PUT")
+        self._send(405, b"", "text/plain")
+
     def do_POST(self):
+        if self.path.startswith("/bitbucket/"):
+            return self._bb("POST")
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         if self.path.startswith("/webhook/"):
             WEBHOOKS.append({"channel": self.path.rsplit("/", 1)[-1], "body": body})
@@ -93,12 +152,14 @@ class Handler(BaseHTTPRequestHandler):
                 "mock_received_instructions": body.get("instructions"), "mock_received_last": last}
 
     def do_GET(self):
+        if self.path.startswith("/bitbucket/"):
+            return self._bb("GET")
         if self.path.startswith("/webhook/received"):
             return self._json(WEBHOOKS)
         self._send(200, b'{"status":"ok"}', "application/json")
 
-    def _json(self, obj):
-        self._send(200, json.dumps(obj, ensure_ascii=False).encode(), "application/json")
+    def _json(self, obj, status=200):
+        self._send(status, json.dumps(obj, ensure_ascii=False).encode(), "application/json")
 
     def _send(self, status, payload, ctype):
         self.send_response(status)

@@ -356,6 +356,13 @@ button.danger { background: var(--status-critical); color: #fff; border-color: t
 #toast div.bad { background: var(--status-critical); color: #fff; }
 @keyframes toast-in { from { transform: translateY(8px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { #toast div { animation: none; } }
+.git-box { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary);
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
+.git-box b { color: var(--text-primary); font-weight: 600; }
+.git-box code { font-size: 12px; }
+.git-box button { font-size: 12px; padding: 3px 10px; }
+.git-cell a, .timeline a, .git-box a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.git-cell { white-space: nowrap; font-size: 12px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -543,6 +550,7 @@ button.danger { background: var(--status-critical); color: #fff; border-color: t
         <p class="sub">Kural değişiklikleri onaylandığında bütün gateway'lerde yeniden başlatmadan yürürlüğe girer.
           Sağlayıcılar, kurumsal sözlük ve bildirim kanalları ConfigMap'teki politika dosyasında yönetilir.</p>
       </div>
+      <div class="git-box" id="pol-git" hidden></div>
     </div>
 
     <div class="card pol-bar" id="pol-bar">
@@ -613,7 +621,7 @@ button.danger { background: var(--status-critical); color: #fff; border-color: t
     <div class="card section">
       <div class="card-head"><h2>Sürüm geçmişi</h2><span class="meta">Satıra tıklayın: değişiklikler, onay geçmişi ve işlemler</span></div>
       <div class="table-wrap"><table id="pol-versions"><thead><tr>
-        <th class="num">Sürüm</th><th>Durum</th><th>Gerekçe</th><th>Yazan</th><th>Onaylayan</th><th>Tarih</th></tr></thead><tbody></tbody></table></div>
+        <th class="num">Sürüm</th><th>Durum</th><th>Gerekçe</th><th>Yazan</th><th>Onaylayan</th><th>Git</th><th>Tarih</th></tr></thead><tbody></tbody></table></div>
     </div>
 
     <dialog class="modal" id="pol-dialog" aria-labelledby="pol-dialog-title">
@@ -1697,7 +1705,52 @@ const POL_EVENTS = {
   rejected: { label: "reddetti", color: "var(--status-critical)" },
   applied: { label: "bu sürüme geri döndü", color: "var(--series-2)" },
   emergency: { label: "acil yayına aldı (dört göz atlandı)", color: "var(--status-critical)" },
+  mirrored: { label: "depoya yazıldı", color: "var(--text-muted)", system: true },
+  mirror_failed: { label: "depoya yazılamadı", color: "var(--status-critical)", system: true },
+  mirror_skipped: { label: "depoya yazılmadı", color: "var(--text-muted)", system: true },
 };
+const safeUrl = (u) => /^https?:\/\//.test(u || "") ? u : null;
+const extLink = (href, text) => el("a", { href, target: "_blank", rel: "noopener noreferrer" }, text);
+const GIT_NAME = "Bitbucket";
+function gitState(v) {
+  // Yayına alınmış sürüm için son yansıtma olayı: mirrored | mirror_failed | mirror_skipped | pending
+  const evs = v.events || [];
+  const lastAct = evs.map((e) => e.event).lastIndexOf(lastActivation(v)?.event);
+  if (lastAct < 0) return null;
+  const after = evs.slice(lastAct + 1).filter((e) => e.event.startsWith("mirror"));
+  return after.length ? after[after.length - 1] : { event: "pending" };
+}
+function gitCell(v) {
+  if (!pol.data?.git) return el("span", { class: "meta" }, "–");
+  const st = gitState(v);
+  if (!st) return el("span", { class: "meta" }, "–");
+  if (st.event === "mirrored") { const u = safeUrl(st.comment);
+    return el("span", { class: "git-cell" }, "✓ ", u ? extLink(u, pol.data.git.mode === "pull_request" ? "PR" : "commit") : "yazıldı"); }
+  if (st.event === "mirror_failed") return el("span", { class: "git-cell", style: "color:var(--status-critical)", title: st.comment }, "✗ yazılamadı");
+  if (st.event === "mirror_skipped") return el("span", { class: "git-cell meta", title: st.comment }, "atlandı");
+  return el("span", { class: "git-cell meta" }, "… yazılıyor");
+}
+function renderGitBox() {
+  const g = pol.data?.git, box = $("pol-git");
+  box.hidden = !g;
+  if (!g) return;
+  const test = el("button", { type: "button" }, "Bağlantıyı dene");
+  const result = el("span", {});
+  test.addEventListener("click", async () => {
+    result.textContent = "deneniyor…"; result.style.color = "";
+    try {
+      const r = await polApi("/v1/policy/git");
+      result.textContent = r.check.ok ? `✓ erişildi${r.check.file_exists ? "" : " · dosya yok, ilk yayında oluşturulur"}` : "✗ " + r.check.error;
+      result.style.color = r.check.ok ? "var(--status-good)" : "var(--status-critical)";
+    } catch (e) { result.textContent = "✗ " + e.message; result.style.color = "var(--status-critical)"; }
+  });
+  const u = safeUrl(g.browse_url);
+  box.replaceChildren(el("i", { class: "dot", style: "background:var(--series-1)" }),
+    el("span", {}, el("b", {}, GIT_NAME), " · ", u ? extLink(u, `${g.project}/${g.repo}`) : `${g.project}/${g.repo}`,
+      " · ", el("code", {}, g.branch), " · ", el("code", {}, g.path)),
+    el("span", { class: "meta" }, (g.mode === "pull_request" ? "PR ile" : "doğrudan commit") + (g.strict ? " · zorunlu" : "")),
+    test, result);
+}
 const SEVERITY = { allow: 0, alert: 1, mask: 2, block: 3 };
 const ACTIVATING = ["approved", "applied", "emergency"];
 const pol = { data: null, check: null, timer: null, open: null, dirty: false };
@@ -1846,6 +1899,9 @@ function showPane(name) {
 
 async function loadPolicyStore(keepEditor = false) {
   const d = await polApi("/v1/policy/store");
+  // Düzenleyicide değişiklik yoksa (yayındakiyle aynıysa) yeni yayındaki içerik gelsin
+  const untouched = !pol.data || $("pol-editor").value === pol.data.content;
+  if (untouched) keepEditor = false;
   pol.data = d;
   const rt = d.runtime, vs = d.versions || [];
   const live = vs.find((v) => v.version === rt.version);
@@ -1872,6 +1928,7 @@ async function loadPolicyStore(keepEditor = false) {
   $("pol-count").textContent = `${cnt.rules} + ${cnt.output_rules}`;
   $("pol-count-meta").textContent = `istek + çıktı kuralı` + (cnt.monitor ? ` · ${cnt.monitor} gözlemde` : "");
   $("pol-disabled").hidden = rt.enabled;
+  renderGitBox();
   const banner = $("pol-banner"); banner.replaceChildren();
   if (rt.enabled && mine.length) {
     const v = mine[mine.length - 1];
@@ -2005,10 +2062,15 @@ async function submitDraft() {
 async function versionAction(v, action) {
   const run = (extra = {}) => async (note) => {
     const r = await polApi(`/v1/policy/versions/${v.version}/${action === "emergency" ? "approve" : action}`, { comment: note, ...extra });
-    toast(r.event === "rejected" ? `Sürüm ${v.version} reddedildi.` : `Sürüm ${v.version} yayında. Diğer gateway'ler birkaç saniye içinde yükler.`);
+    toast(r.event === "rejected" ? `Sürüm ${v.version} reddedildi.` : `Sürüm ${v.version} yayında. Diğer gateway'ler birkaç saniye içinde yükler.`
+      + (r.git?.status === "mirrored" ? ` ${GIT_NAME}'a yazıldı.` : r.git?.status === "pending" ? ` ${GIT_NAME}'a yazılıyor.` : ""));
+    if (r.git?.status === "pending") setTimeout(() => loadPolicyStore(true).catch(() => null), 3000);
     await loadPolicyStore(true);
   };
+  const g = pol.data.git;
   const facts = [["Sürüm", `${v.version} · ${v.author}`], ["Gerekçe", v.comment], ["Değişiklik", changeSummary(v.changes)]];
+  if (g && action !== "reject") facts.push(["Git kaydı", `${GIT_NAME} ${g.project}/${g.repo} · ${g.branch}` +
+    (g.mode === "pull_request" ? " (PR açılır)" : " (commit)") + (g.strict ? " · yazılamazsa yayına girmez" : "")]);
   if (action === "approve") confirmDialog({ title: `Sürüm ${v.version} yayına alınsın mı?`, ok: "Onayla ve yayına al", facts, run: run(),
     text: "Bütün gateway'lerde birkaç saniye içinde yürürlüğe girer. Etkisinden emin değilseniz önce taslağı düzenleyiciye alıp etkisini ölçün." });
   if (action === "reject") confirmDialog({ title: `Sürüm ${v.version} reddedilsin mi?`, ok: "Reddet", danger: true, facts, commentRequired: 3, run: run(),
@@ -2024,7 +2086,7 @@ function renderVersions() {
   tbody.replaceChildren();
   const vs = pol.data?.versions || [];
   if (!vs.length) {
-    tbody.append(el("tr", {}, el("td", { colspan: "6", class: "empty" },
+    tbody.append(el("tr", {}, el("td", { colspan: "7", class: "empty" },
       pol.data?.runtime.enabled ? "Henüz sürüm yok. Yayındaki kurallar kurulumdaki politika dosyasından geliyor." : "Politika deposu kapalı.")));
     return;
   }
@@ -2038,6 +2100,7 @@ function renderVersions() {
       el("td", {}, v.author, v.author_via === "static_token" ? el("span", { class: "who" }, "beyan") : null),
       el("td", {}, act ? [act.actor, el("span", { class: "who" }, act.event === "emergency" ? "acil yayın" : act.event === "applied" ? "geri dönüş" : "")]
         : rej ? [rej.actor, el("span", { class: "who" }, "reddetti")] : el("span", { class: "meta" }, "–")),
+      el("td", {}, gitCell(v)),
       el("td", { class: "meta" }, timeEl(v.created_at)));
     activatable(tr, () => toggleVersion(v.version, tr));
     tbody.append(tr);
@@ -2057,13 +2120,20 @@ async function toggleVersion(version, tr, force = false) {
   document.querySelectorAll("#pol-versions tr.pol-detail").forEach((r) => r.remove());
   if (wasOpen && !force) { pol.open = null; return; }
   pol.open = version;
-  const cell = el("td", { colspan: "6" }, el("div", { class: "meta" }, "Yükleniyor…"));
+  const cell = el("td", { colspan: "7" }, el("div", { class: "meta" }, "Yükleniyor…"));
   tr.after(el("tr", { class: "pol-detail" }, cell));
   let v;
   try { v = await polApi(`/v1/policy/versions/${version}`); }
   catch (e) { cell.replaceChildren(el("div", { class: "valid bad" }, e.message)); return; }
   const rt = pol.data.runtime, active = rt.version === version, mine = isMe(v.author);
   const timeline = el("ol", { class: "timeline" }, v.events.map((e) => { const meta = POL_EVENTS[e.event] || { label: e.event, color: "var(--text-muted)" };
+    if (meta.system) {
+      const u = e.event === "mirrored" && safeUrl(e.comment);
+      return el("li", {}, el("i", { class: "dot", style: `background:${meta.color}` }), el("span", { class: "when" }, timeEl(e.ts)),
+        el("b", {}, GIT_NAME), " ", meta.label,
+        u ? el("span", { class: "note" }, extLink(u, pol.data?.git?.mode === "pull_request" ? "Pull request'i aç" : "Commit'i aç"))
+          : e.comment ? el("span", { class: "note" }, e.comment) : null);
+    }
     return el("li", {}, el("i", { class: "dot", style: `background:${meta.color}` }), el("span", { class: "when" }, timeEl(e.ts)),
       el("b", {}, e.actor), e.actor_via === "static_token" ? el("span", { class: "meta" }, " (beyan)") : null, " ", meta.label,
       e.comment ? el("span", { class: "note" }, "“" + e.comment + "”") : null); }));
@@ -2074,6 +2144,16 @@ async function toggleVersion(version, tr, force = false) {
     else actions.push(btn("Onayla ve yayına al", "primary", "approve"));
     actions.push(btn("Reddet", "", "reject"));
   } else if (rt.enabled && v.status === "approved" && !active) actions.push(btn("Bu sürüme geri dön", "primary", "apply"));
+  const gs = pol.data.git && gitState(v);
+  if (gs && active && gs.event === "mirror_failed") {
+    const retry = el("button", { type: "button" }, `${GIT_NAME}'a yeniden yaz`);
+    retry.addEventListener("click", async () => {
+      retry.disabled = true;
+      try { await polApi(`/v1/policy/versions/${version}/mirror`, {}); toast(`Sürüm ${version} ${GIT_NAME}'a yazıldı.`); await loadPolicyStore(true); }
+      catch (e) { toast(e.message, true); retry.disabled = false; }
+    });
+    actions.push(retry);
+  }
   const toEditor = el("button", { type: "button", class: "ghost" }, "Düzenleyicide aç");
   toEditor.addEventListener("click", () => { setEditor(v.content); showLeft("yaml"); $("pol-editor").focus(); toast(`Sürüm ${version} düzenleyiciye alındı.`); });
   actions.push(toEditor);
