@@ -15,6 +15,14 @@
 
 ### Gateway
 
+- Ağ tarafı (ICAP, RFC 3507 REQMOD): kurum proxy'si (Squid, ProxySG, Forcepoint, Zscaler ...)
+  TLS denetimiyle çözdüğü AI isteklerini sorar; masaüstü uygulamaları ve betikler. Gövdedeki metin
+  biçimden bağımsız taranır, karar geçir (204) / durdur (403; SDK'lara JSON, tarayıcıya HTML).
+  Politika "maskele" diyorsa durdurulur. Kimlik proxy'nin `X-Authenticated-User` /
+  `X-Authenticated-Groups` başlıklarından, yalnızca `ICAP_ALLOWED_CLIENTS`'tan. `ICAP_PORT` ile açılır.
+  Kayıtta `api_format=icap`; Röntgen'de "Proxy (ICAP)", POC raporunda Gölge AI bölümünde; bildirim
+  kaynağı `network`. Metrik `telveguard_icap_checks`. Helm `icap.*` (ayrı `-icap` Service,
+  NetworkPolicy ipBlock). Yerel deneme: `docker-compose.icap.yml`, Squid örneği `deploy/icap/squid.conf`.
 - `declared` koşulu `inventory.yaml`'dan hesaplanır: kullanıcının ekiplerinden biri için bu
   modeli içeren bir sistem beyan edilmişse `true`. Envanter boşsa koşul eşleşmez.
 - Simülatör cevabında ve Politika deneme ekranında `declared`.

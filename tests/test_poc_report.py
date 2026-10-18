@@ -98,9 +98,11 @@ def test_false_positive_recommendation_needs_volume_and_rate():
 
 
 def test_sql_keeps_browser_events_out_of_gateway_numbers():
+    """Tarayıcı eklentisi ve proxy (ICAP) olayları Gölge AI bölümünde, ana bulguda değil."""
     for name in ("summary", "entities", "teams", "examples"):
-        assert "api_format != 'browser'" in pr.QUERIES[name]
-    assert "api_format = 'browser'" in pr.QUERIES["shadow_sites"]
+        assert "NOT api_format IN ('browser', 'icap')" in pr.QUERIES[name]
+    for name in ("shadow_sites", "shadow_entities", "shadow_justifications"):
+        assert "AND api_format IN ('browser', 'icap')" in pr.QUERIES[name]
     assert "LIMIT 1 BY team, outcome" in pr.QUERIES["examples"] and "LIMIT 3 BY outcome" in pr.QUERIES["examples"]
 
 
@@ -109,7 +111,7 @@ def test_sql_keeps_browser_events_out_of_gateway_numbers():
 def test_report_endpoint_assembles_sections(client, admin):  # noqa: F811
     fake = FakeClickHouse({
         "risky_total": [SUMMARY],
-        "ARRAY JOIN entities AS entity WHERE event_time >= now() - INTERVAL {days:UInt32} DAY AND api_format != 'browser'": ENTITY_ROWS,
+        "ARRAY JOIN entities AS entity WHERE event_time >= now() - INTERVAL {days:UInt32} DAY AND NOT api_format IN ('browser', 'icap')": ENTITY_ROWS,
         "GROUP BY team ORDER BY exposed": [{"team": "finans", "requests": 40, "risky": 9, "exposed": 2, "would": 5}],
         "AS site": [{"site": "chatgpt.com", "users": 3, "visits": 0, "with_data": 7, "masked": 4, "cancelled": 1,
                      "blocked": 0, "overridden": 2, "redirected": 3}],
