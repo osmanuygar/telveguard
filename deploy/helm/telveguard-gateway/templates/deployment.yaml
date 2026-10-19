@@ -137,6 +137,42 @@ spec:
             - name: POLICY_STORE_INSERT_QUORUM
               value: {{ . | quote }}
             {{- end }}
+            {{- with .git }}
+            {{- if .enabled }}
+            - name: POLICY_GIT_PROVIDER
+              value: {{ .provider | quote }}
+            - name: POLICY_GIT_URL
+              value: {{ .url | quote }}
+            {{- with .webUrl }}
+            - name: POLICY_GIT_WEB_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: POLICY_GIT_PROJECT
+              value: {{ .project | quote }}
+            - name: POLICY_GIT_REPO
+              value: {{ .repo | quote }}
+            - name: POLICY_GIT_BRANCH
+              value: {{ .branch | quote }}
+            - name: POLICY_GIT_PATH
+              value: {{ .path | quote }}
+            - name: POLICY_GIT_MODE
+              value: {{ .mode | quote }}
+            - name: POLICY_GIT_PR_REVIEWERS
+              value: {{ join "," .reviewers | quote }}
+            - name: POLICY_GIT_CONTENT
+              value: {{ .content | quote }}
+            - name: POLICY_GIT_STRICT
+              value: {{ ternary "1" "0" .strict | quote }}
+            {{- with .message }}
+            - name: POLICY_GIT_MESSAGE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .caFile }}
+            - name: POLICY_GIT_CA_FILE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- end }}
             - name: ENABLE_TR_NER
@@ -160,6 +196,9 @@ spec:
             {{- include "tg.secretEnv" (dict "env" "CLICKHOUSE_PASSWORD" "secret" $secret "key" "clickhouse-password") | nindent 12 }}
             {{- if .Values.policy.store.enabled }}
             {{- include "tg.secretEnv" (dict "env" "POLICY_STORE_CLICKHOUSE_PASSWORD" "secret" $secret "key" "policy-store-password") | nindent 12 }}
+            {{- if .Values.policy.store.git.enabled }}
+            {{- include "tg.secretEnv" (dict "env" "POLICY_GIT_TOKEN" "secret" $secret "key" "policy-git-token") | nindent 12 }}
+            {{- end }}
             {{- end }}
             {{- include "tg.secretEnv" (dict "env" "REDIS_PASSWORD" "secret" $secret "key" "redis-password") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "SHADOW_AI_TOKEN" "secret" $secret "key" "shadow-ai-token") | nindent 12 }}

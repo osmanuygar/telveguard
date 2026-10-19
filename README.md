@@ -555,6 +555,31 @@ Kimlik: OIDC yönetici grubuyla girişte kişi token'dan gelir (doğrulanmış).
 konsoldaki "Adınız" alanı kullanılır ve kayıtta "(beyan)" görünür; dört gözün anlamlı olması için
 üretimde OIDC (`OIDC_ADMIN_GROUP`) kullanın.
 
+#### Onaylanan sürümü Bitbucket'a yansıtma
+
+Yayına alınan her sürüm (onay, acil yayın, geri alma) kurumun Bitbucket Data Center deposuna da
+yazılır. Kim yazdı, kim yayına aldı ve gerekçe commit mesajındadır; ConfigMap'i bu depodan dağıtan
+(GitOps) kurulumda depo ile canlı politika ayrışmaz. Konsolda her sürümün yanında commit / PR
+bağlantısı görünür; yazılamadıysa "yeniden yaz" düğmesi çıkar. Daha yeni bir sürüm yayına girdiyse
+eski sürüm depoya hiçbir zaman yazılmaz.
+
+| Değişken | Açıklama |
+|---|---|
+| `POLICY_GIT_PROVIDER` | `bitbucket-dc`; **boşsa kapalı** (`POLICY_STORE=clickhouse` gerekli) |
+| `POLICY_GIT_URL`, `POLICY_GIT_WEB_URL` | Bitbucket adresi (bağlam yolu dahil, ör. `https://bb.sirket.local/bitbucket`); konsoldaki bağlantılar için tarayıcı adresi farklıysa ikincisi |
+| `POLICY_GIT_PROJECT`, `POLICY_GIT_REPO` | Proje anahtarı (kişisel depo: `~kullanici`) ve depo adı |
+| `POLICY_GIT_BRANCH`, `POLICY_GIT_PATH` | Dal (`main`) ve dosya yolu (`policies/policy.yaml`) |
+| `POLICY_GIT_MODE` | `commit`: doğrudan dala; `pull_request`: `telveguard/politika-v<n>` dalı + PR (dal korumalıysa). `POLICY_GIT_PR_REVIEWERS` gözden geçirenler |
+| `POLICY_GIT_CONTENT` | `full` (varsayılan): ConfigMap dosyası, kural bölümleri yerinde değişmiş, yorumlar korunur; `rules`: yalnızca kurallar |
+| `POLICY_GIT_STRICT=1` | Git'e yazılamazsa yayına alma reddedilir. Varsayılan: yayın beklemez, yazma arka planda birkaç denemeyle |
+| `POLICY_GIT_MESSAGE` | Commit mesajı şablonu: `{version}` `{event}` `{event_text}` `{author}` `{actor}` `{actor_note}` `{comment}` `{note}` |
+| `POLICY_GIT_TOKEN` | Depoya yazma yetkili HTTP erişim token'ı (proje / depo token'ı); Secret'tan |
+| `POLICY_GIT_CA_FILE`, `POLICY_GIT_TIMEOUT` | Kurum içi CA (PEM) ve zaman aşımı (10 sn) |
+
+Helm: `policy.store.git.*`, token secret'ta `policy-git-token`. Konsolda "Bağlantıyı dene" depoyu,
+dalı ve dosyayı yazmadan denetler. Dal izinlerinde doğrudan commit kapalıysa `mode: pull_request`
+kullanın; PR merge edilene kadar canlı politika yine konsoldaki onaylı sürümdür.
+
 ### Kurumsal sözlük
 
 Kişisel veri olmayan ama kurum dışına çıkmaması gereken terimler: proje kod adları, müşteri
