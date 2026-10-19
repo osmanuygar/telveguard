@@ -42,6 +42,9 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 - **Kod asistanları:** Cursor ve Claude Code hook'ları (`telve`): prompt, okunan dosya, komut ve araç
   çıktısı makineden çıkmadan politikadan geçer; Claude Code'da araç çıktısı maskelenir.
 - **Gölge AI:** tarayıcı eklentisi ChatGPT, Claude.ai, Gemini'ye yapıştırılan veriyi yerelde maskeler.
+- **Başka gateway'lerin guardrail'i:** LiteLLM ve agentgateway isteği modele göndermeden önce Telveguard'a
+  sorar; Türkçe maskeleme, politika, kayıt ve KVKK raporları Telveguard'da, yönlendirme ve önbellek
+  o gateway'de kalır. Hazır yapılandırma: [deploy/guardrail/](deploy/guardrail/).
 - **Ağ tarafı (ICAP):** kurum proxy'si masaüstü uygulamalarının (Claude Desktop, ChatGPT, Copilot) ve
   betiklerin AI isteklerini Telveguard'a sorar; riskli istek makineden çıkmadan durdurulur.
 
@@ -110,6 +113,24 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
   verisinin hangi isteklerde geçtiği, yurt dışına aktarılıp aktarılmadığı ve cevap taslağı.
 
 Kapatmak için: `docker compose -f docker-compose.yml -f docker-compose.test.yml down`
+
+### Guardrail: LiteLLM ve agentgateway
+
+Kurumda zaten bir AI gateway'i varsa onu değiştirmeyin: Telveguard'ı guardrail olarak ekleyin.
+`GUARDRAIL_TOKEN` tanımlayın (Helm: Secret'ta `guardrail-token`), yapılandırmayı kopyalayın:
+
+| | [LiteLLM](deploy/guardrail/litellm.yaml) | [agentgateway](deploy/guardrail/agentgateway.yaml) |
+|---|---|---|
+| Maskeleme / engelleme (istek) | ✓ | ✓ |
+| Cevapta maskeyi geri açma | ✓ (stream dahil, `incremental_diff`) | ✓ (stream'de geri açılamaz: kullanıcı `[TCKN_1]` görür) |
+| Cevapta sızıntı | maskele / engelle (stream'de istemciye gitmeden) | maskele / engelle; stream'de yalnızca engel |
+| Kimlik | sanal anahtar (kullanıcı, ekip) | JWT / başlık (CEL) |
+
+Hedef (yurt içi / dışı) model adından çıkar; model bilinmiyorsa yurt dışı sayılır. Yönlendirme
+(`routing`) bu modda yoktur: modeli çağıran gateway seçer. Kota ve maliyet o gateway'dedir; kayıtta
+`api_format = guardrail` ve token "bilinmiyor". Maske eşleşmesi kısa süreli oturumda tutulur
+(`GUARDRAIL_SESSION_TTL`, varsayılan 600 sn; `REDIS_URL` varsa Redis): ham kişisel veri içerir.
+Yerel deneme: test ortamında token `e2e-guardrail-token`.
 
 ### POC: gözlem modu, rapor ve demo verisi
 

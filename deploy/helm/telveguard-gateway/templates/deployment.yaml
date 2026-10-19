@@ -163,6 +163,7 @@ spec:
             {{- end }}
             {{- include "tg.secretEnv" (dict "env" "REDIS_PASSWORD" "secret" $secret "key" "redis-password") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "SHADOW_AI_TOKEN" "secret" $secret "key" "shadow-ai-token") | nindent 12 }}
+            {{- include "tg.secretEnv" (dict "env" "GUARDRAIL_TOKEN" "secret" $secret "key" "guardrail-token") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "TELVEGUARD_SUBJECT_HASH_KEY" "secret" $secret "key" "subject-hash-key") | nindent 12 }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

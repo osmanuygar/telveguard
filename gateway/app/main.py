@@ -33,6 +33,7 @@ from . import attachments as attachments_mod
 from . import compliance
 from . import dictionary as dictionary_mod
 from . import exemptions as exemptions_mod
+from . import guardrail as guardrail_mod
 from . import icap as icap_mod
 from . import shadow_ai
 from . import subjects as subjects_mod
@@ -76,6 +77,8 @@ async def lifespan(app: FastAPI):
     app.state.auth = Authenticator.from_env(app.state.http)
     app.state.subjects = subjects_mod.SubjectIndex.from_env()
     app.state.quota = QuotaManager.from_env(app.state.policy.quotas)
+    # Guardrail servisi (LiteLLM, agentgateway): istek ile cevap arasında maske eşleşmesi
+    app.state.guardrail_sessions = guardrail_mod.Sessions.from_env()
     # AI sistem beyanları (EU AI Act envanteri); yoksa tüm kullanımlar "beyan edilmemiş"
     app.state.inventory = compliance.load_inventory(os.getenv("INVENTORY_PATH", "policies/inventory.yaml"))
     # Konsoldan politika yönetimi (POLICY_STORE=clickhouse): yayındaki sürüm pod'lara yeniden başlatmadan yayılır
@@ -1284,6 +1287,162 @@ async def policy_impact(request: Request):
         "rules_removed": [{"rule": k, "requests": n} for k, n in rules_removed.most_common(10)],
         "examples": examples,
     }
+
+
+# ---------------- guardrail servisi (LiteLLM, agentgateway; bkz. guardrail.py) ----------------
+
+def _require_guardrail(request: Request) -> Optional[JSONResponse]:
+    """GUARDRAIL_TOKEN: çağıran gateway'e verilen güven (kimlik başlıklarını o beyan eder).
+    LiteLLM api_key'i x-api-key ile gönderir; agentgateway başlığı yapılandırmada verilir."""
+    expected = os.getenv("GUARDRAIL_TOKEN", "")
+    if not expected:
+        return _openai_error(404, "Guardrail servisi kapalı (GUARDRAIL_TOKEN tanımlı değil).",
+                             "guardrail_disabled", "admin_error")
+    header = request.headers.get("authorization", "")
+    given = header[7:].strip() if header.lower().startswith("bearer ") else request.headers.get("x-api-key", "")
+    if not given or not hmac.compare_digest(given.encode(), expected.encode()):
+        return _openai_error(401, "Geçersiz guardrail token'ı.", "unauthorized", "authentication_error")
+    return None
+
+
+async def _guardrail_body(request: Request):
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        return None, _openai_error(400, "Gövde bir JSON nesnesi olmalı.", "invalid_request", "invalid_request_error")
+    return body, None
+
+
+async def guardrail_input(st, call: guardrail_mod.Call) -> guardrail_mod.Verdict:
+    """İstek fazı: gateway'in kendi yoluyla aynı tarama, politika, istisnalar ve maskeleme.
+    Model bilinmiyorsa hedef yurt dışı (güvenli varsayılan). Yönlendirme yok: modeli çağıran seçer."""
+    t0 = time.perf_counter()
+    identity = Identity(call.user or "unknown", call.teams or ["default"], "guardrail")
+    body = {"model": call.model, "messages": [{"role": r, "content": t} for r, t in zip(call.roles, call.texts)]}
+    a = _analyze(st, body, identity, CHAT, destination=call.destination or (None if call.model else "external"))
+    d = a.decision
+    vault: Dict[str, str] = {}
+    masked_prompt = _mask_parts(st, a.parts, d, vault)
+    action = "block" if d.action == "block" else "mask" if vault else "pass"
+    metrics.GUARDRAIL_CHECKS.labels(call.source, "request", action).inc()
+    for entity in a.entities:
+        metrics.ENTITIES.labels(entity, "input").inc()
+    if a.injection.score >= 0.5:
+        metrics.INJECTIONS.inc()
+
+    ev = st.audit.build_event(
+        user=a.user, team=a.team, model=call.model, destination=a.destination, decision=d,
+        entities=a.entities, injection=a.injection, prompt=a.full_text, masked_prompt=masked_prompt,
+        latency_ms=(time.perf_counter() - t0) * 1000, upstream_status=0)
+    # Upstream'i çağıran gateway: token / maliyet burada bilinmez ("bedava" değil)
+    ev.update(teams=a.identity.teams, auth_source="guardrail", api_format="guardrail",
+              rules=d.rules + [f"guardrail:{call.source}"], subject_hashes=a.subject_hashes,
+              prompt_tokens=0, completion_tokens=0, usage_known=0, est_cost_usd=None, masked_count=len(vault))
+    await _emit(st, ev)
+    if action == "block":
+        return guardrail_mod.Verdict("block", call.texts, d.reason or "engellendi")
+
+    if call.session_id:
+        # Sızıntı karşılaştırması için girdide bulunan değerler (yalnızca çıktı kuralı varsa)
+        known = sorted({a.all_text[f.start:f.end] for f in st.pii.analyze(a.all_text)}) \
+            if st.policy.output_rules else []
+        await st.guardrail_sessions.put(call.source, call.session_id, guardrail_mod.Session(
+            vault, known, {"user": a.user, "teams": a.identity.teams, "model": call.model,
+                           "destination": a.destination, "declared": a.ctx.declared}))
+    texts = [m["content"] for m in body["messages"]]
+    return guardrail_mod.Verdict(action, texts, "Kişisel veri / sır maskelendi." if vault else "")
+
+
+async def guardrail_output(st, call: guardrail_mod.Call) -> guardrail_mod.Verdict:
+    """Cevap fazı: sızıntı (girdide olmayan PII / sır) -> çıktı kuralları -> maskeyi geri aç.
+    Stream'de (LiteLLM) her tur birikmiş metinle gelir: sızıntı bir kez kayda yazılır."""
+    session = await st.guardrail_sessions.get(call.source, call.session_id) if call.session_id else None
+    if session is None:
+        metrics.GUARDRAIL_SESSION_MISSES.labels(call.source).inc()
+        session = guardrail_mod.Session(ctx={"user": call.user, "teams": call.teams, "model": call.model,
+                                             "destination": call.destination or "external"})
+    c = session.ctx
+    teams = list(c.get("teams") or []) or ["default"]
+    ctx = Context(teams[0], c.get("model") or "", c.get("destination") or "external", set(), 0.0,
+                  frozenset(teams), c.get("declared"))
+    known = set(session.known) | set(session.vault.values())
+    scanned, output_entities = [], set()
+    for text in call.texts:
+        findings = st.pii.analyze(text)
+        output_entities |= {f.entity for f in findings}
+        scanned.append((text, [f for f in findings if text[f.start:f.end] not in known]))
+    leaked = {f.entity for _, leaks in scanned for f in leaks}
+    out = st.policy.evaluate_output(ctx, leaked)
+
+    if leaked and not session.leak_reported:
+        for entity in leaked:
+            metrics.ENTITIES.labels(entity, "output_leak").inc()
+        metrics.OUTPUT_ACTIONS.labels(out.action).inc()
+        recorded = Decision("block" if out.action == "block" else "allow", set(),
+                            [f"guardrail:{call.source}", "guardrail:cevap"], out.reason or "")
+        ev = st.audit.build_event(
+            user=c.get("user") or "unknown", team=teams[0], model=ctx.model, destination=ctx.destination,
+            decision=recorded, entities=set(), injection=InjectionResult(0.0, engine=""), prompt="",
+            masked_prompt=None, latency_ms=0, upstream_status=0)
+        ev.update(teams=teams, auth_source="guardrail", api_format="guardrail",
+                  output_entities=sorted(output_entities), output_leaked=sorted(leaked),
+                  output_action=out.action, output_rules=out.rules, monitored_rules=out.monitored_rules,
+                  prompt_tokens=0, completion_tokens=0, usage_known=0, est_cost_usd=None, masked_count=0)
+        await _emit(st, ev)
+        if call.session_id:
+            session.leak_reported = True
+            await st.guardrail_sessions.put(call.source, call.session_id, session)
+
+    if out.action == "block":
+        metrics.GUARDRAIL_CHECKS.labels(call.source, "response", "block").inc()
+        return guardrail_mod.Verdict("block", call.texts, f"model cevabı engellendi ({out.reason})")
+    texts = [st.pii.unmask(_redact(text, leaks, out.mask_entities) if out.action == "mask" else text,
+                           session.vault) for text, leaks in scanned]
+    changed = texts != call.texts
+    # Stream: yarım yer tutucu ve (çıktı kuralı varsa) yarım değer sonraki tura beklesin
+    hold = [guardrail_mod.holdback(t, placeholders=bool(session.vault), tokens=bool(st.policy.output_rules))
+            for t in texts]
+    action = "mask" if changed else "pass"
+    metrics.GUARDRAIL_CHECKS.labels(call.source, "response", action).inc()
+    return guardrail_mod.Verdict(action, texts, "Telveguard" if changed else "", hold)
+
+
+@app.post("/beta/litellm_basic_guardrail_api")
+async def guardrail_litellm(request: Request):
+    """LiteLLM Generic Guardrail API (guardrail: generic_guardrail_api). Örnek: deploy/guardrail/litellm.yaml"""
+    if err := _require_guardrail(request):
+        return err
+    body, err = await _guardrail_body(request)
+    if err:
+        return err
+    try:
+        call = guardrail_mod.parse_litellm(body)
+    except guardrail_mod.GuardrailInputError as e:
+        return _openai_error(400, str(e), "invalid_request", "invalid_request_error")
+    st = request.app.state
+    verdict = await (guardrail_input(st, call) if call.phase == "request" else guardrail_output(st, call))
+    return guardrail_mod.format_litellm(verdict)
+
+
+@app.post("/v1/guardrail/agentgateway/{phase}")
+async def guardrail_agentgateway(request: Request, phase: str):
+    """agentgateway Guardrail Webhook API (promptGuard webhook). Örnek: deploy/guardrail/agentgateway.yaml"""
+    if phase not in ("request", "response"):
+        return _openai_error(404, "Bilinmeyen faz (request | response).", "not_found", "invalid_request_error")
+    if err := _require_guardrail(request):
+        return err
+    body, err = await _guardrail_body(request)
+    if err:
+        return err
+    try:
+        call = guardrail_mod.parse_agentgateway(phase, body, request.headers)
+    except guardrail_mod.GuardrailInputError as e:
+        return _openai_error(400, str(e), "invalid_request", "invalid_request_error")
+    st = request.app.state
+    verdict = await (guardrail_input(st, call) if phase == "request" else guardrail_output(st, call))
+    return guardrail_mod.format_agentgateway(phase, verdict, call.roles)
 
 
 # ---------------- ağ tarafı (ICAP: kurum proxy'si, masaüstü uygulamaları) ----------------

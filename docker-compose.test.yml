@@ -19,6 +19,7 @@ services:
       AUDIT_STORE_MASKED: "1"
       TELVEGUARD_ADMIN_TOKEN: e2e-admin-token   # yalnızca lokal test
       SHADOW_AI_TOKEN: e2e-extension-token      # tarayıcı eklentisi olayları (yalnızca lokal test)
+      GUARDRAIL_TOKEN: e2e-guardrail-token      # LiteLLM / agentgateway guardrail (yalnızca lokal test)
       # Bildirimler sahte LLM'in kaydedicisine gider: GET http://localhost:9000/webhook/received
       SLACK_SECURITY_WEBHOOK_URL: http://mock-llm:9000/webhook/slack
       TEAMS_SECURITY_WEBHOOK_URL: http://mock-llm:9000/webhook/teams
