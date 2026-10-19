@@ -55,6 +55,19 @@ dictionary:
   #   label: Müşteri unvanı
   #   terms_file: kurum/musteriler.txt       # satır başına bir terim (bu dosyaya göre göreli)
 
+# Yönlendirme: eşleşen istek maskelenmek / engellenmek yerine kurum içi modele gider (kullanıcı cevabını
+# alır, veri kurumda kalır). Kurallardan ÖNCE değerlendirilir, ilk eşleşen kazanır; ardından kurallar yeni
+# hedefe göre yeniden uygulanır (ör. kart numarası kurum içinde de maskelenir, injection yine engellenir).
+# to: hedef model; kurum içi olmalı (destinations ya da sağlayıcı tanımı). Hedef yurt dışıysa ya da API
+# biçimi için kurum içi upstream yoksa (ör. Anthropic biçimi, UPSTREAM_ANTHROPIC_INTERNAL_URL boş)
+# yönlendirilmez, kurallar uygulanır. Kayıtta kural "yonlendirme:<ad>"; cevapta X-Telveguard-Routed-To.
+# Önce mode: monitor ile açıp kaç isteğin yönleneceğini Olaylar ekranında görün.
+# routing:
+#   - name: kimlik-finans-kurum-ici
+#     when: { destination: external, entity_in: [TCKN, VKN, IBAN_TR] }
+#     to: vllm/qwen3-72b
+#     mode: monitor
+
 rules:
   - name: prompt-injection-block
     when: { injection_score_gte: 0.85 }
@@ -129,6 +142,19 @@ output_rules:
     when: { entity_in: [PHONE_TR, EMAIL_ADDRESS] }
     action: mask
     mode: monitor
+
+# İstisnalar: kişisel veri gibi görünen ama kamuya açık kurum değerleri (tahsilat IBAN'ı, destek
+# e-postası, çağrı merkezi). Bulunmamış sayılır: maskelenmez, kurallara ve kayda girmez; model metni
+# bozulmadan görür. values biçimden bağımsızdır (boşluk, +90 / 0 öneki, büyük / küçük harf);
+# patterns değerin TAMAMIYLA eşleşmeli. Sırlar (SECRET_*) ve sözlük (KURUM_*) istisna olamaz.
+# Gateway, tanımadığı değeri (ör. sağlama toplamı tutmayan IBAN) açılışta uyarı olarak loglar.
+# exceptions:
+#   - entity: IBAN_TR
+#     label: Tahsilat hesabı
+#     values: ["TR00 0000 0000 0000 0000 0000 00"]     # kendi IBAN'ınızla değiştirin
+#   - entity: EMAIL_ADDRESS
+#     label: Kurumsal e-posta adresleri
+#     patterns: ['[\w.+-]+@sirket\.com\.tr']
 
 # Ekler: görseller (OCR, Türkçe + İngilizce) ve PDF'ler taranır; bulunan veri türleri metinle
 # aynı kurallardan geçer. Maskeleme gerekirse görselde ilgili alan karartılır (üstüne [TCKN_1]

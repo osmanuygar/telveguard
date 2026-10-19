@@ -13,7 +13,9 @@ chrome.storage.local.get(["telveguardQueue", "telveguardDictionary"], (v) => {
   document.getElementById("queue").textContent = String((v.telveguardQueue || []).length);
   const d = v.telveguardDictionary;
   const n = d ? (d.terms || []).reduce((sum, t) => sum + t.hashes.length, 0) + (d.patterns || []).length : 0;
+  const exc = d && d.exceptions;
+  const e = exc ? (exc.values || []).reduce((sum, v) => sum + v.hashes.length, 0) + (exc.patterns || []).length : 0;
   document.getElementById("dictionary").textContent = d
-    ? `${n} terim · ${new Date(d.checked_at).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}`
+    ? `${n} terim${e ? ` · ${e} istisna` : ""} · ${new Date(d.checked_at).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}`
     : "Yok";
 });

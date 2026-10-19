@@ -89,7 +89,15 @@ DICT_CONFIG = {"dictionary": [
     {"entity": "KURUM_MUSTERI", "label": "Müşteri unvanı", "terms": ["Akdeniz Holding A.Ş.", "Işık Lojistik"]},
     {"entity": "KURUM_KOD", "terms": ["ACME"], "case_sensitive": True},
     {"entity": "KURUM_SUNUCU", "patterns": [r"[a-z0-9][a-z0-9.-]*\.sirket\.local"]},
+],
+    # İstisnalar sözlükle aynı uçtan gider (exemptions.browser_payload)
+    "exceptions": [
+        {"entity": "IBAN_TR", "values": [make_iban(account="0000000999999999")]},
+        {"entity": "PHONE_TR", "values": ["0532 000 00 00"]},
+        {"entity": "EMAIL_ADDRESS", "patterns": [r"[a-z0-9.+-]+@sirket\.com\.tr"]},
+        {"entity": "TCKN", "values": [make_tckn(3)]},
 ]}
+KURUM_IBAN = make_iban(account="0000000999999999")
 DICT_TEXTS = [
     "PROJE ANKA bütçesi ve Kızılay Projesi toplantısı",
     "proje   anka\nraporu; KIZILAY PROJESİ onaylandı",
@@ -100,17 +108,25 @@ DICT_TEXTS = [
     "Proje Anka Turna birlikte geçerse soldaki kazanır",
     f"Proje Anka müşterisi TC {make_tckn(1)}, e-posta ali@sirket.local",
     "Önceden maskeli [KURUM_PROJE_1] ve yeni Mavi",
+    # istisnalar: farklı yazımlar, istisna IBAN'ın içindeki rakamlar, tam eşleşme
+    f"Ödeme {KURUM_IBAN} ya da {' '.join(KURUM_IBAN[i:i + 4] for i in range(0, 26, 4)).lower()}; müşteri {make_iban()}",
+    "Çağrı merkezi +90 (532) 000 00 00 ve 05320000000; müşteri 0533 111 22 33",
+    "destek@sirket.com.tr, Satis@Sirket.com.tr, x@sirket.com.tr.ornek.com ve ali@ornek.com",
+    f"Test TCKN {make_tckn(3)}, gerçek {make_tckn(1)}",
 ]
 
 
 def dictionary_expected():
     from app.dictionary import Dictionary
+    from app.exemptions import Exemptions, browser_payload
     d = Dictionary.from_config(DICT_CONFIG)
+    exemptions = Exemptions.from_config(DICT_CONFIG)
     engine = TrPiiEngine()
     d.install(engine)
+    exemptions.install(engine)
     cases = [{"text_b64": _b64(t), "findings": [[f.entity, f.start, f.end] for f in engine.analyze(t)],
               "masked_b64": _b64(engine.mask(t).text)} for t in DICT_TEXTS]
-    return {"payload": d.browser(), "cases": cases}
+    return {"payload": browser_payload(d.browser(), exemptions), "cases": cases}
 
 
 def test_dictionary_fixtures_match_python_engine():
@@ -122,3 +138,7 @@ def test_dictionary_fixtures_match_python_engine():
         "Sözlük motoru değişti: REGENERATE_FIXTURES=1 pytest tests/test_extension_parity.py"
     payload = json.dumps(exp["payload"], ensure_ascii=False).lower()
     assert not any(t.lower() in payload for item in DICT_CONFIG["dictionary"] for t in item.get("terms", []))
+    # İstisna değerleri de düz metin gitmez (yalnızca özet)
+    assert not any(v.lower() in payload or v.replace(" ", "").lower() in payload
+                   for item in DICT_CONFIG["exceptions"] for v in item.get("values", []))
+    assert exp["payload"]["exceptions"]["patterns"] == [{"entity": "EMAIL_ADDRESS", "pattern": r"[a-z0-9.+-]+@sirket\.com\.tr"}]

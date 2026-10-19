@@ -113,6 +113,23 @@ def test_dictionary_endpoint_sends_hashes_not_terms(client, events):  # noqa: F8
     assert get_dictionary(client, {**H, "If-None-Match": etag}).status_code == 304
 
 
+def test_dictionary_endpoint_sends_exceptions_as_hashes(client, events):  # noqa: F811
+    from app.dictionary import term_hash
+    from app.exemptions import Exemptions
+    from tests.test_tr_pii import make_iban
+    iban = make_iban(account="0000000999999999")
+    before = get_dictionary(client).headers["etag"]
+    client.app.state.exemptions = Exemptions.from_config({"exceptions": [
+        {"entity": "IBAN_TR", "values": [iban]}, {"entity": "EMAIL_ADDRESS", "patterns": [r"[\w.]+@sirket\.com\.tr"]}]})
+    r = get_dictionary(client)
+    body = r.json()
+    assert iban not in r.text and iban[4:] not in r.text
+    assert body["exceptions"]["values"] == [{"entity": "IBAN_TR", "hashes": [term_hash(body["salt"], iban)]}]
+    assert body["exceptions"]["patterns"] == [{"entity": "EMAIL_ADDRESS", "pattern": r"[\w.]+@sirket\.com\.tr"}]
+    # Yalnızca istisna değişse de sürüm değişir: eklenti yeniden indirir
+    assert r.headers["etag"] != before
+
+
 def test_dictionary_endpoint_requires_token(client, monkeypatch):  # noqa: F811
     monkeypatch.delenv("SHADOW_AI_TOKEN", raising=False)
     assert get_dictionary(client).status_code == 404

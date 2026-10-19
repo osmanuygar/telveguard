@@ -11,6 +11,7 @@ Anthropic /v1/messages (Claude Code dahil). İstemciler yalnızca taban adresi d
     Anthropic(base_url="http://telveguard:8080", ...)   /  ANTHROPIC_BASE_URL=http://telveguard:8080
 """
 import copy
+import dataclasses
 import hmac
 import logging
 import os
@@ -31,6 +32,7 @@ from . import agent as agent_mod
 from . import attachments as attachments_mod
 from . import compliance
 from . import dictionary as dictionary_mod
+from . import exemptions as exemptions_mod
 from . import icap as icap_mod
 from . import shadow_ai
 from . import subjects as subjects_mod
@@ -60,6 +62,9 @@ async def lifespan(app: FastAPI):
     # Kurumsal sözlük (proje adları, müşteri unvanları ...): PII motoruna tanıyıcı olarak eklenir
     app.state.dictionary = dictionary_mod.load(policy_path)
     app.state.dictionary.install(app.state.pii)
+    # İstisnalar (kurumun kamuya açık IBAN'ı, destek e-postası ...): bulunmamış sayılır
+    app.state.exemptions = exemptions_mod.load(policy_path)
+    app.state.exemptions.install(app.state.pii)
     app.state.audit = AuditSink()
     await app.state.audit.start()
     if not hasattr(app.state, "http"):  # testlerde MockTransport enjekte edilebilir
@@ -93,6 +98,7 @@ async def lifespan(app: FastAPI):
 
 
 admin_log = logging.getLogger("telveguard.admin")
+log = logging.getLogger("telveguard.gateway")
 app = FastAPI(title="Telveguard Gateway", version="0.3.0", lifespan=lifespan)
 
 
@@ -172,6 +178,7 @@ class Analysis:
     provider_error: Optional[str] = None
     scans: List[attachments_mod.Scan] = field(default_factory=list)   # görsel / PDF ekleri
     subject_hashes: List[str] = field(default_factory=list)          # ilgili kişi araması (subjects.py)
+    routed_from: str = ""                                            # yönlendirildiyse istenen model
 
     @property
     def user(self) -> str:
@@ -202,10 +209,6 @@ def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT
     destination: verinin gerçekte gittiği yer modelden çıkarılamıyorsa (ör. Cursor: istek
     önce Cursor'un sunucularına gider) çağıran verir."""
     model = body.get("model", "") if isinstance(body.get("model"), str) else ""
-    # Eşleşen sağlayıcının hedefi önce gelir: veri gerçekte nereye gidiyorsa karar ona göre
-    provider, provider_error = st.providers.resolve(model, fmt.name)
-    routed = provider or st.providers.first(model)
-    destination = destination or (routed.destination if routed else st.policy.destination_of(model))
     parts = fmt.request_parts(body)
     # Eklerden okunan metin de taranır: görsele gömülü injection ("visual prompt injection") dahil
     full_text = "\n".join([p.text for p in parts if p.role in fmt.injection_roles]
@@ -214,14 +217,86 @@ def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT
     findings = st.pii.analyze(all_text)
     entity_counts = Counter(f.entity for f in findings)
     injection = st.injection.scan(full_text)
-    teams = frozenset(identity.teams)
-    ctx = Context(identity.team, model, destination, set(entity_counts), injection.score, teams,
-                  compliance.is_declared(st.inventory, teams | {identity.team}, model))
-    decision = st.policy.evaluate(ctx)
-    st.attachments.apply_unscannable(decision, list(scans), destination)
+    provider, provider_error, destination, ctx, decision = _decide(
+        st, identity, fmt, model, set(entity_counts), injection.score, scans, destination)
     return Analysis(identity, fmt, model, destination, body, parts, full_text, all_text,
                     entity_counts, injection, ctx, decision, provider, provider_error, list(scans),
                     st.subjects.event_hashes(all_text, findings))
+
+
+def _decide(st, identity: Identity, fmt: ApiFormat, model: str, entities: Set[str], injection_score: float,
+            scans: List[attachments_mod.Scan], destination: Optional[str] = None):
+    """Taranmış isteğin hedefi ve politika kararı -> (sağlayıcı, sağlayıcı hatası, hedef, bağlam, karar)."""
+    # Eşleşen sağlayıcının hedefi önce gelir: veri gerçekte nereye gidiyorsa karar ona göre
+    provider, provider_error = st.providers.resolve(model, fmt.name)
+    routed = provider or st.providers.first(model)
+    destination = destination or (routed.destination if routed else st.policy.destination_of(model))
+    teams = frozenset(identity.teams)
+    ctx = Context(identity.team, model, destination, entities, injection_score, teams,
+                  compliance.is_declared(st.inventory, teams | {identity.team}, model))
+    decision = st.policy.evaluate(ctx)
+    st.attachments.apply_unscannable(decision, list(scans), destination)
+    return provider, provider_error, destination, ctx, decision
+
+
+ROUTE_MARK = "yonlendirme:"
+
+
+def _route(st, a: Analysis, headers, kind: Optional[str] = None) -> Analysis:
+    """Politikadaki `routing`: eşleşen istek kurum içi modele gider; kurallar yeni hedefe göre
+    yeniden değerlendirilir (metin yeniden taranmaz). Hedef kurum içi değilse ya da bu API biçimine
+    upstream'i yoksa yönlendirilmez: istek olduğu gibi kurallardan geçer (maskele / engelle korur).
+    Kayıtta kural adı "yonlendirme:<ad>" olarak görünür (gözlemdekiler monitored_rules'ta)."""
+    rule, monitored = st.policy.route(a.ctx)
+    a.decision.monitored_rules += [ROUTE_MARK + n for n in monitored]
+    if rule is None:
+        return a
+    target, kind = rule["to"], kind or a.fmt.name
+    if not _routable(st, target, a.fmt, kind, headers):
+        log.warning("routing_skipped rule=%s to=%s format=%s", rule["name"], target, kind)
+        return a
+    provider, provider_error, destination, ctx, decision = _decide(
+        st, a.identity, a.fmt, target, a.entities, a.injection.score, a.scans)
+    decision.rules.insert(0, ROUTE_MARK + rule["name"])
+    decision.monitored_rules = a.decision.monitored_rules + decision.monitored_rules
+    a.body["model"] = target
+    return dataclasses.replace(a, model=target, destination=destination, ctx=ctx, decision=decision,
+                               provider=provider, provider_error=provider_error, routed_from=a.model)
+
+
+def _routable(st, target: str, fmt: ApiFormat, kind: str, headers) -> bool:
+    """Yönlendirme hedefi kullanılabilir mi: kurum içi ve bu API biçimi için upstream'i var."""
+    provider, provider_error = st.providers.resolve(target, fmt.name)
+    routed = provider or st.providers.first(target)
+    if provider_error or (routed.destination if routed else st.policy.destination_of(target)) != "internal":
+        return False
+    if provider:
+        return provider.supports(kind)
+    if kind == "count_tokens":
+        return MESSAGES.upstream("internal", headers, path="/v1/messages/count_tokens") is not None
+    return fmt.upstream("internal", headers) is not None
+
+
+def _impact_outcome(st, pol: PolicyEngine, ctx: Context, api_format: str):
+    """Etki analizi: kayıttaki bağlamın sonucu, yönlendirme dahil -> (sonuç, karar). Sonuç karar
+    işlemidir; kurum içine yönlendirilip orada engellenmeyen istek için "route". Yönlendirme yalnızca
+    gateway'den geçen biçimlerde olur (hook / ICAP olayları yönlendirilemez)."""
+    fmt = FORMATS.get(api_format)
+    rule = pol.route(ctx)[0] if fmt else None
+    if rule and _routable(st, rule["to"], fmt, fmt.name, {}):
+        target = rule["to"]
+        d = pol.evaluate(dataclasses.replace(
+            ctx, model=target, destination="internal",
+            declared=compliance.is_declared(st.inventory, ctx.all_teams, target)))
+        d.rules.insert(0, ROUTE_MARK + rule["name"])
+        return ("block" if d.action == "block" else "route"), d
+    d = pol.evaluate(ctx)
+    return d.action, d
+
+
+def _routed_headers(a: Analysis) -> Dict[str, str]:
+    """İstemci cevabı hangi modelin verdiğini bilsin (cevaptaki model adı da değişir)."""
+    return {"X-Telveguard-Routed-To": a.model} if a.routed_from else {}
 
 
 async def _emit(st, ev: dict):
@@ -342,7 +417,7 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
 
     # 1-2) Tarama + politika
     t_scan = time.perf_counter()
-    a = await _scan_analyze(st, body, identity, fmt)
+    a = _route(st, await _scan_analyze(st, body, identity, fmt), request.headers)
     metrics.SCAN_SECONDS.observe(time.perf_counter() - t_scan)
     model, destination, decision = a.model, a.destination, a.decision
     request.state.destination = destination
@@ -424,7 +499,7 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
             async for chunk in resp.aiter_raw():
                 yield chunk
             await resp.aclose()
-        return StreamingResponse(relay(), status_code=resp.status_code,
+        return StreamingResponse(relay(), status_code=resp.status_code, headers=_routed_headers(a),
                                  media_type=resp.headers.get("content-type", "text/event-stream"))
 
     if fmt.streams:
@@ -482,8 +557,9 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
     await audit(masked_prompt, resp.status_code, masked_count=len(vault), **output_audit, **usage)
 
     if wants_stream:
-        return StreamingResponse(fmt.buffered_sse(result), media_type="text/event-stream")
-    return JSONResponse(result)
+        return StreamingResponse(fmt.buffered_sse(result), media_type="text/event-stream",
+                                 headers=_routed_headers(a))
+    return JSONResponse(result, headers=_routed_headers(a))
 
 
 @app.post("/v1/messages/count_tokens")
@@ -498,7 +574,7 @@ async def messages_count_tokens(request: Request):
     body, err = await _read_body(request, MESSAGES)
     if err:
         return err
-    a = await _scan_analyze(st, body, identity, MESSAGES)
+    a = _route(st, await _scan_analyze(st, body, identity, MESSAGES), request.headers, "count_tokens")
     if a.decision.action == "block":
         return MESSAGES.error(403, f"Telveguard: {a.decision.reason}", "blocked")
     if a.provider_error:
@@ -537,7 +613,7 @@ async def policy_simulate(request: Request, format: str = "chat"):
     h = request.headers
     teams = [t.strip() for t in h.get("x-telveguard-team", "default").split(",") if t.strip()]
     identity = Identity(h.get("x-telveguard-user", "simulate"), teams or ["default"], "simulate")
-    a = await _scan_analyze(request.app.state, body, identity, fmt)
+    a = _route(request.app.state, await _scan_analyze(request.app.state, body, identity, fmt), request.headers)
     d = a.decision
     originals = [p.text for p in a.parts]
     _mask_parts(request.app.state, a.parts, d, {}, a.scans)
@@ -550,6 +626,7 @@ async def policy_simulate(request: Request, format: str = "chat"):
         "team": a.team,
         "teams": a.identity.teams,
         "model": a.model,
+        "routed_from": a.routed_from or None,
         "destination": a.destination,
         "declared": a.ctx.declared,
         "provider": a.provider.name if a.provider else None,
@@ -598,13 +675,16 @@ async def policy_info(request: Request):
     def rules(items):
         return [{"name": r.get("name", ""), "action": r.get("action"), "mode": r.get("mode", pol.mode),
                  "when": r.get("when", {}), "message": r.get("message", "")} for r in items]
-    teams = sorted({t for r in pol.rules + pol.output_rules for t in (r.get("when") or {}).get("teams", [])})
+    teams = sorted({t for r in pol.rules + pol.output_rules + pol.routing for t in (r.get("when") or {}).get("teams", [])})
     return {"default_action": pol.default_action, "mode": pol.mode, "destinations": pol.destinations,
             "runtime": request.app.state.policy_runtime.describe(),
             "rules": rules(pol.rules), "output_rules": rules(pol.output_rules), "teams": teams,
+            "routing": [{"name": r["name"], "to": r["to"], "mode": r.get("mode", pol.mode),
+                         "when": r.get("when", {})} for r in pol.routing],
             "providers": request.app.state.providers.describe(),
             "notify": request.app.state.notifier.describe(),
-            "dictionary": request.app.state.dictionary.describe()}
+            "dictionary": request.app.state.dictionary.describe(),
+            "exceptions": request.app.state.exemptions.describe()}
 
 
 @app.post("/v1/notify/test")
@@ -904,11 +984,13 @@ async def shadow_ai_events(request: Request):
 
 @app.get("/v1/shadow-ai/dictionary")
 async def shadow_ai_dictionary(request: Request):
-    """Kurumsal sözlüğün tarayıcı sürümü: terimler tuzlu özet, düzenli ifadeler olduğu gibi
-    (dictionary.browser_payload). ETag = sürüm; değişmediyse 304, eklenti yeniden indirmez."""
+    """Kurumsal sözlüğün ve istisnaların tarayıcı sürümü: terimler / değerler tuzlu özet, düzenli
+    ifadeler olduğu gibi (dictionary.browser_payload, exemptions.browser_payload). ETag = sürüm;
+    değişmediyse 304, eklenti yeniden indirmez."""
     if err := _require_extension(request):
         return err
-    payload = request.app.state.dictionary.browser()
+    st = request.app.state
+    payload = exemptions_mod.browser_payload(st.dictionary.browser(), st.exemptions)
     etag = f'"{payload["version"]}"'
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers={"ETag": etag})
@@ -1157,9 +1239,9 @@ async def policy_impact(request: Request):
     try:
         rows = await st.ch.query(f"""
             SELECT team, teams, model, destination, entities, round(injection_score, 2) AS score,
-                   count() AS n, uniqExact(user) AS users
+                   api_format, count() AS n, uniqExact(user) AS users
             FROM audit WHERE event_time >= now() - INTERVAL {{days:UInt32}} DAY AND api_format != 'browser'
-            GROUP BY team, teams, model, destination, entities, score
+            GROUP BY team, teams, model, destination, entities, score, api_format
             ORDER BY n DESC LIMIT {IMPACT_GROUPS}""", {"days": days})
     except xray_mod.ClickHouseError as e:
         return _openai_error(502, str(e), "clickhouse_error", "admin_error")
@@ -1174,21 +1256,23 @@ async def policy_impact(request: Request):
         ctx = Context(r["team"], r["model"], r["destination"], set(r.get("entities") or []),
                       float(r.get("score") or 0), frozenset(r.get("teams") or []),
                       compliance.is_declared(st.inventory, team_set, r["model"]))
-        old, new = current.evaluate(ctx), candidate.evaluate(ctx)
-        before[old.action] += n
-        after[new.action] += n
+        fmt_name = r.get("api_format") or ""
+        (old_action, old), (new_action, new) = (_impact_outcome(st, current, ctx, fmt_name),
+                                                _impact_outcome(st, candidate, ctx, fmt_name))
+        before[old_action] += n
+        after[new_action] += n
         for name in set(new.rules) - set(old.rules):
             rules_added[name] += n
         for name in set(old.rules) - set(new.rules):
             rules_removed[name] += n
-        if old.action != new.action:
-            transitions[(old.action, new.action)] += n
+        if old_action != new_action:
+            transitions[(old_action, new_action)] += n
             teams[r["team"]] += n
             if len(examples) < 12:
                 examples.append({"team": r["team"], "model": r["model"], "destination": r["destination"],
                                  "entities": r.get("entities") or [], "injection_score": r.get("score"),
                                  "requests": n, "users": int(r.get("users") or 0),
-                                 "from": old.action, "to": new.action, "rules": new.rules, "reason": new.reason})
+                                 "from": old_action, "to": new_action, "rules": new.rules, "reason": new.reason})
     total = sum(before.values())
     return {
         "days": days, "requests": total, "groups": len(rows), "truncated": len(rows) >= IMPACT_GROUPS,

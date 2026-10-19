@@ -19,7 +19,8 @@ KVKK'ya uygun şekilde kayda geçirir. Kurum içinde (on-prem / air-gapped) çal
 </picture>
 
 Kurum içi modele veri olduğu gibi, yurt dışı modele maskeli (`[TCKN_1]`) gider; cevap dönünce yer
-tutucular gerçek değere çevrilir. Uygulamalar kod değiştirmez: OpenAI ve Anthropic API'leriyle
+tutucular gerçek değere çevrilir. İsterseniz kişisel veri içeren istek hiç dışarı çıkmadan kurum içi
+modele yönlendirilir (`routing`). Uygulamalar kod değiştirmez: OpenAI ve Anthropic API'leriyle
 uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code dahil).
 
 ## Neler yapar?
@@ -27,6 +28,8 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 **Koruma**
 - **Türkçe kişisel veri:** TCKN, VKN, IBAN, kart (sağlama toplamıyla; rastgele 11 haneli sayı TCKN
   sayılmaz), telefon, e-posta, plaka; opsiyonel Türkçe NER ile kişi / kurum / yer adları.
+- **İstisnalar:** kurumun kamuya açık IBAN'ı, destek e-postası gibi değerler kişisel veri sayılmaz;
+  gereksiz maskeleme ve yanlış alarm olmaz (sırlar istisna olamaz).
 - **Kurumsal sözlük:** proje kod adları, müşteri unvanları, iç sunucu adları gibi kişisel veri
   olmayan ama dışarı çıkmaması gereken terimler (terim listesi, dosya ya da düzenli ifade).
 - **Sırlar:** AWS, GitHub, OpenAI, Anthropic, Slack, Google, Stripe anahtarları, JWT, private key,
@@ -58,7 +61,7 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 **Kurumsal işletim**
 - **Kimlik:** OIDC / JWT (Keycloak, Entra ID); header ile taklit edilemez.
 - **Sağlayıcılar:** model adına göre Azure OpenAI, Gemini, Mistral, Anthropic, kurum içi vLLM.
-- **Politika:** YAML; izin ver / uyar / maskele / engelle, gözlem modu ve simülatör. Konsoldan
+- **Politika:** YAML; izin ver / uyar / maskele / engelle / kurum içi modele yönlendir, gözlem modu ve simülatör. Konsoldan
   düzenleme: geçmiş trafiğe etkisi, dört göz onayı, yeniden başlatmadan yayın, tek tıkla geri alma.
 - **Kota:** ekip başına istek / dk ve aylık token / maliyet bütçesi.
 - **İşletim:** Prometheus metrikleri, OKD / OpenShift Helm chart'ı, air-gapped kurulum.

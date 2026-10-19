@@ -5,7 +5,7 @@ Geri çevrilebilir maskeleme: prompt dış LLM'e [TCKN_1] gibi yer tutucularla g
 cevap dönünce gateway orijinal değerleri geri koyar. Kişisel veri kurum dışına çıkmaz.
 """
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from ..entities import entity_matches
 from .secret_recognizers import SECRET_RECOGNIZERS
@@ -31,6 +31,9 @@ class TrPiiEngine:
     def __init__(self, enable_ner: bool = False, min_score: float = 0.5):
         self.recognizers = TR_RECOGNIZERS + SECRET_RECOGNIZERS
         self.min_score = min_score
+        # (tür, değer) -> True ise bulgu yok sayılır: kurumun kendi IBAN'ı, destek e-postası gibi
+        # kamuya açık değerler (gateway'de politikadaki `exceptions`)
+        self.exempt: Optional[Callable[[str, str], bool]] = None
         self._ner = None
         if enable_ner:
             from .tr_ner import TurkishNer
@@ -46,8 +49,11 @@ class TrPiiEngine:
                 results.append(Finding(rec.entity, m.start(rec.group), m.end(rec.group), rec.score))
         if self._ner is not None:
             results.extend(Finding(*r) for r in self._ner.analyze(text))
-        results = [r for r in results if r.score >= self.min_score]
-        return self._drop_overlaps(results)
+        results = self._drop_overlaps([r for r in results if r.score >= self.min_score])
+        if self.exempt is not None:
+            # Çakışma çözüldükten SONRA: istisna IBAN'ın içindeki rakamlar TCKN / telefon sayılmasın
+            results = [r for r in results if not self.exempt(r.entity, text[r.start:r.end])]
+        return results
 
     @staticmethod
     def _drop_overlaps(results: List[Finding]) -> List[Finding]:

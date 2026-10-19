@@ -10,6 +10,8 @@
 
 ### telveguard-core
 
+- `TrPiiEngine.exempt`: (tür, değer) -> bool; eşleşen bulgular çakışma çözüldükten sonra düşülür.
+- `PolicyEngine.route(ctx)` ve politikada `routing` bölümü (`name`, `when`, `to`, `mode`).
 - `PolicyEngine(config=...)`: politika dosya yerine sözlükten de kurulur. Doğrulama sıkılaştı:
   geçersiz `default_action` / `mode`, adı olmayan ya da aynı adlı kurallar hata verir.
 - Model izin listesi: kurallarda `model_in` / `model_not_in` (model adı, joker destekli) ve
@@ -17,6 +19,19 @@
 
 ### Gateway
 
+- İstisna listesi (`exceptions`): kurumun kamuya açık değerleri (tahsilat IBAN'ı, destek e-postası,
+  çağrı merkezi numarası) bulunmamış sayılır: maskelenmez, kurallara, kayda ve çıktı sızıntısı
+  taramasına girmez. `values` biçimden bağımsız (boşluk, +90 / 0 öneki, büyük / küçük harf),
+  `patterns` değerin tamamıyla eşleşir. `SECRET_*` ve `KURUM_*` istisna olamaz. Motorun tanımadığı
+  değer açılışta uyarı olarak loglanır (değerin kendisi loglanmaz). `/v1/policy/info`'da sayılar.
+- Akıllı yönlendirme (`routing`): eşleşen istek (ör. yurt dışı modele TCKN / IBAN) maskelenmek ya da
+  engellenmek yerine `to` ile verilen kurum içi modele gider; kurallar yeni hedefe göre yeniden
+  uygulanır. Hedef kurum içi değilse ya da API biçimi için kurum içi upstream yoksa yönlendirilmez.
+  Gözlem modu (`mode: monitor`) desteklenir. Kayıtta kural `yonlendirme:<ad>`, cevapta
+  `X-Telveguard-Routed-To` başlığı; simülatörde `routed_from`. Konsoldan düzenlenir (Politika
+  sekmesinde ayrı grup). POC raporunda yönlendirilen istekler "korundu" sayılır.
+  Etki analizi (`POST /v1/policy/impact`) yönlendirmeyi hesaba katar: sonuç `route`, yalnızca
+  gateway'den geçen biçimlerde ve kurum içi upstream'i olan hedefte.
 - Ağ tarafı (ICAP, RFC 3507 REQMOD): kurum proxy'si (Squid, ProxySG, Forcepoint, Zscaler ...)
   TLS denetimiyle çözdüğü AI isteklerini sorar; masaüstü uygulamaları ve betikler. Gövdedeki metin
   biçimden bağımsız taranır, karar geçir (204) / durdur (403; SDK'lara JSON, tarayıcıya HTML).
@@ -78,6 +93,10 @@
 
 ### Tarayıcı eklentisi
 
+- İstisnalar (`exceptions`) eklentide de geçerli: sözlükle aynı uçtan (`GET /v1/shadow-ai/dictionary`,
+  `exceptions` alanı) değerler tuzlu özet, düzenli ifadeler olduğu gibi gelir; istisna değer
+  yapıştırırken uyarı çıkarmaz ve maskelenmez. Sürüm (ETag) istisnalar değişince de değişir.
+  Popup'ta istisna sayısı.
 - Kayıtta görünen kişi: MDM'de `user` yoksa Chrome'da oturum açmış profilin e-postası
   (`identity`, `identity.email` izinleri; MDM ile zorunlu kurulumda onay sorulmaz), o da yoksa
   `unknown`. Popup'ta "Kayıtta görünen" satırı. `dev_extension.sh` artık sabit `demo.kullanici`
