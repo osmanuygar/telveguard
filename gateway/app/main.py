@@ -984,11 +984,13 @@ async def shadow_ai_events(request: Request):
 
 @app.get("/v1/shadow-ai/dictionary")
 async def shadow_ai_dictionary(request: Request):
-    """Kurumsal sözlüğün tarayıcı sürümü: terimler tuzlu özet, düzenli ifadeler olduğu gibi
-    (dictionary.browser_payload). ETag = sürüm; değişmediyse 304, eklenti yeniden indirmez."""
+    """Kurumsal sözlüğün ve istisnaların tarayıcı sürümü: terimler / değerler tuzlu özet, düzenli
+    ifadeler olduğu gibi (dictionary.browser_payload, exemptions.browser_payload). ETag = sürüm;
+    değişmediyse 304, eklenti yeniden indirmez."""
     if err := _require_extension(request):
         return err
-    payload = request.app.state.dictionary.browser()
+    st = request.app.state
+    payload = exemptions_mod.browser_payload(st.dictionary.browser(), st.exemptions)
     etag = f'"{payload["version"]}"'
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers={"ETag": etag})

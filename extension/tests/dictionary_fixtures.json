@@ -1,6 +1,6 @@
 {
  "payload": {
-  "version": "46ca7a956473af87176a6896ba58a74b",
+  "version": "fa5b88369a4c77fb475c41fc67d81489",
   "salt": "46ca7a956473af87176a6896ba58a74b",
   "labels": {
    "KURUM_PROJE": "Proje kod adı",
@@ -56,7 +56,35 @@
     "whole_word": true
    }
   ],
-  "skipped_terms": 0
+  "skipped_terms": 0,
+  "exceptions": {
+   "values": [
+    {
+     "entity": "IBAN_TR",
+     "hashes": [
+      "48ec2a889e6034e7"
+     ]
+    },
+    {
+     "entity": "PHONE_TR",
+     "hashes": [
+      "ca80d6a05bd3fb76"
+     ]
+    },
+    {
+     "entity": "TCKN",
+     "hashes": [
+      "199f7b9d9ebd7c30"
+     ]
+    }
+   ],
+   "patterns": [
+    {
+     "entity": "EMAIL_ADDRESS",
+     "pattern": "[a-z0-9.+-]+@sirket\\.com\\.tr"
+    }
+   ]
+  }
  },
  "cases": [
   {
@@ -192,6 +220,55 @@
     ]
    ],
    "masked_b64": "w5ZuY2VkZW4gbWFza2VsaSBbS1VSVU1fUFJPSkVfMV0gdmUgeWVuaSBbS1VSVU1fUFJPSkVfMV0="
+  },
+  {
+   "text_b64": "w5ZkZW1lIFRSNDkwMDA2MjAwMDAwMDAwOTk5OTk5OTk5IHlhIGRhIHRyNDkgMDAwNiAyMDAwIDAwMDAgMDk5OSA5OTk5IDk5OyBtw7zFn3RlcmkgVFI4MTAwMDYyMDAwMDAwMDAxMjM0NTY3ODk=",
+   "findings": [
+    [
+     "IBAN_TR",
+     81,
+     107
+    ]
+   ],
+   "masked_b64": "w5ZkZW1lIFRSNDkwMDA2MjAwMDAwMDAwOTk5OTk5OTk5IHlhIGRhIHRyNDkgMDAwNiAyMDAwIDAwMDAgMDk5OSA5OTk5IDk5OyBtw7zFn3RlcmkgW0lCQU5fVFJfMV0="
+  },
+  {
+   "text_b64": "w4dhxJ9yxLEgbWVya2V6aSArOTAgKDUzMikgMDAwIDAwIDAwIHZlIDA1MzIwMDAwMDAwOyBtw7zFn3RlcmkgMDUzMyAxMTEgMjIgMzM=",
+   "findings": [
+    [
+     "PHONE_TR",
+     58,
+     72
+    ]
+   ],
+   "masked_b64": "w4dhxJ9yxLEgbWVya2V6aSArOTAgKDUzMikgMDAwIDAwIDAwIHZlIDA1MzIwMDAwMDAwOyBtw7zFn3RlcmkgW1BIT05FX1RSXzFd"
+  },
+  {
+   "text_b64": "ZGVzdGVrQHNpcmtldC5jb20udHIsIFNhdGlzQFNpcmtldC5jb20udHIsIHhAc2lya2V0LmNvbS50ci5vcm5lay5jb20gdmUgYWxpQG9ybmVrLmNvbQ==",
+   "findings": [
+    [
+     "EMAIL_ADDRESS",
+     43,
+     68
+    ],
+    [
+     "EMAIL_ADDRESS",
+     72,
+     85
+    ]
+   ],
+   "masked_b64": "ZGVzdGVrQHNpcmtldC5jb20udHIsIFNhdGlzQFNpcmtldC5jb20udHIsIFtFTUFJTF9BRERSRVNTXzFdIHZlIFtFTUFJTF9BRERSRVNTXzJd"
+  },
+  {
+   "text_b64": "VGVzdCBUQ0tOIDQ5ODI1OTc5MTYwLCBnZXLDp2VrIDM5MTQxNzc3Njk0",
+   "findings": [
+    [
+     "TCKN",
+     30,
+     41
+    ]
+   ],
+   "masked_b64": "VGVzdCBUQ0tOIDQ5ODI1OTc5MTYwLCBnZXLDp2VrIFtUQ0tOXzFd"
   }
  ]
 }

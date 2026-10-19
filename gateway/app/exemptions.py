@@ -16,7 +16,13 @@ hanesiyle (+90 / 0 öneki fark etmez), e-posta küçük harfle.
 
 Sırlar (SECRET_*) istisna olamaz: anahtar ne olursa olsun dışarı çıkmamalı. Kurumsal sözlük
 (KURUM_*) terimi istemiyorsanız sözlükten çıkarın.
+
+Tarayıcı eklentisi istisnaları sözlükle birlikte alır (GET /v1/shadow-ai/dictionary, `exceptions`):
+değerler sözlük terimleri gibi tuzlu SHA-256 özeti olarak, düzenli ifadeler olduğu gibi. Eklenti
+bulduğu değeri aynı biçimde normalize edip özetler (extension/src/detectors.js normalizeExempt).
 """
+import hashlib
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -67,6 +73,7 @@ class Exemptions:
                  raw_values: Optional[Dict[str, List[str]]] = None):
         self.values, self.patterns, self.entries = values, patterns, entries
         self._raw_values = raw_values or {}
+        self._browser: Dict[str, Dict[str, Any]] = {}   # tuz -> eklenti biçimi (10 bin değerde özet hesabı)
 
     @classmethod
     def from_config(cls, cfg: Optional[Dict[str, Any]]) -> "Exemptions":
@@ -129,10 +136,32 @@ class Exemptions:
                                 "(motor bu değeri %s olarak tanımıyor; istisna etkisiz)", entity, len(v), entity)
         pii.exempt = self.is_exempt if self.entries else None
 
+    def browser(self, salt: str) -> Dict[str, Any]:
+        """Tarayıcı eklentisine giden biçim: normalize değerlerin tuzlu özeti, düzenli ifadeler olduğu gibi."""
+        from .dictionary import term_hash
+        if salt in self._browser:
+            return self._browser[salt]
+        self._browser[salt] = {"values": [{"entity": e, "hashes": sorted({term_hash(salt, v) for v in vals})}
+                           for e, vals in sorted(self.values.items()) if vals],
+                "patterns": [{"entity": e, "pattern": p.pattern}
+                             for e, pats in sorted(self.patterns.items()) for p in pats]}
+        return self._browser[salt]
+
     def describe(self) -> List[Dict[str, Any]]:
         """Arayüz için: değerlerin kendisi değil sayıları."""
         return [{"entity": e.entity, "label": e.label, "values": e.values, "patterns": e.patterns}
                 for e in self.entries]
+
+
+def browser_payload(dictionary_payload: Dict[str, Any], exemptions: Exemptions) -> Dict[str, Any]:
+    """Sözlüğün tarayıcı sürümüne istisnalar eklenir. Sürüm (ETag) ikisinden birlikte hesaplanır:
+    yalnızca istisna değişse de eklenti yeniden indirir. Tuz sözlüğünkiyle aynı kalır."""
+    if not exemptions.entries:
+        return dictionary_payload
+    exc = exemptions.browser(dictionary_payload["salt"])
+    canonical = json.dumps(exc, ensure_ascii=False, sort_keys=True)
+    version = hashlib.sha256(f"{dictionary_payload['version']}\n{canonical}".encode("utf-8")).hexdigest()[:32]
+    return {**dictionary_payload, "version": version, "exceptions": exc}
 
 
 def load(policy_path: str) -> Exemptions:

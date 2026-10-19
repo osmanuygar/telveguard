@@ -170,8 +170,35 @@
         skipped++;   // Python'a özgü sözdizimi (ör. (?P<ad>)): tarayıcıda aranamaz
       }
     }
-    dictionary = { salt: payload.salt, labels: payload.labels || {}, terms, patterns };
-    return { terms: terms.reduce((n, t) => n + t.hashes.size, 0), patterns: patterns.length, skipped };
+    // İstisnalar (gateway: exemptions.browser_payload): kurumun kamuya açık değerleri bulgu sayılmaz
+    const exc = payload.exceptions || {};
+    const exemptHashes = new Map((exc.values || []).map((v) => [v.entity, new Set(v.hashes)]));
+    const exemptPatterns = [];
+    for (const p of exc.patterns || []) {
+      try {
+        exemptPatterns.push({ entity: p.entity, re: new RegExp(`^(?:${p.pattern})$`, "iu") });   // Python: fullmatch
+      } catch {
+        skipped++;
+      }
+    }
+    dictionary = { salt: payload.salt, labels: payload.labels || {}, terms, patterns, exemptHashes, exemptPatterns };
+    return { terms: terms.reduce((n, t) => n + t.hashes.size, 0), patterns: patterns.length, skipped,
+      exceptions: [...exemptHashes.values()].reduce((n, h) => n + h.size, 0) + exemptPatterns.length };
+  }
+
+  // gateway: exemptions.normalize (aynı değerin farklı yazımları aynı özeti versin)
+  function normalizeExempt(entity, v) {
+    if (entity === "TCKN" || entity === "VKN" || entity === "CREDIT_CARD") return v.replace(/\D/g, "");
+    if (entity === "IBAN_TR") return v.replace(/\s/g, "").toUpperCase();
+    if (entity === "PHONE_TR") return v.replace(/\D/g, "").slice(-10);
+    return v.trim().replace(/\s+/g, " ").toLowerCase();
+  }
+
+  function isExempt(entity, value) {
+    if (!dictionary) return false;
+    const hashes = dictionary.exemptHashes.get(entity);
+    if (hashes && hashes.has(termHash(dictionary.salt, normalizeExempt(entity, value)))) return true;
+    return dictionary.exemptPatterns.some((p) => p.entity === entity && p.re.test(value));
   }
 
   /** i'de başlayan en uzun terimin bitişi; yoksa -1. */
@@ -232,7 +259,9 @@
     for (const r of ranked) {
       if (kept.every((k) => r.end <= k.start || r.start >= k.end)) kept.push(r);
     }
-    return kept.sort((a, b) => a.start - b.start).map(({ i, ...r }) => r);
+    // İstisna: çakışma çözüldükten SONRA (Python ile aynı; istisna IBAN'ın içindeki rakamlar TCKN sayılmasın)
+    return kept.filter((r) => !isExempt(r.entity, text.slice(r.start, r.end)))
+      .sort((a, b) => a.start - b.start).map(({ i, ...r }) => r);
   }
 
   /** Geri çevrilemez yerel maskeleme: yapıştırılan metin [TCKN_1] gibi yer tutucularla gider.
@@ -271,7 +300,7 @@
     (e.startsWith("SECRET_") ? "Sır: " + e.slice(7).toLowerCase().replace(/_/g, " ")
       : e.startsWith("KURUM_") ? "Kurum terimi: " + e.slice(6).toLowerCase().replace(/_/g, " ") : e);
 
-  const api = { analyze, mask, label, setDictionary, termHash, sha256Hex,
+  const api = { analyze, mask, label, setDictionary, termHash, sha256Hex, normalizeExempt,
     isValidTckn, isValidVkn, isValidTrIban, isValidLuhn, looksLikePassword };
   root.TelveguardDetectors = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;

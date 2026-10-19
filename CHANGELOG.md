@@ -93,6 +93,10 @@
 
 ### Tarayıcı eklentisi
 
+- İstisnalar (`exceptions`) eklentide de geçerli: sözlükle aynı uçtan (`GET /v1/shadow-ai/dictionary`,
+  `exceptions` alanı) değerler tuzlu özet, düzenli ifadeler olduğu gibi gelir; istisna değer
+  yapıştırırken uyarı çıkarmaz ve maskelenmez. Sürüm (ETag) istisnalar değişince de değişir.
+  Popup'ta istisna sayısı.
 - Kayıtta görünen kişi: MDM'de `user` yoksa Chrome'da oturum açmış profilin e-postası
   (`identity`, `identity.email` izinleri; MDM ile zorunlu kurulumda onay sorulmaz), o da yoksa
   `unknown`. Popup'ta "Kayıtta görünen" satırı. `dev_extension.sh` artık sabit `demo.kullanici`
