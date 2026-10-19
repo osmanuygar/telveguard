@@ -1,7 +1,7 @@
 """
 Konsoldan politika yönetimi: sürümler ClickHouse'ta, değişiklik pod'lara yeniden başlatmadan yayılır.
 
-Yalnızca kurallar düzenlenir (EDITABLE_KEYS): default_action, mode, rules, output_rules.
+Yalnızca kurallar düzenlenir (EDITABLE_KEYS): default_action, mode, rules, output_rules, routing.
 Sağlayıcılar, kurumsal sözlük, bildirim kanalları, kota ve fiyatlar ConfigMap'teki politika
 dosyasından gelmeye devam eder (sır / dosya yolu içerir, yeniden kurulum ister). Çalışan
 politika = ConfigMap dosyası + yayındaki sürümün kuralları.
@@ -38,7 +38,7 @@ from .xray import ClickHouse, ClickHouseError
 
 log = logging.getLogger("telveguard.policy_store")
 
-EDITABLE_KEYS = ("default_action", "mode", "rules", "output_rules")
+EDITABLE_KEYS = ("default_action", "mode", "rules", "output_rules", "routing")
 ACTIVATING = ("approved", "applied", "emergency")
 MAX_CONTENT = 512 * 1024
 LOCK_KEY = "telveguard:policy:lock"
@@ -126,7 +126,7 @@ def rules_diff(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
     def index(data):
         mode = data.get("mode", "enforce")
         return {(kind, r.get("name")): {**r, "mode": r.get("mode", mode)}
-                for kind in ("rules", "output_rules") for r in (data.get(kind) or [])}
+                for kind in ("rules", "output_rules", "routing") for r in (data.get(kind) or [])}
     before, after = index(old), index(new)
     out = []
     for key, rule in after.items():
@@ -142,11 +142,15 @@ def rules_diff(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _rule_row(key, rule: Dict[str, Any], status: str, before: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    row = {"kind": "output" if key[0] == "output_rules" else "input", "name": key[1], "status": status,
-           "action": rule.get("action"), "mode": rule.get("mode"), "when": rule.get("when") or {},
-           "message": rule.get("message", "")}
+    kind = {"output_rules": "output", "routing": "routing"}.get(key[0], "input")
+    row = {"kind": kind, "name": key[1], "status": status,
+           "action": "route" if kind == "routing" else rule.get("action"), "mode": rule.get("mode"),
+           "when": rule.get("when") or {}, "message": rule.get("message", "")}
+    if kind == "routing":
+        row["to"] = rule.get("to")
     if before is not None and status == "changed":
-        row["before"] = {"action": before.get("action"), "mode": before.get("mode"), "when": before.get("when") or {}}
+        row["before"] = {"action": "route" if kind == "routing" else before.get("action"),
+                         "mode": before.get("mode"), "when": before.get("when") or {}}
     return row
 
 

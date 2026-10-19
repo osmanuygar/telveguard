@@ -19,7 +19,8 @@ KVKK'ya uygun şekilde kayda geçirir. Kurum içinde (on-prem / air-gapped) çal
 </picture>
 
 Kurum içi modele veri olduğu gibi, yurt dışı modele maskeli (`[TCKN_1]`) gider; cevap dönünce yer
-tutucular gerçek değere çevrilir. Uygulamalar kod değiştirmez: OpenAI ve Anthropic API'leriyle
+tutucular gerçek değere çevrilir. İsterseniz kişisel veri içeren istek hiç dışarı çıkmadan kurum içi
+modele yönlendirilir (`routing`). Uygulamalar kod değiştirmez: OpenAI ve Anthropic API'leriyle
 uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code dahil).
 
 ## Neler yapar?
@@ -58,7 +59,7 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 **Kurumsal işletim**
 - **Kimlik:** OIDC / JWT (Keycloak, Entra ID); header ile taklit edilemez.
 - **Sağlayıcılar:** model adına göre Azure OpenAI, Gemini, Mistral, Anthropic, kurum içi vLLM.
-- **Politika:** YAML; izin ver / uyar / maskele / engelle, gözlem modu ve simülatör. Konsoldan
+- **Politika:** YAML; izin ver / uyar / maskele / engelle / kurum içi modele yönlendir, gözlem modu ve simülatör. Konsoldan
   düzenleme: geçmiş trafiğe etkisi, dört göz onayı, yeniden başlatmadan yayın, tek tıkla geri alma.
 - **Kota:** ekip başına istek / dk ve aylık token / maliyet bütçesi.
 - **İşletim:** Prometheus metrikleri, OKD / OpenShift Helm chart'ı, air-gapped kurulum.

@@ -713,7 +713,9 @@ const ACTIONS = [
   { key: "block", label: "Engellendi", color: "var(--series-4)", icon: "⛔", verb: "engellerdi" },
 ];
 const ACTION = Object.fromEntries(ACTIONS.map((a) => [a.key, a]));
-const actBadge = (key) => { const a = ACTION[key] || { label: key || "–", color: "var(--text-muted)", icon: "•" };
+// Yönlendirme bir işlem serisi değil (kayıtta karar, yeni hedefteki kuralların kararıdır); yalnızca kural rozeti
+const ROUTE_BADGE = { label: "Kurum içine yönlendir", color: "var(--series-1)", icon: "↪" };
+const actBadge = (key) => { const a = ACTION[key] || (key === "route" ? ROUTE_BADGE : { label: key || "–", color: "var(--text-muted)", icon: "•" });
   return el("span", { class: "act" }, el("i", { style: `background:${a.color}` }), `${a.icon} ${a.label}`); };
 
 // Röntgen kutucuklarından olaylara geçişte kullanılan görünümler (sunucudaki EVENT_FLAGS ile aynı adlar)
@@ -1367,7 +1369,8 @@ function renderSimulation(res, other) {
     el("div", { class: "icon", "aria-hidden": "true" }, a.icon),
     el("div", {}, el("div", { class: "title" }, verdictTitle(res)),
       el("div", { class: "why" }, d.reason || (d.rules.length ? "Kural: " + d.rules.join(", ") : "Hiçbir kural tetiklenmedi; varsayılan karar.")))));
-  const meta = [`${DEST_LABELS[res.destination]} · ${res.model}`, res.provider ? `sağlayıcı: ${res.provider}` : null,
+  const meta = [`${DEST_LABELS[res.destination]} · ${res.model}`,
+    res.routed_from ? `${res.routed_from} yerine yönlendirildi` : null, res.provider ? `sağlayıcı: ${res.provider}` : null,
     `ekip: ${res.teams.join(", ")}`,
     res.declared === false ? "envanterde beyan edilmemiş" : res.declared ? "envanterde beyanlı" : null].filter(Boolean);
   out.push(el("div", { class: "compare" }, meta.join(" · ")));
@@ -1786,13 +1789,14 @@ const STATUS_TAG = { added: "Yeni", changed: "Değişti", removed: "Silindi" };
 function ruleRow(r) {
   const tags = [];
   if (r.kind === "output") tags.push(el("span", { class: "tag out" }, "Çıktı"));
+  const routeChip = r.to ? el("span", { class: "chip" }, el("span", { class: "meta" }, "Hedef model:"), " " + r.to) : null;
   if (r.mode === "monitor") tags.push(el("span", { class: "tag mon", title: "Uygulanmaz; yalnızca ne olacağı kaydedilir" }, "Gözlem"));
   if (STATUS_TAG[r.status]) tags.push(el("span", { class: "tag " + r.status }, STATUS_TAG[r.status]));
-  const was = r.before ? el("div", { class: "was" }, "Önce: ", ACTION[r.before.action]?.label || r.before.action,
+  const was = r.before ? el("div", { class: "was" }, "Önce: ", (ACTION[r.before.action] || (r.before.action === "route" ? ROUTE_BADGE : null))?.label || r.before.action,
     r.before.mode === "monitor" ? " (gözlem)" : "", " · ", condText(r.before.when)) : null;
   return el("div", { class: "rule " + (r.status || "") },
     el("div", {}, actBadge(r.action)),
-    el("div", {}, el("div", { class: "name" }, r.name), el("div", { class: "cond" }, condChips(r.when)),
+    el("div", {}, el("div", { class: "name" }, r.name), el("div", { class: "cond" }, condChips(r.when), routeChip),
       r.message ? el("div", { class: "msg" }, "Kullanıcıya: “", r.message, "”") : null, was),
     el("div", { class: "tags" }, tags));
 }
@@ -1810,10 +1814,11 @@ function renderRuleList(target, changes, onlyChanged) {
     target.append(el("div", { class: "empty" }, onlyChanged ? "Yayındaki politikayla aynı: değişiklik yok." : "Kural yok."));
     return;
   }
-  for (const kind of ["input", "output"]) {
+  const GROUPS = { routing: "Yönlendirme (kurallardan önce)", input: "İstek kuralları", output: "Cevap (çıktı) kuralları" };
+  for (const kind of ["routing", "input", "output"]) {
     const group = rows.filter((r) => r.kind === kind);
     if (!group.length) continue;
-    target.append(el("div", { class: "rule-group" }, kind === "input" ? "İstek kuralları" : "Cevap (çıktı) kuralları"),
+    target.append(el("div", { class: "rule-group" }, GROUPS[kind]),
       el("div", { class: "rules" }, group.map(ruleRow)));
   }
 }

@@ -55,6 +55,19 @@ dictionary:
   #   label: Müşteri unvanı
   #   terms_file: kurum/musteriler.txt       # satır başına bir terim (bu dosyaya göre göreli)
 
+# Yönlendirme: eşleşen istek maskelenmek / engellenmek yerine kurum içi modele gider (kullanıcı cevabını
+# alır, veri kurumda kalır). Kurallardan ÖNCE değerlendirilir, ilk eşleşen kazanır; ardından kurallar yeni
+# hedefe göre yeniden uygulanır (ör. kart numarası kurum içinde de maskelenir, injection yine engellenir).
+# to: hedef model; kurum içi olmalı (destinations ya da sağlayıcı tanımı). Hedef yurt dışıysa ya da API
+# biçimi için kurum içi upstream yoksa (ör. Anthropic biçimi, UPSTREAM_ANTHROPIC_INTERNAL_URL boş)
+# yönlendirilmez, kurallar uygulanır. Kayıtta kural "yonlendirme:<ad>"; cevapta X-Telveguard-Routed-To.
+# Önce mode: monitor ile açıp kaç isteğin yönleneceğini Olaylar ekranında görün.
+# routing:
+#   - name: kimlik-finans-kurum-ici
+#     when: { destination: external, entity_in: [TCKN, VKN, IBAN_TR] }
+#     to: vllm/qwen3-72b
+#     mode: monitor
+
 rules:
   - name: prompt-injection-block
     when: { injection_score_gte: 0.85 }

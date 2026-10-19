@@ -17,12 +17,17 @@ Model izin listesi: `model_in` / `model_not_in` model adına joker ile bakar ("g
 modeli içeren bir sistem beyan edilmemişse eşleşir. Envanter gateway'de okunur ve Context'e
 `declared` olarak gelir; envanter yoksa (None) `declared` koşulu hiç eşleşmez.
 
+Yönlendirme (`routing`): eşleşen istek maskelenmek / engellenmek yerine `to` ile verilen
+(kurum içi) modele gider. Kurallardan ÖNCE değerlendirilir, ilk uygulanan eşleşme kazanır; gateway
+modeli değiştirip kuralları yeni hedefe göre yeniden değerlendirir. Gözlemdeki yönlendirme
+yalnızca kayda geçer.
+
 İleride OPA/Rego'ya geçilebilir; YAML formatı güvenlik ekiplerinin
 kod yazmadan kural eklemesi için tercih edildi.
 """
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
-from typing import FrozenSet, List, Optional, Set
+from typing import FrozenSet, List, Optional, Set, Tuple
 
 import yaml
 
@@ -73,7 +78,7 @@ class PolicyEngine:
             raise ValueError(f"Geçersiz default_action '{cfg.get('default_action')}'")
         if cfg.get("mode", "enforce") not in MODES:
             raise ValueError(f"Geçersiz mode '{cfg.get('mode')}' ({', '.join(sorted(MODES))})")
-        for key in ("rules", "output_rules"):
+        for key in ("rules", "output_rules", "routing"):
             items = cfg.get(key) or []
             if not isinstance(items, list) or not all(isinstance(r, dict) for r in items):
                 raise ValueError(f"{key} kural listesi olmalı")
@@ -87,6 +92,7 @@ class PolicyEngine:
         self.mode = cfg.get("mode", "enforce")
         self.rules = cfg.get("rules") or []
         self.output_rules = cfg.get("output_rules") or []
+        self.routing = cfg.get("routing") or []
         self.destinations = cfg.get("destinations", {})
         self.pricing = cfg.get("pricing", {})
         self.quotas = cfg.get("quotas") or {}   # gateway'de doğrulanır ve uygulanır (quota.py)
@@ -96,6 +102,15 @@ class PolicyEngine:
                 raise ValueError(f"Kural '{rule.get('name')}': geçersiz mode '{mode}' ({', '.join(sorted(MODES))})")
             if rule.get("action") not in SEVERITY:
                 raise ValueError(f"Kural '{rule.get('name')}': geçersiz action '{rule.get('action')}'")
+            self._validate_when(rule)
+        for rule in self.routing:
+            name = rule.get("name")
+            if rule.get("mode", self.mode) not in MODES:
+                raise ValueError(f"Yönlendirme '{name}': geçersiz mode '{rule.get('mode')}' ({', '.join(sorted(MODES))})")
+            if not isinstance(rule.get("to"), str) or not rule["to"].strip():
+                raise ValueError(f"Yönlendirme '{name}': to (hedef model adı) gerekli")
+            if "action" in rule:
+                raise ValueError(f"Yönlendirme '{name}': action yazılmaz; hedef modeli to ile verin")
             self._validate_when(rule)
 
     @staticmethod
@@ -127,6 +142,19 @@ class PolicyEngine:
             if model.startswith(entry["match"]):
                 return round((prompt_tokens * entry["input"] + completion_tokens * entry["output"]) / 1_000_000, 6)
         return None
+
+    def route(self, ctx: Context) -> Tuple[Optional[dict], List[str]]:
+        """(uygulanan ilk yönlendirme kuralı ya da None, ondan önce eşleşen gözlemdeki kuralların adları).
+        Zaten hedef modele giden istek yönlendirilmez."""
+        monitored: List[str] = []
+        for rule in self.routing:
+            if rule["to"] == ctx.model or not self._matches(rule.get("when", {}), ctx):
+                continue
+            if rule.get("mode", self.mode) == "monitor":
+                monitored.append(rule["name"])
+                continue
+            return rule, monitored
+        return None, monitored
 
     def evaluate(self, ctx: Context) -> Decision:
         return self._evaluate(self.rules, ctx, self.default_action)

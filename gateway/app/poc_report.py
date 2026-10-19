@@ -4,7 +4,7 @@ POC değerlendirme raporu: "Telveguard olmasaydı ne olurdu?"
 Denetim kayıtlarından yönetici özeti. Her riskli istek (yurt dışına kişisel veri, sır, kurum
 bilgisi, prompt injection, model cevabında sızıntı) üç akıbetten birine ayrılır:
 
-  korundu     : uygulanan karar korudu (maskelendi / engellendi)
+  korundu     : uygulanan karar korudu (maskelendi / engellendi / kurum içi modele yönlendirildi)
   gözlemde    : uygulanan karar korumadı ama gözlem modundaki (mode: monitor) bir kural
                 maskeleyecek ya da engelleyecekti; kural uygulamaya alınınca korunur
   korumasız   : hiçbir kural korumadı; öneriler bu açığı kapatacak politikayı yazar
@@ -28,6 +28,8 @@ _WINDOW = "event_time >= now() - INTERVAL {days:UInt32} DAY"
 _SHADOW = "api_format IN ('browser', 'icap')"
 _GATEWAY = f"NOT {_SHADOW}"
 _PROTECTIVE = "('mask', 'block')"
+# Politikadaki `routing`: yurt dışı modele istenen ama kurum içi modele giden istek (kayıtta hedef internal)
+_ROUTED = "arrayExists(r -> startsWith(r, 'yonlendirme:'), rules)"
 
 
 def _kind_exists(prefix: Optional[str]) -> str:
@@ -45,14 +47,14 @@ def _kind_unmasked(prefix: Optional[str]) -> str:
 
 # ad -> (riskli mi, korundu mu, gözlemde korunur muydu)
 RISKS: Dict[str, tuple] = {
-    "pii_external": (f"destination = 'external' AND {_kind_exists(None)}",
-                     f"action = 'block' OR NOT {_kind_unmasked(None)}",
+    "pii_external": (f"(destination = 'external' OR {_ROUTED}) AND {_kind_exists(None)}",
+                     f"action = 'block' OR {_ROUTED} OR NOT {_kind_unmasked(None)}",
                      f"would_action IN {_PROTECTIVE}"),
     "secrets": (_kind_exists("SECRET_"),
                 f"action = 'block' OR NOT {_kind_unmasked('SECRET_')}",
                 f"would_action IN {_PROTECTIVE}"),
-    "corporate_external": (f"destination = 'external' AND {_kind_exists('KURUM_')}",
-                           f"action = 'block' OR NOT {_kind_unmasked('KURUM_')}",
+    "corporate_external": (f"(destination = 'external' OR {_ROUTED}) AND {_kind_exists('KURUM_')}",
+                           f"action = 'block' OR {_ROUTED} OR NOT {_kind_unmasked('KURUM_')}",
                            f"would_action IN {_PROTECTIVE}"),
     "injection": ("injection_score >= 0.5", "action = 'block'", "would_action = 'block'"),
     "output_leak": ("notEmpty(output_leaked)", f"output_action IN {_PROTECTIVE}", "0"),

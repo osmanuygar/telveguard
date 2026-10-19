@@ -10,6 +10,7 @@
 
 ### telveguard-core
 
+- `PolicyEngine.route(ctx)` ve politikada `routing` bölümü (`name`, `when`, `to`, `mode`).
 - `PolicyEngine(config=...)`: politika dosya yerine sözlükten de kurulur. Doğrulama sıkılaştı:
   geçersiz `default_action` / `mode`, adı olmayan ya da aynı adlı kurallar hata verir.
 - Model izin listesi: kurallarda `model_in` / `model_not_in` (model adı, joker destekli) ve
@@ -17,6 +18,12 @@
 
 ### Gateway
 
+- Akıllı yönlendirme (`routing`): eşleşen istek (ör. yurt dışı modele TCKN / IBAN) maskelenmek ya da
+  engellenmek yerine `to` ile verilen kurum içi modele gider; kurallar yeni hedefe göre yeniden
+  uygulanır. Hedef kurum içi değilse ya da API biçimi için kurum içi upstream yoksa yönlendirilmez.
+  Gözlem modu (`mode: monitor`) desteklenir. Kayıtta kural `yonlendirme:<ad>`, cevapta
+  `X-Telveguard-Routed-To` başlığı; simülatörde `routed_from`. Konsoldan düzenlenir (Politika
+  sekmesinde ayrı grup). POC raporunda yönlendirilen istekler "korundu" sayılır.
 - Ağ tarafı (ICAP, RFC 3507 REQMOD): kurum proxy'si (Squid, ProxySG, Forcepoint, Zscaler ...)
   TLS denetimiyle çözdüğü AI isteklerini sorar; masaüstü uygulamaları ve betikler. Gövdedeki metin
   biçimden bağımsız taranır, karar geçir (204) / durdur (403; SDK'lara JSON, tarayıcıya HTML).
