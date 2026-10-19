@@ -28,6 +28,8 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 **Koruma**
 - **Türkçe kişisel veri:** TCKN, VKN, IBAN, kart (sağlama toplamıyla; rastgele 11 haneli sayı TCKN
   sayılmaz), telefon, e-posta, plaka; opsiyonel Türkçe NER ile kişi / kurum / yer adları.
+- **İstisnalar:** kurumun kamuya açık IBAN'ı, destek e-postası gibi değerler kişisel veri sayılmaz;
+  gereksiz maskeleme ve yanlış alarm olmaz (sırlar istisna olamaz).
 - **Kurumsal sözlük:** proje kod adları, müşteri unvanları, iç sunucu adları gibi kişisel veri
   olmayan ama dışarı çıkmaması gereken terimler (terim listesi, dosya ya da düzenli ifade).
 - **Sırlar:** AWS, GitHub, OpenAI, Anthropic, Slack, Google, Stripe anahtarları, JWT, private key,

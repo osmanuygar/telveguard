@@ -143,6 +143,19 @@ output_rules:
     action: mask
     mode: monitor
 
+# İstisnalar: kişisel veri gibi görünen ama kamuya açık kurum değerleri (tahsilat IBAN'ı, destek
+# e-postası, çağrı merkezi). Bulunmamış sayılır: maskelenmez, kurallara ve kayda girmez; model metni
+# bozulmadan görür. values biçimden bağımsızdır (boşluk, +90 / 0 öneki, büyük / küçük harf);
+# patterns değerin TAMAMIYLA eşleşmeli. Sırlar (SECRET_*) ve sözlük (KURUM_*) istisna olamaz.
+# Gateway, tanımadığı değeri (ör. sağlama toplamı tutmayan IBAN) açılışta uyarı olarak loglar.
+# exceptions:
+#   - entity: IBAN_TR
+#     label: Tahsilat hesabı
+#     values: ["TR00 0000 0000 0000 0000 0000 00"]     # kendi IBAN'ınızla değiştirin
+#   - entity: EMAIL_ADDRESS
+#     label: Kurumsal e-posta adresleri
+#     patterns: ['[\w.+-]+@sirket\.com\.tr']
+
 # Ekler: görseller (OCR, Türkçe + İngilizce) ve PDF'ler taranır; bulunan veri türleri metinle
 # aynı kurallardan geçer. Maskeleme gerekirse görselde ilgili alan karartılır (üstüne [TCKN_1]
 # yazılır), PDF / metin dosyası modele maskeli metni olarak gider.

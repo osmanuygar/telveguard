@@ -10,6 +10,7 @@
 
 ### telveguard-core
 
+- `TrPiiEngine.exempt`: (tür, değer) -> bool; eşleşen bulgular çakışma çözüldükten sonra düşülür.
 - `PolicyEngine.route(ctx)` ve politikada `routing` bölümü (`name`, `when`, `to`, `mode`).
 - `PolicyEngine(config=...)`: politika dosya yerine sözlükten de kurulur. Doğrulama sıkılaştı:
   geçersiz `default_action` / `mode`, adı olmayan ya da aynı adlı kurallar hata verir.
@@ -18,6 +19,11 @@
 
 ### Gateway
 
+- İstisna listesi (`exceptions`): kurumun kamuya açık değerleri (tahsilat IBAN'ı, destek e-postası,
+  çağrı merkezi numarası) bulunmamış sayılır: maskelenmez, kurallara, kayda ve çıktı sızıntısı
+  taramasına girmez. `values` biçimden bağımsız (boşluk, +90 / 0 öneki, büyük / küçük harf),
+  `patterns` değerin tamamıyla eşleşir. `SECRET_*` ve `KURUM_*` istisna olamaz. Motorun tanımadığı
+  değer açılışta uyarı olarak loglanır (değerin kendisi loglanmaz). `/v1/policy/info`'da sayılar.
 - Akıllı yönlendirme (`routing`): eşleşen istek (ör. yurt dışı modele TCKN / IBAN) maskelenmek ya da
   engellenmek yerine `to` ile verilen kurum içi modele gider; kurallar yeni hedefe göre yeniden
   uygulanır. Hedef kurum içi değilse ya da API biçimi için kurum içi upstream yoksa yönlendirilmez.

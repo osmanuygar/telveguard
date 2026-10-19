@@ -32,6 +32,7 @@ from . import agent as agent_mod
 from . import attachments as attachments_mod
 from . import compliance
 from . import dictionary as dictionary_mod
+from . import exemptions as exemptions_mod
 from . import icap as icap_mod
 from . import shadow_ai
 from . import subjects as subjects_mod
@@ -61,6 +62,9 @@ async def lifespan(app: FastAPI):
     # Kurumsal sözlük (proje adları, müşteri unvanları ...): PII motoruna tanıyıcı olarak eklenir
     app.state.dictionary = dictionary_mod.load(policy_path)
     app.state.dictionary.install(app.state.pii)
+    # İstisnalar (kurumun kamuya açık IBAN'ı, destek e-postası ...): bulunmamış sayılır
+    app.state.exemptions = exemptions_mod.load(policy_path)
+    app.state.exemptions.install(app.state.pii)
     app.state.audit = AuditSink()
     await app.state.audit.start()
     if not hasattr(app.state, "http"):  # testlerde MockTransport enjekte edilebilir
@@ -656,7 +660,8 @@ async def policy_info(request: Request):
                          "when": r.get("when", {})} for r in pol.routing],
             "providers": request.app.state.providers.describe(),
             "notify": request.app.state.notifier.describe(),
-            "dictionary": request.app.state.dictionary.describe()}
+            "dictionary": request.app.state.dictionary.describe(),
+            "exceptions": request.app.state.exemptions.describe()}
 
 
 @app.post("/v1/notify/test")
