@@ -1,0 +1,39 @@
+# LiteLLM proxy'sine Telveguard guardrail'i (Generic Guardrail API). Telveguard tarafında
+# GUARDRAIL_TOKEN tanımlı olmalı; aynı değer LiteLLM'de TELVEGUARD_GUARDRAIL_TOKEN.
+#
+#   istek  -> Telveguard: tara, politika, maskele (TCKN -> [TCKN_1]) ya da engelle
+#   cevap  -> Telveguard: sızıntı taraması, çıktı kuralları, [TCKN_1] -> gerçek değer
+#
+# Kimlik sanal anahtardan gelir: kullanıcı (e-posta / user_id), ekip (team_alias / team_id).
+# Hedef model takma adından çıkar (Telveguard politikasındaki destinations / providers); takma ad
+# kurum içi bir modeli gösteriyorsa aşağıdaki gibi ayrı bir guardrail ile destination: internal.
+# Kota, maliyet ve yönlendirme LiteLLM'de kalır; Telveguard'ın kayıtlarında token "bilinmiyor".
+
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+guardrails:
+  - guardrail_name: telveguard
+    litellm_params:
+      guardrail: generic_guardrail_api
+      mode: [pre_call, post_call]
+      api_base: http://telveguard-gateway:8080          # LiteLLM yolu kendisi ekler
+      api_key: os.environ/TELVEGUARD_GUARDRAIL_TOKEN     # x-api-key başlığıyla gider
+      default_on: true
+      unreachable_fallback: fail_closed                  # Telveguard'a ulaşılamazsa istek durur
+      # Stream: maske cevapta geri açılır, sızıntı istemciye gitmeden engellenir. Yalnızca OpenAI
+      # chat completions stream'inde; diğer biçimlerde stream'de kullanıcı [TCKN_1] görür.
+      streaming_transform_mode: incremental_diff
+      streaming_sampling_rate: 5                         # her 5 parçada bir sor (1: en sıkı, en pahalı)
+
+  # Kurum içi modele giden takma adlar için (maskeleme gerekmez, sırlar ve injection yine denetlenir):
+  # - guardrail_name: telveguard-kurum-ici
+  #   litellm_params:
+  #     guardrail: generic_guardrail_api
+  #     mode: [pre_call, post_call]
+  #     api_base: http://telveguard-gateway:8080
+  #     api_key: os.environ/TELVEGUARD_GUARDRAIL_TOKEN
+  #     additional_provider_specific_params: { destination: internal }

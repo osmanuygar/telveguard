@@ -19,6 +19,16 @@
 
 ### Gateway
 
+- Guardrail servisi: LiteLLM (`POST /beta/litellm_basic_guardrail_api`, Generic Guardrail API) ve
+  agentgateway (`POST /v1/guardrail/agentgateway/request|response`, Guardrail Webhook API) isteği
+  modele göndermeden önce ve cevabı vermeden önce Telveguard'a sorar. Gateway'in kendi yoluyla aynı
+  tarama, politika, istisnalar ve maskeleme; cevapta sızıntı taraması, çıktı kuralları ve maskeyi geri
+  açma. İstek ile cevap oturumla eşleşir (LiteLLM `litellm_call_id`, agentgateway `uuid()` başlığı);
+  maske eşleşmesi `GUARDRAIL_SESSION_TTL` (600 sn) Redis'te ya da bellekte. LiteLLM stream'inde
+  (`incremental_diff`) maske geri açılır, yarım yer tutucu `stream_holdback_chars` ile bekletilir.
+  `GUARDRAIL_TOKEN` (Helm: `guardrail-token`); kayıtta `api_format=guardrail`, kural
+  `guardrail:<kaynak>`. Metrikler `telveguard_guardrail_checks`, `telveguard_guardrail_session_misses`.
+  Hazır yapılandırmalar `deploy/guardrail/` (LiteLLM v1.104, agentgateway v1.6 ile denendi).
 - İstisna listesi (`exceptions`): kurumun kamuya açık değerleri (tahsilat IBAN'ı, destek e-postası,
   çağrı merkezi numarası) bulunmamış sayılır: maskelenmez, kurallara, kayda ve çıktı sızıntısı
   taramasına girmez. `values` biçimden bağımsız (boşluk, +90 / 0 öneki, büyük / küçük harf),

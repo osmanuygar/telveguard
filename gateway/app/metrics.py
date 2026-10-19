@@ -30,6 +30,10 @@ AGENT_CHECKS = Counter("telveguard_agent_checks", "Kod asistanı hook kontroller
                        ["client", "event", "action"])  # client: cursor | claude-code
 ICAP_CHECKS = Counter("telveguard_icap_checks", "Proxy (ICAP) üzerinden incelenen AI istekleri",
                       ["action"])  # allow | alert | block
+GUARDRAIL_CHECKS = Counter("telveguard_guardrail_checks", "Başka gateway'lerin guardrail çağrıları",
+                           ["source", "phase", "action"])  # source: litellm | agentgateway; action: pass | mask | block
+GUARDRAIL_SESSION_MISSES = Counter("telveguard_guardrail_session_misses",
+                                   "Cevap fazında bulunamayan oturumlar (maske geri açılamadı)", ["source"])
 NOTIFICATIONS = Counter("telveguard_notifications", "Slack / Teams / webhook bildirimleri",
                         ["channel_type", "result"])  # result: sent | failed | suppressed | dropped
 ATTACHMENTS = Counter("telveguard_attachments", "Taranan ekler (görsel, PDF, dosya)",

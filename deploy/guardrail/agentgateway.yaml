@@ -1,0 +1,47 @@
+# agentgateway'e Telveguard guardrail'i (Guardrail Webhook API, standalone yapılandırma).
+# Kubernetes'te aynı alanlar AgentgatewayPolicy'de: backend.ai.promptGuard.request/response[].webhook.
+#
+# x-telveguard-id: istek ile cevabı eşleştirir (maskeyi geri açmak için). transformation her isteğe
+# bir kez uuid() verir; webhook iki fazda da aynı değeri görür. Yoksa maske kalıcıdır.
+# x-telveguard-model: hedef (yurt içi / dışı) modelden çıkar; yalnızca istek fazında bilinir.
+# x-telveguard-user / -teams: kimlik (örnekte JWT'den; kendi talep adlarınızı yazın).
+# Stream: agentgateway webhook'un değiştirdiği metni stream'de uygulamaz; maske geri açılmaz
+# (kullanıcı [TCKN_1] görür). streaming: Enabled ile cevaptaki sızıntı yine engellenir.
+binds:
+- port: 3000
+  listeners:
+  - routes:
+    - backends:
+      - ai:
+          name: openai
+          provider:
+            openAI: {}
+      policies:
+        transformations:
+          request:
+            set:
+              x-telveguard-id: 'uuid()'
+        ai:
+          promptGuard:
+            streaming: Enabled
+            request:
+            - webhook:
+                target:
+                  host: telveguard-gateway:8080
+                headers:
+                  ":path": '"/v1/guardrail/agentgateway/request"'
+                  authorization: '"Bearer TELVEGUARD_GUARDRAIL_TOKEN"'   # kendi token'ınız
+                  x-telveguard-id: 'request.headers["x-telveguard-id"]'
+                  x-telveguard-model: 'llmRequest.model'
+                  x-telveguard-user: 'jwt.sub'
+                  x-telveguard-teams: 'jwt.groups.join(",")'
+            response:
+            - webhook:
+                target:
+                  host: telveguard-gateway:8080
+                headers:
+                  ":path": '"/v1/guardrail/agentgateway/response"'
+                  authorization: '"Bearer TELVEGUARD_GUARDRAIL_TOKEN"'
+                  x-telveguard-id: 'request.headers["x-telveguard-id"]'
+                  x-telveguard-user: 'jwt.sub'
+                  x-telveguard-teams: 'jwt.groups.join(",")'
