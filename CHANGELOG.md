@@ -1,6 +1,6 @@
 # Değişiklik günlüğü
 
-## Yayımlanmadı
+## 0.4.0 — 2026-10-20
 
 ### Yükseltme notları
 
@@ -17,7 +17,7 @@
 - Model izin listesi: kurallarda `model_in` / `model_not_in` (model adı, joker destekli) ve
   `declared` (AI envanterinde beyan edilmiş mi) koşulları. `Context.declared` alanı.
 
-### Gateway
+### Gateway (Docker imajı / Helm chart 0.4.0)
 
 - Guardrail servisi: LiteLLM (`POST /beta/litellm_basic_guardrail_api`, Generic Guardrail API) ve
   agentgateway (`POST /v1/guardrail/agentgateway/request|response`, Guardrail Webhook API) isteği
