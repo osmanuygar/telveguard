@@ -151,3 +151,34 @@ def test_routing_is_editable_and_diffed():
     added = [r for r in rows if r["status"] == "added"]
     assert added == [{"kind": "routing", "name": "r1", "status": "added", "action": "route", "mode": "enforce",
                       "when": {"entity_in": ["TCKN"]}, "message": "", "to": "qwen"}]
+
+
+# ---------------- etki analizi ----------------
+
+def test_impact_counts_routing(client, monkeypatch):  # noqa: F811
+    from tests.test_xray import AUTH, FakeClickHouse
+    monkeypatch.setenv("TELVEGUARD_ADMIN_TOKEN", ADMIN)
+    rows = [
+        {"team": "finans", "teams": ["finans"], "model": "gpt-4o", "destination": "external",
+         "entities": ["TCKN"], "score": 0.0, "api_format": "chat", "n": 40, "users": 6},
+        # Anthropic biçimi: kurum içi upstream yok, yönlendirilemez (maskelenmeye devam)
+        {"team": "finans", "teams": ["finans"], "model": "claude-sonnet-5", "destination": "external",
+         "entities": ["TCKN"], "score": 0.0, "api_format": "messages", "n": 7, "users": 1},
+        # Hook olayı: gateway'den geçmez, yönlendirilemez
+        {"team": "yazilim", "teams": ["yazilim"], "model": "claude-code", "destination": "external",
+         "entities": ["TCKN"], "score": 0.0, "api_format": "claude-code", "n": 5, "users": 1},
+        # Kurum içinde injection: yönlendirme sonrası da engel
+        {"team": "finans", "teams": ["finans"], "model": "gpt-4o", "destination": "external",
+         "entities": ["TCKN"], "score": 0.95, "api_format": "chat", "n": 3, "users": 1},
+    ]
+    client.app.state.ch = FakeClickHouse({"GROUP BY team, teams, model": rows})
+    content = client.get("/v1/policy/store", headers=AUTH).json()["content"]
+    draft = content.replace("rules:\n", "routing:\n  - name: kimlik-kurum-ici\n"
+                            "    when: { destination: external, entity_in: [TCKN] }\n    to: vllm/qwen3\nrules:\n", 1)
+    r = client.post("/v1/policy/impact", headers=AUTH, json={"content": draft, "days": 7})
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["transitions"] == [{"from": "mask", "to": "route", "requests": 40}]
+    assert b["after"] == {"route": 40, "mask": 12, "block": 3}
+    assert b["rules_added"][0] == {"rule": "yonlendirme:kimlik-kurum-ici", "requests": 43}
+    assert "api_format" in client.app.state.ch.calls[0][0]

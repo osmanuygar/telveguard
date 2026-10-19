@@ -252,23 +252,46 @@ def _route(st, a: Analysis, headers, kind: Optional[str] = None) -> Analysis:
     if rule is None:
         return a
     target, kind = rule["to"], kind or a.fmt.name
+    if not _routable(st, target, a.fmt, kind, headers):
+        log.warning("routing_skipped rule=%s to=%s format=%s", rule["name"], target, kind)
+        return a
     provider, provider_error, destination, ctx, decision = _decide(
         st, a.identity, a.fmt, target, a.entities, a.injection.score, a.scans)
-    if provider:
-        usable = provider.supports(kind)
-    elif kind == "count_tokens":
-        usable = MESSAGES.upstream(destination, headers, path="/v1/messages/count_tokens") is not None
-    else:
-        usable = a.fmt.upstream(destination, headers) is not None
-    if destination != "internal" or provider_error or not usable:
-        log.warning("routing_skipped rule=%s to=%s destination=%s format=%s",
-                    rule["name"], target, destination, kind)
-        return a
     decision.rules.insert(0, ROUTE_MARK + rule["name"])
     decision.monitored_rules = a.decision.monitored_rules + decision.monitored_rules
     a.body["model"] = target
     return dataclasses.replace(a, model=target, destination=destination, ctx=ctx, decision=decision,
                                provider=provider, provider_error=provider_error, routed_from=a.model)
+
+
+def _routable(st, target: str, fmt: ApiFormat, kind: str, headers) -> bool:
+    """Yönlendirme hedefi kullanılabilir mi: kurum içi ve bu API biçimi için upstream'i var."""
+    provider, provider_error = st.providers.resolve(target, fmt.name)
+    routed = provider or st.providers.first(target)
+    if provider_error or (routed.destination if routed else st.policy.destination_of(target)) != "internal":
+        return False
+    if provider:
+        return provider.supports(kind)
+    if kind == "count_tokens":
+        return MESSAGES.upstream("internal", headers, path="/v1/messages/count_tokens") is not None
+    return fmt.upstream("internal", headers) is not None
+
+
+def _impact_outcome(st, pol: PolicyEngine, ctx: Context, api_format: str):
+    """Etki analizi: kayıttaki bağlamın sonucu, yönlendirme dahil -> (sonuç, karar). Sonuç karar
+    işlemidir; kurum içine yönlendirilip orada engellenmeyen istek için "route". Yönlendirme yalnızca
+    gateway'den geçen biçimlerde olur (hook / ICAP olayları yönlendirilemez)."""
+    fmt = FORMATS.get(api_format)
+    rule = pol.route(ctx)[0] if fmt else None
+    if rule and _routable(st, rule["to"], fmt, fmt.name, {}):
+        target = rule["to"]
+        d = pol.evaluate(dataclasses.replace(
+            ctx, model=target, destination="internal",
+            declared=compliance.is_declared(st.inventory, ctx.all_teams, target)))
+        d.rules.insert(0, ROUTE_MARK + rule["name"])
+        return ("block" if d.action == "block" else "route"), d
+    d = pol.evaluate(ctx)
+    return d.action, d
 
 
 def _routed_headers(a: Analysis) -> Dict[str, str]:
@@ -1214,9 +1237,9 @@ async def policy_impact(request: Request):
     try:
         rows = await st.ch.query(f"""
             SELECT team, teams, model, destination, entities, round(injection_score, 2) AS score,
-                   count() AS n, uniqExact(user) AS users
+                   api_format, count() AS n, uniqExact(user) AS users
             FROM audit WHERE event_time >= now() - INTERVAL {{days:UInt32}} DAY AND api_format != 'browser'
-            GROUP BY team, teams, model, destination, entities, score
+            GROUP BY team, teams, model, destination, entities, score, api_format
             ORDER BY n DESC LIMIT {IMPACT_GROUPS}""", {"days": days})
     except xray_mod.ClickHouseError as e:
         return _openai_error(502, str(e), "clickhouse_error", "admin_error")
@@ -1231,21 +1254,23 @@ async def policy_impact(request: Request):
         ctx = Context(r["team"], r["model"], r["destination"], set(r.get("entities") or []),
                       float(r.get("score") or 0), frozenset(r.get("teams") or []),
                       compliance.is_declared(st.inventory, team_set, r["model"]))
-        old, new = current.evaluate(ctx), candidate.evaluate(ctx)
-        before[old.action] += n
-        after[new.action] += n
+        fmt_name = r.get("api_format") or ""
+        (old_action, old), (new_action, new) = (_impact_outcome(st, current, ctx, fmt_name),
+                                                _impact_outcome(st, candidate, ctx, fmt_name))
+        before[old_action] += n
+        after[new_action] += n
         for name in set(new.rules) - set(old.rules):
             rules_added[name] += n
         for name in set(old.rules) - set(new.rules):
             rules_removed[name] += n
-        if old.action != new.action:
-            transitions[(old.action, new.action)] += n
+        if old_action != new_action:
+            transitions[(old_action, new_action)] += n
             teams[r["team"]] += n
             if len(examples) < 12:
                 examples.append({"team": r["team"], "model": r["model"], "destination": r["destination"],
                                  "entities": r.get("entities") or [], "injection_score": r.get("score"),
                                  "requests": n, "users": int(r.get("users") or 0),
-                                 "from": old.action, "to": new.action, "rules": new.rules, "reason": new.reason})
+                                 "from": old_action, "to": new_action, "rules": new.rules, "reason": new.reason})
     total = sum(before.values())
     return {
         "days": days, "requests": total, "groups": len(rows), "truncated": len(rows) >= IMPACT_GROUPS,

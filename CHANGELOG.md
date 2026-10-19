@@ -30,6 +30,8 @@
   Gözlem modu (`mode: monitor`) desteklenir. Kayıtta kural `yonlendirme:<ad>`, cevapta
   `X-Telveguard-Routed-To` başlığı; simülatörde `routed_from`. Konsoldan düzenlenir (Politika
   sekmesinde ayrı grup). POC raporunda yönlendirilen istekler "korundu" sayılır.
+  Etki analizi (`POST /v1/policy/impact`) yönlendirmeyi hesaba katar: sonuç `route`, yalnızca
+  gateway'den geçen biçimlerde ve kurum içi upstream'i olan hedefte.
 - Ağ tarafı (ICAP, RFC 3507 REQMOD): kurum proxy'si (Squid, ProxySG, Forcepoint, Zscaler ...)
   TLS denetimiyle çözdüğü AI isteklerini sorar; masaüstü uygulamaları ve betikler. Gövdedeki metin
   biçimden bağımsız taranır, karar geçir (204) / durdur (403; SDK'lara JSON, tarayıcıya HTML).

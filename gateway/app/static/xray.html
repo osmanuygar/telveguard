@@ -714,7 +714,7 @@ const ACTIONS = [
 ];
 const ACTION = Object.fromEntries(ACTIONS.map((a) => [a.key, a]));
 // Yönlendirme bir işlem serisi değil (kayıtta karar, yeni hedefteki kuralların kararıdır); yalnızca kural rozeti
-const ROUTE_BADGE = { label: "Kurum içine yönlendir", color: "var(--series-1)", icon: "↪" };
+const ROUTE_BADGE = { label: "Kurum içine yönlendir", color: "var(--accent)", icon: "↪" };
 const actBadge = (key) => { const a = ACTION[key] || (key === "route" ? ROUTE_BADGE : { label: key || "–", color: "var(--text-muted)", icon: "•" });
   return el("span", { class: "act" }, el("i", { style: `background:${a.color}` }), `${a.icon} ${a.label}`); };
 
@@ -1701,7 +1701,8 @@ const POL_EVENTS = {
   applied: { label: "bu sürüme geri döndü", color: "var(--series-2)" },
   emergency: { label: "acil yayına aldı (dört göz atlandı)", color: "var(--status-critical)" },
 };
-const SEVERITY = { allow: 0, alert: 1, mask: 2, block: 3 };
+// Yönlendirme: veri kurumdan hiç çıkmaz (maskeden sıkı), istek yine cevaplanır (engelden gevşek)
+const SEVERITY = { allow: 0, alert: 1, mask: 2, route: 2.5, block: 3 };
 const ACTIVATING = ["approved", "applied", "emergency"];
 const pol = { data: null, check: null, timer: null, open: null, dirty: false };
 
@@ -1937,11 +1938,11 @@ function renderImpact(target, r) {
     el("div", { class: "kpis" },
       kpi("Değerlendirilen", n(r.requests), `son ${r.days} gün`),
       kpi("Kararı değişen", n(r.changed), r.requests ? pct(r.changed, r.requests) + " istek" : "–"),
-      kpi("Daha sıkı", n(up), "engel / maske artar", up ? "up" : ""),
+      kpi("Daha sıkı", n(up), "engel / maske / yönlendirme artar", up ? "up" : ""),
       kpi("Daha gevşek", n(down), "koruma azalır", down ? "down" : "")),
     r.changed ? el("div", { class: "trans" }, r.transitions.flatMap((t) => [
       actBadge(t.from), el("span", { class: "meta" }, "→ ", actBadge(t.to)),
-      el("div", { class: "bar", style: `width:${Math.max(2, 100 * t.requests / max)}%; background:${ACTION[t.to]?.color}` }),
+      el("div", { class: "bar", style: `width:${Math.max(2, 100 * t.requests / max)}%; background:${(ACTION[t.to] || ROUTE_BADGE).color}` }),
       el("span", { class: "num" }, n(t.requests))]))
       : el("div", { class: "empty" }, "Bu dönemde hiçbir isteğin kararı değişmezdi."),
     ...table("Etkilenen ekipler", r.teams, [{ label: "Ekip", render: (x) => x.team }, { label: "İstek", num: true, render: (x) => n(x.requests) }]),
@@ -1952,7 +1953,7 @@ function renderImpact(target, r) {
       { label: "Veri", render: (x) => x.entities.length ? el("div", { class: "chips" }, x.entities.map((e) => el("span", { class: "chip" }, entityLabel(e)))) : el("span", { class: "meta" }, "–") },
       { label: "Karar", render: (x) => el("div", {}, actBadge(x.from), el("div", {}, "→ ", actBadge(x.to))) },
       { label: "İstek", num: true, render: (x) => n(x.requests) }]),
-    el("p", { class: "footnote" }, "Ham metin saklanmadığı için yeniden taranmaz: kayıttaki ekip, model, hedef, veri türleri ve injection skoru taslaktan geçirilir. Tarayıcı eklentisi olayları hariç."
+    el("p", { class: "footnote" }, "Ham metin saklanmadığı için yeniden taranmaz: kayıttaki ekip, model, hedef, veri türleri ve injection skoru taslaktan geçirilir. Tarayıcı eklentisi olayları hariç. Daha önce yönlendirilmiş istekler kurum içindeki modelleriyle kayıtlıdır; yönlendirme kuralını kaldırmanın onlara etkisi görünmez."
       + (r.truncated ? " En sık görülen bağlamlarla sınırlandı." : "")));
 }
 async function runImpact() {
