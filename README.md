@@ -660,6 +660,21 @@ Prometheus için `metrics.serviceMonitor.enabled=true`. Tüm seçenekler:
 Air-gapped ortamda Türkçe NER ve LLM Guard modelleri için `scripts/mirror_models.sh`
 ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 
+**Üretim kontrol listesi** (güvenlik):
+
+- Kimlik: `auth.mode=jwt` ve yönetici grubu (`auth.oidc.adminGroup`); statik `admin-token` yalnızca
+  otomasyon için. Politika değişikliği OIDC grubuyla yapılır, dört göz ancak böyle anlamlıdır;
+  tek kişiyle yayın istenmiyorsa `policy.store.emergency=false`.
+- Bildirim: acil yayın ve geri alma için bir kanal (`rules: ["politika:*"]`).
+- Redis: birden fazla pod / worker varken `quota.redisUrl` (kota ve onay kilidi; chart zorunlu tutar).
+- Kafka: `audit.kafka.securityProtocol=SASL_SSL` ve topic ACL'i (yalnızca gateway yazar); ClickHouse
+  `https://` (kurum içi CA: `SSL_CERT_FILE`). Denetim kaydında kullanıcı ve ekip vardır.
+- Ağ: `networkPolicy.enabled=true` (router namespace'i `allowFromNamespaces`'e), `metrics.requireToken=true`.
+- Ekler: yurt dışı model kullanan ekipler için politikada `attachments.unscannable: block` (uzak
+  adresli görsel, `file_id` ve şifreli PDF taranamaz; varsayılan `alert` POC içindir).
+- Tarayıcı eklentisi token'ı herkestedir: eklenti olayları "beyan"dır, hız sınırlıdır
+  (`SHADOW_AI_*_PER_MIN`); kişi bazlı karar için gateway / `telve` olaylarını esas alın.
+
 ## Yapılandırma
 
 <details>
@@ -671,22 +686,26 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `OIDC_ISSUER`, `OIDC_AUDIENCE` | JWT modunda zorunlu; imza anahtarları issuer'ın JWKS'inden alınır (`OIDC_JWKS_URL` ile değiştirilebilir) |
 | `OIDC_USER_CLAIM`, `OIDC_TEAM_CLAIM`, `OIDC_TEAM_PREFIX` | Kullanıcı ve ekip claim'leri (varsayılan `preferred_username`, `groups`); ekip grubu öneki |
 | `OIDC_ADMIN_GROUP` | Bu gruptaki kullanıcılar yönetim uçlarına kendi JWT'leriyle erişir (ör. `telveguard-admin`) |
-| `REDIS_URL`, `REDIS_PASSWORD` | Kota sayacı (tüm pod / worker'lar için ortak) |
+| `REDIS_URL`, `REDIS_PASSWORD` | Kota sayacı ve politika deposunun onay kilidi (tüm pod / worker'lar için ortak); birden fazla süreç varken gerekli |
 | `WORKERS` | Pod başına uvicorn worker sayısı (metrikler worker'lar arasında birleştirilir) |
+| `MAX_REQUEST_BYTES` | İstek gövdesi sınırı, bayt (32 MB); aşan istek 413 `request_too_large` |
 | `UPSTREAM_INTERNAL_URL` / `UPSTREAM_EXTERNAL_URL` | Kurum içi ve yurt dışı LLM adresleri (OpenAI uyumlu); `providers` ile eşleşmeyen modeller için |
 | `UPSTREAM_INTERNAL_KEY` / `UPSTREAM_EXTERNAL_KEY` | Upstream API anahtarları |
 | `UPSTREAM_ANTHROPIC_URL`, `UPSTREAM_ANTHROPIC_KEY` | Anthropic biçimi için upstream (varsayılan `https://api.anthropic.com`) |
 | `UPSTREAM_ANTHROPIC_INTERNAL_URL`, `UPSTREAM_ANTHROPIC_INTERNAL_KEY` | Anthropic biçimini kabul eden kurum içi sunucu (opsiyonel) |
 | `POLICY_PATH`, `INVENTORY_PATH` | Politika dosyası ve AI sistem beyanları (envanter) |
 | `KAFKA_BOOTSTRAP`, `KAFKA_AUDIT_TOPIC` | Denetim kaydı; boşsa olaylar stdout'a yazılır |
+| `KAFKA_SECURITY_PROTOCOL`, `KAFKA_SASL_MECHANISM`, `KAFKA_SASL_USERNAME` / `_PASSWORD`, `KAFKA_SSL_CA_FILE`, `KAFKA_SSL_CERT_FILE` / `_KEY_FILE` | Kafka bağlantı güvenliği: `SSL`, `SASL_SSL` (SCRAM-SHA-512 varsayılan), `SASL_PLAINTEXT`; varsayılan `PLAINTEXT` |
 | `AUDIT_STORE_MASKED=1` | Maskelenmiş prompt da saklansın (ham prompt hiçbir zaman saklanmaz) |
 | `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB` | Röntgen ve KVKK raporu için (yalnızca okuma yetkili kullanıcı önerilir) |
 | `SHADOW_AI_TOKEN` | Tarayıcı eklentisi olay token'ı; boşsa `/v1/shadow-ai/events` kapalı |
+| `SHADOW_AI_USER_PER_MIN`, `SHADOW_AI_GLOBAL_PER_MIN` | Eklenti olay sınırı: beyan edilen kullanıcı başına (300) ve worker genelinde (20000) dakikalık; aşan parti 429 (eklenti sonra yeniden dener) |
+| `METRICS_TOKEN` | Doluysa `/metrics` yalnızca `Authorization: Bearer <token>` ile (Helm: `metrics.requireToken`) |
 | `SLACK_SECURITY_WEBHOOK_URL`, `TEAMS_SECURITY_WEBHOOK_URL`, `*_WEBHOOK_URL` | Bildirim kanallarının adresleri (politikadaki `notify.channels[].url_env`) |
 | `TELVEGUARD_SUBJECT_HASH_KEY`, `TELVEGUARD_SUBJECT_HASH_KEY_OLD` | İlgili kişi araması için özet anahtarı (en az 32 karakter); boşsa kapalı |
 | `TELVEGUARD_PUBLIC_URL` | Bildirimlerdeki "Konsolda aç" bağlantısının tabanı (politikada `notify.console_url` yoksa) |
 | `TELVEGUARD_ADMIN_TOKEN` | Yönetim uçları (Röntgen, simülatör, rapor); **boşsa bu uçlar kapalıdır** |
-| `POLICY_STORE=clickhouse` | Konsoldan politika yönetimi; `POLICY_STORE_CLICKHOUSE_USER` / `_PASSWORD` (yazma), `POLICY_STORE_POLL_SECONDS` (5), `POLICY_FOUR_EYES` (1), `POLICY_STORE_INSERT_QUORUM`. `OIDC_ADMIN_GROUP` tanımlıyken politika değişikliği yalnızca kurum hesabıyla yapılır; statik token okuma içindir (`POLICY_STATIC_TOKEN_WRITES=1` ile bilinçli istisna) |
+| `POLICY_STORE=clickhouse` | Konsoldan politika yönetimi; `POLICY_STORE_CLICKHOUSE_USER` / `_PASSWORD` (yazma), `POLICY_STORE_POLL_SECONDS` (5), `POLICY_FOUR_EYES` (1), `POLICY_EMERGENCY` (1; 0 ise yazan kendi sürümünü acil yayına da alamaz), `POLICY_STORE_INSERT_QUORUM`. `OIDC_ADMIN_GROUP` tanımlıyken politika değişikliği yalnızca kurum hesabıyla yapılır; statik token okuma içindir (`POLICY_STATIC_TOKEN_WRITES=1` ile bilinçli istisna) |
 | `ENABLE_TR_NER=1`, `TR_NER_MODEL_PATH` | Türkçe kişi / kurum / yer adı tespiti (BERT, lokal model) |
 | `ENABLE_LLM_GUARD=1`, `LLM_GUARD_MODEL_PATH` | Ek injection sınıflandırıcı (LLM Guard); model lokal dizinden, internetsiz (`/models/prompt-injection`) |
 | `LLM_GUARD_THRESHOLD`, `LLM_GUARD_USE_ONNX=1` | Sınıflandırıcı eşiği (0,92) ve CPU'da daha hızlı ONNX çalıştırma |
@@ -698,7 +717,7 @@ girilmemiş modeller Röntgen'de "fiyat tanımsız" görünür.
 
 ## Metrikler
 
-`GET /metrics` (Prometheus). Etiketler yalnızca sınırlı kümelerdendir (karar, hedef, veri türü);
+`GET /metrics` (Prometheus; `METRICS_TOKEN` tanımlıysa token'la). Etiketler yalnızca sınırlı kümelerdendir (karar, hedef, veri türü);
 model ve ekip adı istemci kontrolünde olduğu için etiket yapılmaz, bu kırılım Röntgen'dedir.
 
 <details>
@@ -742,11 +761,13 @@ attachments:
   ocr: true
   max_bytes: 20000000           # bundan büyük ek taranamaz sayılır
   max_pages: 30
+  max_count: 50                 # istek başına taranan en fazla ek
   unscannable: alert            # allow | alert | block
 ```
 
 **Taranamayan ek:** uzak adres (`https://...`) ya da `file_id` (içeriği gateway görmez), şifreli /
-bozuk PDF, desteklenmeyen tür (docx, ses), sınırı aşan boyut, OCR kapalıyken görsel. Yalnızca yurt
+bozuk PDF, desteklenmeyen tür (docx, ses), sınırı aşan boyut ya da ek sayısı, OCR kapalıyken görsel.
+Yalnızca yurt
 dışı hedefte `unscannable` uygulanır; kayda `ek-taranamadi` kuralı düşer (bildirim için
 `rules: ["ek-taranamadi"]`). Varsayılan `alert`: önce ne kadar olduğunu Röntgen'de görüp sonra
 `block`'a geçin. Politika deneme ucu (`/v1/policy/simulate`) eklerden okunan metni ve neyin

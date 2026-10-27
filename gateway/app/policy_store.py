@@ -13,7 +13,9 @@ Bir sürümün durumu son olayından, yayındaki sürüm son "approved / applied
 olayından çıkar. Geri alma = eski (onaylı) bir sürümün yeniden "applied" olması.
 
 Dört göz: sürümü yazan onaylayamaz (POLICY_FOUR_EYES=0 ile kapatılır). Acil durumda yazan
-gerekçe yazarak kendi sürümünü yayına alabilir ("emergency", kayıtta ayrı görünür).
+gerekçe yazarak kendi sürümünü yayına alabilir ("emergency", kayıtta ayrı görünür); tek kişiyle
+yayın istenmiyorsa POLICY_EMERGENCY=0. Acil yayın ve geri alma bildirim kanallarına da düşer
+(kural adı politika:acil-yayin / politika:geri-alma).
 
 ClickHouse'ta işlem (transaction) olmadığından sürüm numarası verme ve durum geçişleri bir
 kilitle sıralanır: REDIS_URL varsa Redis (tüm pod'lar), yoksa süreç içi kilit (tek pod).
@@ -279,8 +281,9 @@ def _status(events: List[Dict[str, Any]]) -> str:
 
 
 class PolicyStore:
-    def __init__(self, ch: ClickHouse, lock: Lock, four_eyes: bool = True, quorum: str = ""):
-        self.ch, self.lock, self.four_eyes = ch, lock, four_eyes
+    def __init__(self, ch: ClickHouse, lock: Lock, four_eyes: bool = True, quorum: str = "",
+                 emergency: bool = True):
+        self.ch, self.lock, self.four_eyes, self.emergency = ch, lock, four_eyes, emergency
         # Kopyalı ClickHouse: yazma tüm kopyalara ulaşsın, okuma en son yazılanı görsün
         self.write_settings = {"insert_quorum": quorum} if quorum else {}
         self.read_settings = {"select_sequential_consistency": "1"} if quorum else {}
@@ -296,8 +299,13 @@ class PolicyStore:
         ch = ClickHouse(http, url, os.getenv("POLICY_STORE_CLICKHOUSE_USER", os.getenv("CLICKHOUSE_USER", "default")),
                         os.getenv("POLICY_STORE_CLICKHOUSE_PASSWORD", os.getenv("CLICKHOUSE_PASSWORD", "")),
                         os.getenv("CLICKHOUSE_DB", "telveguard"))
+        if not os.getenv("REDIS_URL") and int(os.getenv("WORKERS", "1")) > 1:
+            # Süreç içi kilit worker'lar arasında geçmez: eş zamanlı iki işlem aynı sürüm numarasını alabilir
+            log.error("policy_store_lock_local workers=%s: REDIS_URL olmadan kilit yalnızca tek süreçte doğru; "
+                      "birden fazla worker / pod varken REDIS_URL tanımlayın", os.getenv("WORKERS"))
         return cls(ch, Lock(os.getenv("REDIS_URL", ""), os.getenv("REDIS_PASSWORD", "")),
-                   os.getenv("POLICY_FOUR_EYES", "1") != "0", os.getenv("POLICY_STORE_INSERT_QUORUM", ""))
+                   os.getenv("POLICY_FOUR_EYES", "1") != "0", os.getenv("POLICY_STORE_INSERT_QUORUM", ""),
+                   os.getenv("POLICY_EMERGENCY", "1") != "0")
 
     async def _query(self, sql: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         try:
@@ -387,6 +395,9 @@ class PolicyStore:
                     if not emergency:
                         raise StoreError(403, "Dört göz kuralı: sürümü yazan onaylayamaz. Başka bir yönetici "
                                               "onaylamalı ya da acil yayın (gerekçeyle) seçilmeli.")
+                    if not self.emergency:
+                        raise StoreError(403, "Dört göz kuralı: sürümü yazan onaylayamaz; acil yayın kapalı "
+                                              "(POLICY_EMERGENCY=0). Başka bir yönetici onaylamalı.")
                     if len(comment.strip()) < 10:
                         raise StoreError(400, "Acil yayın için gerekçe zorunlu (en az 10 karakter)")
                     event = "emergency"
@@ -481,4 +492,5 @@ class Runtime:
         return {"enabled": bool(self.store), "version": self.version,
                 "source": f"sürüm {self.version}" if self.version else "ConfigMap",
                 "loaded_at": int(self.loaded_at * 1000), "error": self.last_error,
-                "four_eyes": bool(self.store and self.store.four_eyes)}
+                "four_eyes": bool(self.store and self.store.four_eyes),
+                "emergency": bool(self.store and self.store.emergency)}

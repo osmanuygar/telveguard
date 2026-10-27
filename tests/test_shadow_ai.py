@@ -162,3 +162,25 @@ def test_redirect_and_justification(client, events):  # noqa: F811
     assert masked["rules"] == ["golge-ai:masked"]                       # gerekçe yalnızca "yine de" için
     bad = {"site": "chatgpt.com", "action": "allowed_override", "justification": "keyfime göre"}
     assert post(client, [bad]).status_code == 400                       # serbest metin kabul edilmez
+
+
+# ---------------- hız sınırı (token herkeste: sahte olay seli) ----------------
+
+def test_rate_limited_per_declared_user(client, events):  # noqa: F811
+    from app.shadow_ai import RateLimiter
+    client.app.state.shadow_limiter = RateLimiter(per_user=3, total=100)
+    ev = {"site": "chatgpt.com", "action": "blocked", "user": "ayse@sirket.com"}
+    assert post(client, [ev, ev]).status_code == 200
+    r = post(client, [ev, ev])                       # parti sığmıyor: hiçbiri yazılmaz
+    assert r.status_code == 429 and r.headers["Retry-After"] == "60" and len(events) == 2
+    assert post(client, [{**ev, "user": "mehmet@sirket.com"}]).status_code == 200
+
+
+def test_rate_limit_total_and_window_reset():
+    from app.shadow_ai import RateLimiter, ShadowEvent
+    now = [0.0]
+    limiter = RateLimiter(per_user=1000, total=5, clock=lambda: now[0])
+    batch = [ShadowEvent(site="claude.ai", action="visit", user=f"u{i}") for i in range(3)]
+    assert limiter.allow(batch) and not limiter.allow(batch)
+    now[0] = 61.0                                    # yeni dakika
+    assert limiter.allow(batch)

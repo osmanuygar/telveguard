@@ -39,6 +39,19 @@
 {{- end }}
 {{- end }}
 {{- end }}
+{{- /* Politika deposunun kilidi (sürüm numarası, onay sırası) Redis'siz yalnızca tek süreçte doğrudur */ -}}
+{{- if and .Values.policy.store.enabled (not .Values.quota.redisUrl) (or (gt (int .Values.replicaCount) 1) (gt (int .Values.workers) 1) .Values.autoscaling.enabled) }}
+{{- fail "policy.store.enabled ve birden fazla süreç (replicaCount / workers / autoscaling): quota.redisUrl gerekli (onay kilidi; yoksa eş zamanlı onaylar çakışır)" }}
+{{- end }}
+{{- if not (has .Values.audit.kafka.securityProtocol (list "PLAINTEXT" "SSL" "SASL_SSL" "SASL_PLAINTEXT")) }}
+{{- fail "audit.kafka.securityProtocol: PLAINTEXT, SSL, SASL_SSL ya da SASL_PLAINTEXT" }}
+{{- end }}
+{{- if and (hasPrefix "SASL_" .Values.audit.kafka.securityProtocol) (not .Values.audit.kafka.saslUsername) }}
+{{- fail "audit.kafka SASL için saslUsername gerekli (şifre: secret'ta kafka-sasl-password)" }}
+{{- end }}
+{{- if and .Values.metrics.requireToken (not .Values.existingSecret) (not .Values.secrets.metricsToken) }}
+{{- fail "metrics.requireToken için secrets.metricsToken (ya da existingSecret'ta metrics-token) gerekli" }}
+{{- end }}
 {{- if lt (int .Values.workers) 1 }}
 {{- fail "workers en az 1 olmalı" }}
 {{- end }}

@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Set
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from . import agent as agent_mod
 from . import attachments as attachments_mod
@@ -77,6 +77,7 @@ async def lifespan(app: FastAPI):
         app.state.ch = xray_mod.ClickHouse.from_env(app.state.http)
     app.state.auth = Authenticator.from_env(app.state.http)
     app.state.subjects = subjects_mod.SubjectIndex.from_env()
+    app.state.shadow_limiter = shadow_ai.RateLimiter.from_env()
     app.state.quota = QuotaManager.from_env(app.state.policy.quotas)
     # Guardrail servisi (LiteLLM, agentgateway): istek ile cevap arasında maske eşleşmesi
     app.state.guardrail_sessions = guardrail_mod.Sessions.from_env()
@@ -112,6 +113,75 @@ async def lifespan(app: FastAPI):
 admin_log = logging.getLogger("telveguard.admin")
 log = logging.getLogger("telveguard.gateway")
 app = FastAPI(title="Telveguard Gateway", version="0.4.0", lifespan=lifespan)
+
+DEFAULT_MAX_REQUEST_BYTES = 32_000_000   # Anthropic API'nin istek sınırı; ekler base64 olarak gövdede
+
+
+class BodyLimit:
+    """İstek gövdesi sınırı (MAX_REQUEST_BYTES): gövde uygulamaya verilmeden önce sayılır, aşan
+    istek 413 ile reddedilir. Sınırsız gövde kimliği doğrulanmış tek bir istemcinin belleği
+    doldurmasına izin verirdi. Content-Length yoksa (chunked) okunan baytlar sayılır."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["method"] not in ("POST", "PUT", "PATCH"):
+            return await self.app(scope, receive, send)
+        limit = int(os.getenv("MAX_REQUEST_BYTES", DEFAULT_MAX_REQUEST_BYTES))
+        length = dict(scope["headers"]).get(b"content-length", b"")
+        if length.isdigit() and int(length) > limit:
+            return await self._reject(scope, receive, send, limit)
+        messages, size = [], 0
+        while True:
+            message = await receive()
+            messages.append(message)
+            if message["type"] != "http.request":
+                break
+            size += len(message.get("body", b""))
+            if size > limit:
+                return await self._reject(scope, receive, send, limit)
+            if not message.get("more_body"):
+                break
+        pending = iter(messages)
+
+        async def replay():
+            return next(pending, None) or await receive()
+        return await self.app(scope, replay, send)
+
+    @staticmethod
+    async def _reject(scope, receive, send, limit: int):
+        fmt = MESSAGES if scope["path"].startswith("/v1/messages") else CHAT
+        resp = fmt.error(413, f"Telveguard: istek gövdesi çok büyük (sınır {limit} bayt).",
+                         "request_too_large", "invalid_request_error")
+        await resp(scope, receive, send)
+
+
+app.add_middleware(BodyLimit)
+
+
+class SecurityHeaders:
+    """Tüm cevaplara içerik türü koklama ve referrer kısıtı; HTML sayfalarına ayrıca CSP ve çerçeve
+    yasağı (_html_page)."""
+
+    HEADERS = [(b"x-content-type-options", b"nosniff"), (b"referrer-policy", b"no-referrer")]
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                names = {k.lower() for k, _ in message.get("headers", [])}
+                message["headers"] = list(message.get("headers", [])) + [h for h in self.HEADERS if h[0] not in names]
+            await send(message)
+        return await self.app(scope, receive, send_with_headers)
+
+
+app.add_middleware(SecurityHeaders)
 
 
 # ---------------- yardımcılar ----------------
@@ -382,7 +452,16 @@ async def healthz():
 
 
 @app.get("/metrics", include_in_schema=False)
-async def metrics_endpoint():
+async def metrics_endpoint(request: Request):
+    """METRICS_TOKEN tanımlıysa yalnızca o token'la (Prometheus / ServiceMonitor). Metriklerde kişisel
+    veri yoktur ama kural adları, ekip dışı trafik hacmi ve hata oranları kuruma özgüdür."""
+    expected = os.getenv("METRICS_TOKEN", "")
+    if expected:
+        header = request.headers.get("authorization", "")
+        given = header[7:].strip() if header.lower().startswith("bearer ") else ""
+        if not (given and hmac.compare_digest(given.encode(), expected.encode())):
+            return Response("unauthorized\n", status_code=401, media_type="text/plain",
+                            headers={"WWW-Authenticate": "Bearer"})
     body, content_type = metrics.render()
     return Response(body, media_type=content_type)
 
@@ -778,11 +857,34 @@ def _require_clickhouse(request: Request):
     return ch, None
 
 
+_PAGES: Dict[str, Response] = {}
+
+
+def _html_page(name: str) -> Response:
+    """Statik sayfa + CSP: yalnızca sayfanın kendi satır içi betiği (özetiyle) çalışır, istekler yalnızca
+    gateway'e gider, sayfa başka bir siteye çerçevelenemez. Yönetici token'ı sayfadadır: araya
+    sızan bir betik (ör. kayıttaki bir model adı yoluyla) token'ı dışarı gönderemesin."""
+    if name not in _PAGES:
+        import base64
+        import hashlib
+        with open(os.path.join(STATIC_DIR, name), encoding="utf-8") as f:
+            html = f.read()
+        scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+        hashes = " ".join("'sha256-%s'" % base64.b64encode(hashlib.sha256(s.encode()).digest()).decode()
+                          for s in scripts)
+        csp = (f"default-src 'none'; script-src {hashes}; style-src 'unsafe-inline'; img-src 'self' data: blob:; "
+               "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+        _PAGES[name] = Response(html, media_type="text/html; charset=utf-8", headers={
+            "Content-Security-Policy": csp, "X-Frame-Options": "DENY", "Cache-Control": "no-cache"})
+    page = _PAGES[name]
+    return Response(page.body, media_type=page.media_type, headers=dict(page.headers))
+
+
 @app.get("/xray", include_in_schema=False)
 async def xray_page():
     """Dashboard sayfası veri içermez; veriyi yönetici token'ıyla /v1/xray'den çeker.
     Harici CDN yok (air-gapped)."""
-    return FileResponse(os.path.join(STATIC_DIR, "xray.html"), media_type="text/html")
+    return _html_page("xray.html")
 
 
 @app.get("/asistan")
@@ -791,7 +893,7 @@ async def demo_assistant():
     verdiği için yalnızca DEMO_ASSISTANT=1 ve AUTH_MODE=header (yerel test ortamı) iken açılır."""
     if os.getenv("DEMO_ASSISTANT") != "1" or os.getenv("AUTH_MODE", "header") != "header":
         return _openai_error(404, "Bulunamadı.", "not_found", "invalid_request_error")
-    return FileResponse(os.path.join(STATIC_DIR, "asistan.html"), media_type="text/html")
+    return _html_page("asistan.html")
 
 
 @app.get("/v1/xray")
@@ -988,6 +1090,12 @@ async def shadow_ai_events(request: Request):
         batch = shadow_ai.ShadowBatch.model_validate(await request.json())
     except ValueError as e:
         return _openai_error(400, f"Geçersiz olay: {str(e)[:300]}", "invalid_request", "invalid_request_error")
+    if not request.app.state.shadow_limiter.allow(batch.events):
+        metrics.SHADOW_AI_EVENTS.labels("rate_limited").inc()
+        resp = _openai_error(429, "Çok fazla gölge AI olayı; bir dakika sonra yeniden deneyin.", "rate_limited",
+                             "rate_limit_error")
+        resp.headers["Retry-After"] = "60"
+        return resp
     for event in batch.events:
         await _emit(request.app.state, shadow_ai.to_audit_event(event))
         metrics.SHADOW_AI_EVENTS.labels(event.action).inc()
@@ -1078,8 +1186,9 @@ async def agent_check(request: Request):
         "destination": a.destination,
         # Kayda kim olarak geçtiği: kullanıcı görebilsin (telve doctor)
         "identity": {"user": a.user, "teams": a.identity.teams, "source": identity.source},
-        "policy": {"action": d.action, "rules": d.rules, "reason": d.reason,
-                   "monitored_rules": d.monitored_rules, "would_action": d.would_action},
+        # Gözlemdeki kurallar (monitored_rules / would_action) dönmez: her kullanıcı bu uçla hangi
+        # kuralın henüz uygulanmadığını yoklayabilirdi (simülatör bu yüzden yalnızca yöneticiye açık)
+        "policy": {"action": d.action, "rules": d.rules, "reason": d.reason},
         "event_id": event_id,
     }
 
@@ -1242,6 +1351,8 @@ async def policy_version_transition(request: Request, version: int, action: str)
     except policy_store_mod.StoreError as e:
         return _store_error(e)
     admin_log.info("policy_version_%s version=%s actor=%s via=%s", result["event"], version, *actor)
+    if result["event"] in POLICY_SOLO_EVENTS:
+        _notify_policy_event(st, version, result["event"], actor, comment)
     git_state = None
     if result["event"] != "rejected":
         await rt.refresh()
@@ -1252,6 +1363,21 @@ async def policy_version_transition(request: Request, version: int, action: str)
             git.schedule(rt, rt.store, target, result["event"], actor[0], actor[1], comment)
             git_state = {"status": "pending"}
     return {**result, "runtime": rt.describe(), "git": git_state}
+
+
+# Tek kişinin yayına aldığı sürüm (dört göz yok): bildirim kanallarına da düşer
+POLICY_SOLO_EVENTS = {"emergency": "politika:acil-yayin", "applied": "politika:geri-alma"}
+
+
+def _notify_policy_event(st, version: int, event: str, actor, comment: str) -> None:
+    """Acil yayın / geri alma: kanallarda `rules: ["politika:*"]` ile eşleşir. Denetim kaydına yazılmaz
+    (Röntgen istek saymasın); kayıt policy_events'te."""
+    label = "acil yayına alındı (dört göz atlandı)" if event == "emergency" else "yeniden yayına alındı (geri alma)"
+    st.notifier.submit({
+        "event_id": str(uuid.uuid4()), "ts": int(time.time() * 1000), "user": actor[0], "team": "politika",
+        "teams": ["politika"], "model": f"politika sürüm {version}", "destination": "", "action": "alert",
+        "rules": [POLICY_SOLO_EVENTS[event]], "entities": [], "output_leaked": [], "api_format": "policy",
+        "reason": f"Sürüm {version} {label} · {actor[1]} · gerekçe: {comment[:300]}"})
 
 
 async def _policy_mirror_now(rt, git, version: int, actor):

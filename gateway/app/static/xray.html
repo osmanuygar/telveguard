@@ -1713,7 +1713,9 @@ const POL_EVENTS = {
   mirror_skipped: { label: "depoya yazılmadı", color: "var(--text-muted)", system: true },
 };
 const safeUrl = (u) => /^https?:\/\//.test(u || "") ? u : null;
-const extLink = (href, text) => el("a", { href, target: "_blank", rel: "noopener noreferrer" }, text);
+// Git sunucusunun döndürdüğü adres: yalnızca http(s) bağlantı olur (javascript: vb. düz metin kalır)
+const extLink = (href, text) => /^https?:\/\//i.test(href || "")
+  ? el("a", { href, target: "_blank", rel: "noopener noreferrer" }, text) : el("span", {}, text);
 const GIT_NAME = "Bitbucket";
 function gitState(v) {
   // Yayına alınmış sürüm için son yansıtma olayı: mirrored | mirror_failed | mirror_skipped | pending
@@ -2146,7 +2148,7 @@ async function toggleVersion(version, tr, force = false) {
   const btn = (label, cls, action) => { const b = el("button", { type: "button", class: cls }, label); b.addEventListener("click", () => versionAction(v, action)); return b; };
   const actions = [];
   if (rt.enabled && v.status === "pending") {
-    if (mine && rt.four_eyes) actions.push(btn("Acil yayına al", "", "emergency"));
+    if (mine && rt.four_eyes) { if (rt.emergency) actions.push(btn("Acil yayına al", "", "emergency")); }
     else actions.push(btn("Onayla ve yayına al", "primary", "approve"));
     actions.push(btn("Reddet", "", "reject"));
   } else if (rt.enabled && v.status === "approved" && !active) actions.push(btn("Bu sürüme geri dön", "primary", "apply"));

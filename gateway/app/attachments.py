@@ -5,6 +5,7 @@ Ek tarama: görseller (OCR) ve PDF'ler. Politika dosyasındaki `attachments` bö
       ocr: true                 # Tesseract (tur+eng); kapalıysa görseller taranamaz sayılır
       max_bytes: 20000000       # bundan büyük ek taranamaz sayılır
       max_pages: 30             # PDF sayfa sınırı
+      max_count: 50             # istek başına taranan en fazla ek; fazlası taranamaz sayılır
       unscannable: alert        # allow | alert | block (yalnızca yurt dışı hedefte)
 
 Bulunan veri türleri metindekilerle birleşir ve AYNI kurallardan geçer. Maskeleme gerekirse:
@@ -66,6 +67,7 @@ class Settings:
     ocr: bool = True
     max_bytes: int = 20_000_000
     max_pages: int = 30
+    max_count: int = 50   # tek istekte sınırsız OCR / PDF işi olmasın (fazlası taranamaz sayılır)
     unscannable: str = "alert"
     ocr_langs: str = "tur+eng"
     ocr_timeout_seconds: int = 20
@@ -81,7 +83,7 @@ class Settings:
         s = cls(**raw)
         if s.unscannable not in UNSCANNABLE_ACTIONS:
             raise AttachmentConfigError("attachments.unscannable allow, alert ya da block olmalı")
-        for name in ("max_bytes", "max_pages", "ocr_timeout_seconds"):
+        for name in ("max_bytes", "max_pages", "max_count", "ocr_timeout_seconds"):
             v = getattr(s, name)
             if not isinstance(v, int) or isinstance(v, bool) or v <= 0:
                 raise AttachmentConfigError(f"attachments.{name} pozitif bir tamsayı olmalı")
@@ -199,7 +201,10 @@ class AttachmentScanner:
             return []
         if self._sem is None:
             self._sem = asyncio.Semaphore(max(1, (os.cpu_count() or 2) // 2))
-        return list(await asyncio.gather(*(self._scan_one(a) for a in attachments)))
+        limit = self.settings.max_count
+        over = [self._done(Scan(a, "unscannable", reason=f"ek sayısı sınırı ({limit})"), _kind_of(a))
+                for a in attachments[limit:]]
+        return list(await asyncio.gather(*(self._scan_one(a) for a in attachments[:limit]))) + over
 
     async def _scan_one(self, att: Attachment) -> Scan:
         kind = _kind_of(att)

@@ -81,6 +81,12 @@ def test_azure_classic_deployment_url(client):
     assert "/deployments/az2-baska/" in sent["url"]
 
 
+def test_azure_model_name_cannot_traverse_path(client):
+    """Model adı istemciden gelir: kurumun Azure anahtarıyla başka bir uca (ör. dosyalar) gidilmemeli."""
+    chat(client, "az2-../../files?x=")
+    assert sent["url"].startswith("https://eski.openai.azure.example/openai/deployments/az2-..%2F..%2Ffiles%3Fx%3D/")
+
+
 def test_azure_responses(client):
     r = client.post("/v1/responses", json={"model": "azure-gpt-4o", "input": "merhaba"})
     assert sent["url"] == "https://kurum.openai.azure.example/openai/v1/responses", r.text

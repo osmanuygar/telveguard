@@ -29,6 +29,7 @@ def test_cursor_prompt_with_pii_blocked_because_hook_cannot_mask(client, events)
     r = check(client, client="cursor", event="prompt", model="vllm/qwen3", text=f"TC {tckn} özetle")
     assert r["action"] == "block" and r["destination"] == "external"
     assert r["policy"]["action"] == "mask" and r["entities"] == {"TCKN": 1}
+    assert set(r["policy"]) == {"action", "rules", "reason"}     # gözlemdeki kurallar dönmez
     assert "maskeleyemiyor" in r["message"] and tckn not in r["message"]
     assert r["identity"] == {"user": "ayse", "teams": ["yazilim"], "source": "header"}
     ev, = events

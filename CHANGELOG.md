@@ -4,6 +4,23 @@
 
 ### Güvenlik
 
+- İstek gövdesi sınırı (`MAX_REQUEST_BYTES`, 32 MB; Helm `maxRequestBytes`): aşan istek gövde
+  okunmadan 413. İstek başına taranan ek sayısı sınırlı (`attachments.max_count`, 50; fazlası
+  taranamaz sayılır). Önceden tek bir istemci sınırsız gövde ve OCR işiyle belleği / CPU'yu doldurabiliyordu.
+- Kafka bağlantı güvenliği: `KAFKA_SECURITY_PROTOCOL` (SSL / SASL_SSL / SASL_PLAINTEXT), SASL
+  (SCRAM / PLAIN), kurum içi CA ve karşılıklı TLS (Helm `audit.kafka.*`, şifre `kafka-sasl-password`).
+- Tarayıcı eklentisi olay ucu hız sınırlı (`SHADOW_AI_USER_PER_MIN`, `SHADOW_AI_GLOBAL_PER_MIN`):
+  token MDM ile herkese dağıtıldığı için sahte olay seli kaydı ve bildirim kanallarını doldurabiliyordu.
+- Acil yayın kapatılabilir (`POLICY_EMERGENCY=0`, Helm `policy.store.emergency`); acil yayın ve
+  geri alma (tek kişiyle yayın) bildirim kanallarına düşer (`politika:acil-yayin`, `politika:geri-alma`).
+- Azure sağlayıcısında model adı URL yoluna kodlanarak eklenir: `gpt-../../...` gibi bir ad kurumun
+  Azure anahtarıyla başka bir uca istek attırabiliyordu.
+- Konsol ve Kurum Asistanı sayfalarında CSP (yalnızca sayfanın kendi betiği, istekler yalnızca
+  gateway'e, çerçeveleme yasak); tüm cevaplarda `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: no-referrer`. Git sunucusundan dönen bağlantı yalnızca `http(s)` ise bağlantı olur.
+- `/metrics` isteğe bağlı token'la (`METRICS_TOKEN`, Helm `metrics.requireToken`; ServiceMonitor aynı token'ı kullanır).
+- `/v1/agent/check` gözlemdeki kuralları (`monitored_rules`, `would_action`) döndürmez: her kullanıcı
+  hangi kuralın henüz uygulanmadığını yoklayabiliyordu.
 - İsteğin bilinen metin alanları dışında kalan kısmı da taranır ve maskelenir: araç tanımları
   (`tools`), yapılandırılmış çıktı şeması (`response_format`, `text.format`), `metadata`, `user`,
   istem değişkenleri, bilinmeyen içerik blokları; 10+ haneli sayılar metin gibi. Önceden kişisel
@@ -39,6 +56,9 @@
 
 ### Yükseltme notları
 
+- Helm: `policy.store.enabled` ve birden fazla süreç (replica / worker / autoscaling) varken
+  `quota.redisUrl` zorunlu; Redis'siz onay kilidi worker'lar arasında geçmiyordu.
+- 32 MB'tan büyük istek gönderen istemciler için `maxRequestBytes`'ı artırın.
 - Guardrail'de `additional_provider_specific_params: { destination: internal }` kullanıyorsanız
   takma adı politikadaki `destinations.internal`'a ekleyin ya da `GUARDRAIL_TRUST_DESTINATION=1`.
 - Daha sıkı politika doğrulaması: yüklenemeyen özel politika artık gateway açılışında hata verir

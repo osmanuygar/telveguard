@@ -194,7 +194,11 @@ def facts(ev: Dict[str, Any], include_user: bool) -> List[Tuple[str, str]]:
 
 
 def event_link(console_url: str, ev: Dict[str, Any]) -> str:
-    return f"{console_url.rstrip('/')}/xray#olaylar?event={ev['event_id']}" if console_url else ""
+    if not console_url:
+        return ""
+    if ev.get("api_format") == "policy":   # politika olayı denetim kaydında değil, sürüm geçmişinde
+        return f"{console_url.rstrip('/')}/xray#politika"
+    return f"{console_url.rstrip('/')}/xray#olaylar?event={ev['event_id']}"
 
 
 def build_payload(ch: Channel, ev: Dict[str, Any], suppressed: int, console_url: str) -> Dict[str, Any]:

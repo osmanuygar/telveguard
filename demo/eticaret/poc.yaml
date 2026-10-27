@@ -141,6 +141,7 @@ attachments:
   ocr: true
   max_bytes: 20000000           # 20 MB
   max_pages: 30
+  max_count: 50                 # istek başına; fazlası taranamaz sayılır
   unscannable: alert            # allow | alert | block (önce alert ile ne kadar olduğunu görün)
 
 # Anlık bildirim: Slack / Microsoft Teams / genel webhook (SIEM). Adres YAML'a yazılmaz:

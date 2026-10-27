@@ -12,6 +12,8 @@ imagePullSecrets: []
 replicaCount: 2
 # Pod başına uvicorn worker sayısı; ölçekleme için önce replica artırın
 workers: 2
+# İstek gövdesi sınırı (bayt); aşan istek 413. Ekler base64 olarak gövdededir.
+maxRequestBytes: 32000000
 
 # ---------------- istemci kimliği ----------------
 auth:
@@ -46,6 +48,13 @@ audit:
   topic: telveguard.audit.v1
   # 1: maskelenmiş prompt da saklanır (PII yer tutucu hâlinde). Ham prompt hiçbir zaman saklanmaz.
   storeMasked: false
+  # Kurumsal Kafka: olaylarda kullanıcı ve ekip var; üretimde SASL_SSL önerilir (şifre: secret'ta
+  # kafka-sasl-password). Topic'e yalnızca gateway'in kullanıcısı yazabilmeli (ACL): sahte kayıt olmasın.
+  kafka:
+    securityProtocol: PLAINTEXT   # PLAINTEXT | SSL | SASL_SSL | SASL_PLAINTEXT
+    saslMechanism: SCRAM-SHA-512  # PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512
+    saslUsername: ""
+    caFile: ""                    # kurum içi CA (PEM), volume ile bağlayın
 
 # ---------------- Röntgen + KVKK raporu (ClickHouse) ----------------
 clickhouse:
@@ -75,6 +84,7 @@ policy:
     clickhouseUser: telveguard_policy
     pollSeconds: 5
     fourEyes: true          # sürümü yazan onaylayamaz (acil yayın gerekçeyle, kayıtta ayrı)
+    emergency: true         # false: yazan kendi sürümünü acil yayına da alamaz (her zaman ikinci kişi)
     insertQuorum: ""        # kopyalı ClickHouse: ör. "2"
     # Onaylanan sürümü Git'e yansıtma (Bitbucket Data Center). store.enabled gerekli.
     # Token: secret'ta policy-git-token (depoya yazma yetkili HTTP erişim token'ı).
@@ -111,6 +121,8 @@ secrets:
   upstreamAnthropicKey: ""
   clickhousePassword: ""
   subjectHashKey: ""        # boşsa ilgili kişi araması kapalı
+  metricsToken: ""          # metrics.requireToken için
+  kafkaSaslPassword: ""     # audit.kafka.securityProtocol SASL_* için
 
 # ---------------- opsiyonel modeller (air-gapped) ----------------
 # scripts/mirror_models.sh ile indirilen modeller bir PVC'de: /models/tr-ner, /models/prompt-injection
@@ -200,6 +212,8 @@ autoscaling:
 
 # Prometheus: /metrics (OKD user workload monitoring için ServiceMonitor)
 metrics:
+  # true: /metrics yalnızca secret'taki metrics-token ile (ServiceMonitor aynı token'ı kullanır)
+  requireToken: false
   serviceMonitor:
     enabled: false
     interval: 30s
