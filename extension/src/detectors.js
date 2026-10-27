@@ -237,7 +237,46 @@
     return out;
   }
 
+  // Görünmez biçim karakterleri (Unicode Cf) taramadan önce atılır, NFKC uygulanır; Python motoruyla
+  // aynı liste (telveguard_core/pii/engine.py INVISIBLE_RANGES). Ofsetler orijinal metne geri eşlenir.
+  const INVISIBLE_RANGES = [
+    [0x00AD, 0x00AD], [0x0600, 0x0605], [0x061C, 0x061C], [0x06DD, 0x06DD], [0x070F, 0x070F],
+    [0x0890, 0x0891], [0x08E2, 0x08E2], [0x180E, 0x180E], [0x200B, 0x200F], [0x202A, 0x202E],
+    [0x2060, 0x2064], [0x2066, 0x206F], [0xFEFF, 0xFEFF], [0xFFF9, 0xFFFB], [0x110BD, 0x110BD],
+    [0x110CD, 0x110CD], [0x13430, 0x1343F], [0x1BCA0, 0x1BCA3], [0x1D173, 0x1D17A],
+    [0xE0001, 0xE0001], [0xE0020, 0xE007F],
+  ];
+  const isInvisible = (cp) => INVISIBLE_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi);
+
+  /** { scan, starts, ends }: starts / ends null ise metin değişmedi. Tarama metnindeki her UTF-16
+   *  biriminin orijinal karakterinin başı ve sonu. */
+  function normalizeForScan(text) {
+    if (/^[\x00-\x7f]*$/.test(text)) return { scan: text, starts: null, ends: null };
+    let scan = "";
+    const starts = [], ends = [];
+    let changed = false;
+    for (let i = 0; i < text.length;) {
+      const cp = text.codePointAt(i);
+      const ch = String.fromCodePoint(cp);
+      const next = i + ch.length;
+      if (isInvisible(cp)) { changed = true; i = next; continue; }
+      const n = cp > 127 ? ch.normalize("NFKC") : ch;
+      if (n !== ch) changed = true;
+      scan += n;
+      for (let k = 0; k < n.length; k++) { starts.push(i); ends.push(next); }
+      i = next;
+    }
+    return changed ? { scan, starts, ends } : { scan: text, starts: null, ends: null };
+  }
+
   function analyze(text) {
+    const { scan, starts, ends } = normalizeForScan(text);
+    const found = scanFindings(scan);
+    if (!starts) return found;
+    return found.map((r) => ({ ...r, start: starts[r.start], end: ends[r.end - 1] }));
+  }
+
+  function scanFindings(text) {
     const results = dictionaryFindings(text);
     for (const rec of RECOGNIZERS.concat(dictionary ? dictionary.patterns : [])) {
       rec.re.lastIndex = 0;

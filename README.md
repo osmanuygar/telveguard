@@ -188,7 +188,11 @@ POC verisinin olduğu ClickHouse'a yazmayın.
 Hepsinde aynı koruma çalışır: kimlik, Türkçe PII ve sır maskeleme, injection engelleme,
 politika, çıktı koruması, denetim kaydı, Röntgen ve metrikler. Taranan yerler yalnızca
 mesajlar değildir: system prompt, araç sonuçları (dosya içerikleri, web sayfaları — dolaylı
-injection dahil) ve araç çağrısı argümanları da taranır. Model, maskeli bir sırrı araç
+injection dahil) ve araç çağrısı argümanları da taranır. Gövdenin geri kalanı da (araç tanımları,
+yapılandırılmış çıktı şeması, `metadata`, istem değişkenleri, bilinmeyen içerik blokları) kişisel
+veri ve sır için taranıp maskelenir; yalnızca yapı değerleri (`model`, `id`, araç adı), imzalı
+`thinking` blokları ve ek verisi hariçtir. Görünmez karakterler (sıfır genişlikli boşluk, yön
+işaretleri) ve tam genişlikli rakamlarla tespit atlatılamaz. Model, maskeli bir sırrı araç
 çağrısıyla dosyaya yazarsa (Claude Code) istemciye giden çağrıda gerçek değer geri konur.
 
 **Embeddings:** RAG için belgeler vektöre çevrilirken kişisel veri yurt dışı modele maskeli
@@ -1123,6 +1127,12 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 
 ## Bilinen sınırlar
 
+- Araç tanımları (`tools`) ve yapılandırılmış çıktı şeması kişisel veri / sır için taranır ama
+  injection için taranmaz: uygulamanın kendi metni sayılır (Claude Code'un uzun araç açıklamaları
+  sezgisel kurallara takılmasın). Üçüncü taraf MCP sunucusunun araç açıklamasına gizlenmiş talimat
+  (tool poisoning) için ContextForge eklentisinin araç izin listesini kullanın.
+- Boşluk / tireyle bölünmüş TCKN ve VKN (`100 000 001 46`) yakalanmaz (IBAN, kart ve telefonun
+  boşluklu yazımı yakalanır).
 - Maskeleme veya çıktı kuralı olan streaming istekleri tamponlanıp tek parça döner. Hiçbiri
   yoksa gerçek streaming yapılır; bu durumda cevap taranmaz ve token / maliyet bilgisi gelmez.
 - Injection kuralları sezgisel bir başlangıç setidir; Türkçe saldırı veri setiyle eğitilmiş

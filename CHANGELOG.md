@@ -4,6 +4,17 @@
 
 ### Güvenlik
 
+- İsteğin bilinen metin alanları dışında kalan kısmı da taranır ve maskelenir: araç tanımları
+  (`tools`), yapılandırılmış çıktı şeması (`response_format`, `text.format`), `metadata`, `user`,
+  istem değişkenleri, bilinmeyen içerik blokları; 10+ haneli sayılar metin gibi. Önceden kişisel
+  veri bu alanlara konarak yurt dışı modele maskesiz gönderilebiliyordu. Yapı değerleri (`model`,
+  `id`, araç adı), imzalı `thinking` blokları ve ek verisi hariç. Mesaj listesindeki bilinmeyen
+  bloklar injection için de taranır.
+- Görünmez karakterle kaçırma (`telveguard-core` ve tarayıcı eklentisi): tarama, Unicode biçim
+  karakterleri (sıfır genişlikli boşluk, yumuşak tire, yön işaretleri, etiket karakterleri)
+  atılıp NFKC uygulanmış metinde yapılır; ofsetler orijinal metne eşlenir, maske araya
+  sıkıştırılmış karakterler dahil tüm değeri kapatır. Önceden `1000<U+200B>0000146` TCKN,
+  IBAN, kart ve sır tespitinden kaçıyordu. İlgili kişi araması da aynı normalleştirmeyi kullanır.
 - Politika doğrulaması sıkılaştı (`telveguard-core`): `teams` / `entity_in` boş olmayan metin
   listesi, `destination` `internal` / `external`, `injection_score_gte` 0-1 arası sayı, `name` /
   `message` metin. Önceden `injection_score_gte: "0.5"` gibi bir değer yüklenip istek anında hata

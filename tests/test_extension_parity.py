@@ -46,6 +46,11 @@ TEXTS = [
     "password=password or None; password: ${DB_PASSWORD}; pwd = self.settings.password",
     "Risk-free task-force; postgres://db.sirket.local:5432/crm; şifre: [SECRET_PASSWORD_1]",
     "Kart 4111 1111 1111 1112 (Luhn tutmaz), IBAN TR000006200000000123456789",
+    # görünmez karakter / tam genişlik ile kaçırma: iki motor da normalleştirip orijinal ofseti verir
+    f"Şube TC {make_tckn(1)[:4]}\u200b{make_tckn(1)[4:]}, IBAN {make_iban()[:8]}\u00ad{make_iban()[8:]}",
+    "Kart 4111\u200b1111 1111 1111, e-posta ali\u200d@ornek.com.tr, tam genişlik TC " + make_tckn(2).translate(
+        str.maketrans("0123456789", "０１２３４５６７８９")),
+    "Sipariş 1234\u200b5678901 (sağlama toplamı tutmaz)",
 ]
 
 

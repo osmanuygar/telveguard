@@ -23,6 +23,8 @@ import os
 import re
 from typing import Dict, Iterable, List, Optional
 
+from telveguard_core.pii.engine import normalize_text
+
 log = logging.getLogger("telveguard.subjects")
 
 # Kişiyi tanımlayan türler. Kişi adı (NER) yazım farklarıyla güvenilir eşleşmez; sırlar kişisel
@@ -34,6 +36,8 @@ MAX_SEARCH_VALUES = 20
 
 
 def normalize(entity: str, value: str) -> str:
+    # Görünmez karakter / tam genişlikli rakam: tarama gibi (araya U+200B sıkıştırılmış e-posta aynı kişi)
+    value = normalize_text(value)
     if entity in ("TCKN", "VKN", "CREDIT_CARD"):
         return re.sub(r"\D", "", value)
     if entity == "PHONE_TR":

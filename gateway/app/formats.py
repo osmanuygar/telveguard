@@ -54,6 +54,7 @@ class Part:
     get: Callable[[], str]
     set: Callable[[str], None]
     role: str   # system | user | assistant | tool
+    loc: Optional[Tuple[int, Any]] = None   # (id(kap), anahtar): gövdede hangi yaprak (bkz. _unlisted_parts)
 
     @property
     def text(self) -> str:
@@ -143,7 +144,7 @@ def _openai_attachment(p: Dict[str, Any], role: str, chat: bool) -> Optional[Att
 def _key(container: Any, key: Any, role: str) -> Part:
     def _set(value: str) -> None:
         container[key] = value
-    return Part(lambda: container[key], _set, role)
+    return Part(lambda: container[key], _set, role, (id(container), key))
 
 
 def _leaves(obj: Any, role: str, on_change: Callable[[], None] = lambda: None) -> List[Part]:
@@ -155,7 +156,7 @@ def _leaves(obj: Any, role: str, on_change: Callable[[], None] = lambda: None) -
             def _set(value: str, c=obj, key=k) -> None:
                 c[key] = value
                 on_change()
-            parts.append(Part(lambda c=obj, key=k: c[key], _set, role))
+            parts.append(Part(lambda c=obj, key=k: c[key], _set, role, (id(obj), k)))
         elif isinstance(v, (dict, list)):
             parts.extend(_leaves(v, role, on_change))
     return parts
@@ -176,7 +177,65 @@ def _json_string(container: Any, key: Any, role: str) -> List[Part]:
 
     def _dump() -> None:
         container[key] = json.dumps(obj, ensure_ascii=False)
-    return _leaves(obj, role, _dump)
+    parts = _leaves(obj, role, _dump)
+    for p in parts:
+        p.loc = (id(container), key)   # gövdedeki yaprak JSON metninin kendisi
+    return parts
+
+
+# Bilinen metin alanları dışında kalanlar da taranır (_unlisted_parts). Bunlar hariç: API'nin yapı ve
+# kimlik değerleri (maskelenirse istek bozulur), imzalı / şifreli içerik, ek verisi (attachments.py tarar)
+_UNSCANNED_KEYS = frozenset({
+    "model", "role", "type", "id", "name", "call_id", "tool_call_id", "tool_use_id", "previous_response_id",
+    "media_type", "mime_type", "file_id", "file_data", "signature", "encrypted_content", "encrypted_index",
+    "seed", "authorization_token"})
+_SIGNED_BLOCKS = frozenset({"thinking", "redacted_thinking", "reasoning"})
+_ATTACHMENT_BLOCKS = frozenset({"image_url", "input_image", "file", "input_file", "input_audio", "image"})
+_MESSAGE_KEYS = frozenset({"messages", "input"})
+_INT_SCAN_MIN = 10 ** 9   # 10+ haneli tamsayı TCKN / VKN / kart olabilir: {"tc": 10000000146}
+
+
+def _int_key(container: Any, key: Any, role: str) -> Part:
+    """Sayı olarak gelen değer metin olarak taranır; maskelenirse yer tutucu (metin) olur."""
+    original = container[key]
+
+    def _set(value: str) -> None:
+        if value != str(original):
+            container[key] = value
+    return Part(lambda: str(container[key]), _set, role, (id(container), key))
+
+
+def _skip_block(block: Dict[str, Any]) -> bool:
+    """İmzalı blok (dokunulmaz) ya da ek (attachments.py tarar; maskelenirse blok metne dönüşür)."""
+    t = block.get("type")
+    if t in _SIGNED_BLOCKS or t in _ATTACHMENT_BLOCKS:
+        return True
+    src = block.get("source")
+    return t == "document" and not (isinstance(src, dict) and src.get("type") in ("text", "content"))
+
+
+def _unlisted_parts(body: Dict[str, Any], covered: set) -> List[Part]:
+    """Biçimin bilinen metin alanları (covered) dışındaki TÜM yapraklar: araç tanımları (tools),
+    yapılandırılmış çıktı şeması, metadata, istem değişkenleri, bilinmeyen içerik blokları. Bunlar
+    da modele gider; taranmasaydı kişisel veri bu alanlara konarak maskelemeden kaçırılabilirdi.
+    Rol: mesaj listesinin içi "user" (injection da taranır), diğerleri "system" (uygulamanın kendi
+    tanımı; Claude Code'un uzun araç açıklamaları injection sezgisine takılmasın)."""
+    parts: List[Part] = []
+    stack = [(body, k, v, "user" if k in _MESSAGE_KEYS else "system") for k, v in reversed(list(body.items()))]
+    while stack:   # özyinelemesiz: çok derin JSON RecursionError'a çevrilmesin
+        obj, k, v, role = stack.pop()
+        if (id(obj), k) in covered or k in _UNSCANNED_KEYS:
+            continue
+        if isinstance(v, str):
+            if not (v.startswith("data:") or (k == "data" and obj.get("type") == "base64")):
+                parts.append(_key(obj, k, role))
+        elif isinstance(v, int) and not isinstance(v, bool) and abs(v) >= _INT_SCAN_MIN:
+            parts.append(_int_key(obj, k, role))
+        elif isinstance(v, dict) and not _skip_block(v):
+            stack.extend((v, ck, cv, role) for ck, cv in reversed(list(v.items())))
+        elif isinstance(v, list):
+            stack.extend((v, i, cv, role) for i, cv in reversed(list(enumerate(v))))
+    return parts
 
 
 def _sse(event: Optional[str], data: dict) -> bytes:
@@ -193,6 +252,13 @@ class ApiFormat:
         raise NotImplementedError
 
     def request_parts(self, body: Dict[str, Any]) -> List[Part]:
+        """Taranacak / maskelenecek tüm metin: biçimin bilinen alanları ve gövdenin geri kalanı.
+        Geri kalan önce gelir: araç tanımları her turda aynıdır, yer tutucu numaraları değişmesin
+        (Anthropic istem önbelleği araçlar -> system -> mesajlar sırasıyla önek eşler)."""
+        known = self._parts(body)
+        return _unlisted_parts(body, {p.loc for p in known}) + known
+
+    def _parts(self, body: Dict[str, Any]) -> List[Part]:
         raise NotImplementedError
 
     def response_parts(self, resp: Dict[str, Any]) -> List[Part]:
@@ -224,7 +290,7 @@ class OpenAIChat(ApiFormat):
             return "Gövde bir nesne, 'messages' bir liste olmalı."
         return None
 
-    def request_parts(self, body):
+    def _parts(self, body):
         parts: List[Part] = []
         for msg in body.get("messages", []):
             if not isinstance(msg, dict):
@@ -293,7 +359,7 @@ class OpenAIResponses(OpenAIChat):
             return "'input' bir metin ya da liste olmalı."
         return None
 
-    def request_parts(self, body):
+    def _parts(self, body):
         parts: List[Part] = []
         if isinstance(body.get("instructions"), str):
             parts.append(_key(body, "instructions", "system"))
@@ -428,7 +494,7 @@ class OpenAIEmbeddings(OpenAIChat):
             return None
         return f"'input' bir metin, en fazla {self.MAX_INPUTS} metinlik liste ya da token dizisi olmalı."
 
-    def request_parts(self, body):
+    def _parts(self, body):
         inp = body.get("input")
         if isinstance(inp, str):
             return [_key(body, "input", "user")]
@@ -538,7 +604,7 @@ class AnthropicMessages(ApiFormat):
                 out.extend(self._attachments(msg["content"], msg.get("role", "user")))
         return out
 
-    def request_parts(self, body):
+    def _parts(self, body):
         parts: List[Part] = []
         system = body.get("system")
         if isinstance(system, str):

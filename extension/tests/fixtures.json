@@ -231,5 +231,47 @@
   "text_b64": "S2FydCA0MTExIDExMTEgMTExMSAxMTEyIChMdWhuIHR1dG1heiksIElCQU4gVFIwMDAwMDYyMDAwMDAwMDAxMjM0NTY3ODk=",
   "findings": [],
   "masked_b64": "S2FydCA0MTExIDExMTEgMTExMSAxMTEyIChMdWhuIHR1dG1heiksIElCQU4gVFIwMDAwMDYyMDAwMDAwMDAxMjM0NTY3ODk="
+ },
+ {
+  "text_b64": "xZ51YmUgVEMgMzkxNOKAizE3Nzc2OTQsIElCQU4gVFI4MTAwMDbCrTIwMDAwMDAwMDEyMzQ1Njc4OQ==",
+  "findings": [
+   [
+    "TCKN",
+    8,
+    20
+   ],
+   [
+    "IBAN_TR",
+    27,
+    54
+   ]
+  ],
+  "masked_b64": "xZ51YmUgVEMgW1RDS05fMV0sIElCQU4gW0lCQU5fVFJfMV0="
+ },
+ {
+  "text_b64": "S2FydCA0MTEx4oCLMTExMSAxMTExIDExMTEsIGUtcG9zdGEgYWxp4oCNQG9ybmVrLmNvbS50ciwgdGFtIGdlbmnFn2xpayBUQyDvvJHvvJHvvJHvvJXvvJLvvJTvvJTvvJnvvJPvvJjvvJg=",
+  "findings": [
+   [
+    "CREDIT_CARD",
+    5,
+    24
+   ],
+   [
+    "EMAIL_ADDRESS",
+    34,
+    51
+   ],
+   [
+    "TCKN",
+    69,
+    80
+   ]
+  ],
+  "masked_b64": "S2FydCBbQ1JFRElUX0NBUkRfMV0sIGUtcG9zdGEgW0VNQUlMX0FERFJFU1NfMV0sIHRhbSBnZW5pxZ9saWsgVEMgW1RDS05fMV0="
+ },
+ {
+  "text_b64": "U2lwYXJpxZ8gMTIzNOKAizU2Nzg5MDEgKHNhxJ9sYW1hIHRvcGxhbcSxIHR1dG1heik=",
+  "findings": [],
+  "masked_b64": "U2lwYXJpxZ8gMTIzNOKAizU2Nzg5MDEgKHNhxJ9sYW1hIHRvcGxhbcSxIHR1dG1heik="
  }
 ]
