@@ -19,7 +19,6 @@ Bu modül protokol ve metin çıkarma işini yapar; karar ve denetim kaydı main
 """
 import asyncio
 import base64
-import gzip
 import ipaddress
 import json
 import logging
@@ -159,15 +158,27 @@ def _walk_json(value, out: List[str], depth: int = 0) -> None:
             _walk_json(v, out, depth + 1)
 
 
-def _decode(body: bytes, encoding: str) -> bytes:
+DECODE_LIMIT = 5 * 1024 * 1024
+READ_PIECE = 64 * 1024
+
+
+def decode_body(body: bytes, encoding: str, limit: int = DECODE_LIMIT) -> Tuple[bytes, bool]:
+    """Content-Encoding'i en fazla `limit` bayta kadar açar: küçük sıkıştırılmış bir gövde bellekte
+    sınırsız büyümesin. Dönen: (açılmış gövde, sınır aşıldı mı). Desteklenmeyen / bozuk: ValueError."""
     encoding = encoding.strip().lower()
     if encoding in ("", "identity"):
-        return body
+        return body[:limit], len(body) > limit
     if encoding in ("gzip", "x-gzip"):
-        return gzip.decompress(body)
-    if encoding == "deflate":
-        return zlib.decompress(body)
-    raise ValueError(f"desteklenmeyen sıkıştırma: {encoding}")
+        d = zlib.decompressobj(wbits=31)
+    elif encoding == "deflate":
+        d = zlib.decompressobj()
+    else:
+        raise ValueError(f"desteklenmeyen sıkıştırma: {encoding}")
+    try:
+        out = d.decompress(body, limit)
+    except zlib.error as e:
+        raise ValueError(f"bozuk sıkıştırma: {e}")
+    return out, bool(d.unconsumed_tail)
 
 
 def _is_text(content_type: str) -> bool:
@@ -178,8 +189,8 @@ def extract_text(body: bytes, content_type: str, content_encoding: str = "") -> 
     """Gövdedeki insan metni (biçimden bağımsız). İkinci değer: okunamayan içerik var mı
     (sıkıştırma, ikili dosya). Biçim bilinmiyorsa metin olarak denenir."""
     try:
-        body = _decode(body, content_encoding)
-    except (ValueError, OSError, zlib.error):
+        body, _ = decode_body(body, content_encoding)
+    except ValueError:
         return "", True
     ct = content_type.lower()
     if "multipart/" in ct:
@@ -282,11 +293,15 @@ async def _read_chunks(reader: asyncio.StreamReader, keep: int, buf: bytearray) 
         if size == 0:
             await _read_line(reader)   # son CRLF (trailer yok)
             return "ieof" in ext, total
-        data = await reader.readexactly(size)
+        # Parça küçük dilimlerle okunur: büyük bir parça boyutu belleği bir kerede doldurmasın
+        left = size
+        while left:
+            data = await reader.readexactly(min(left, READ_PIECE))
+            left -= len(data)
+            if len(buf) < keep:
+                buf.extend(data[: keep - len(buf)])
         await reader.readexactly(2)
         total += size
-        if len(buf) < keep:
-            buf.extend(data[: keep - len(buf)])
 
 
 async def read_request(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
@@ -496,10 +511,15 @@ class IcapServer:
         site = match_site(http, s.extra_hosts)
         if site is None or not req.body:
             return no_change_response(req, s.istag)
-        text, unscannable = extract_text(req.body, http.headers.get("content-type", ""),
-                                         http.headers.get("content-encoding", ""))
         try:
-            blocked, message = await self.inspect(req, http, site, text, unscannable or req.body_truncated)
+            raw, over = decode_body(req.body, http.headers.get("content-encoding", ""), s.max_body)
+            req.body_truncated = req.body_truncated or over
+            text, unscannable = extract_text(raw, http.headers.get("content-type", ""))
+        except Exception:   # noqa: BLE001  ayrıştırılamayan gövde: bağlantı düşmesin, "okunamadı" sayılsın
+            log.warning("ICAP gövdesi ayrıştırılamadı: %s", site.host, exc_info=True)
+            text, unscannable = "", True
+        try:
+            blocked, message = await self.inspect(req, http, site, text, unscannable)
         except Exception:   # noqa: BLE001  karar verilemedi: proxy'nin bypass ayarı belirler
             log.exception("ICAP incelemesi başarısız: %s", site.host)
             return error_response(500, "Server Error", s.istag)

@@ -175,3 +175,8 @@ def test_search_missing_column_hint(client, index, admin):  # noqa: F811
     client.app.state.ch = Broken()
     r = search(client, [TCKN])
     assert r.status_code == 502 and "0.3.0-subject-hashes.sql" in r.json()["error"]["message"]
+
+
+def test_normalize_ignores_hidden_characters():
+    assert normalize("EMAIL_ADDRESS", "ali\u200b@ornek.com") == normalize("EMAIL_ADDRESS", "ali@ornek.com")
+    assert SubjectIndex(KEY).hash("TCKN", "1000\u200b0000146") == SubjectIndex(KEY).hash("TCKN", "10000000146")

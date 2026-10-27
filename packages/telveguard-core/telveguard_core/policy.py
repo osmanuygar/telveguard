@@ -36,6 +36,7 @@ from .entities import matching_entities
 SEVERITY = {"allow": 0, "alert": 1, "mask": 2, "block": 3}
 MODES = {"enforce", "monitor"}
 # Yazım hatası sessizce geçmesin: bilinmeyen koşul yok sayılsa kural beklenenden geniş eşleşir
+DESTINATIONS = {"internal", "external"}
 WHEN_KEYS = {"teams", "destination", "entity_in", "injection_score_gte", "model_in", "model_not_in", "declared"}
 
 
@@ -128,6 +129,24 @@ class PolicyEngine:
                 raise ValueError(f"Kural '{name}': {key} boş olmayan bir model adı listesi olmalı")
         if "declared" in when and not isinstance(when["declared"], bool):
             raise ValueError(f"Kural '{name}': declared true ya da false olmalı")
+        # Tip hatası ya istek anında çöker (ör. injection_score_gte: "0.5") ya da kuralı sessizce
+        # etkisiz bırakır (ör. entity_in: TCKN -> harf harf): ikisi de yüklenirken reddedilir
+        def str_list(key):
+            v = when[key]
+            if not (isinstance(v, list) and v and all(isinstance(x, str) and x for x in v)):
+                raise ValueError(f"Kural '{name}': {key} boş olmayan bir liste olmalı (ör. [{key == 'teams' and 'finans' or 'TCKN'}])")
+        for key in ("teams", "entity_in"):
+            if key in when:
+                str_list(key)
+        if "destination" in when and when["destination"] not in DESTINATIONS:
+            raise ValueError(f"Kural '{name}': destination {' ya da '.join(sorted(DESTINATIONS))} olmalı")
+        if "injection_score_gte" in when:
+            v = when["injection_score_gte"]
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 1:
+                raise ValueError(f"Kural '{name}': injection_score_gte 0 ile 1 arasında bir sayı olmalı")
+        for key in ("message", "name"):
+            if key in rule and not isinstance(rule[key], str):
+                raise ValueError(f"Kural '{name}': {key} metin olmalı")
 
     def destination_of(self, model: str) -> str:
         for dest, models in self.destinations.items():

@@ -215,3 +215,31 @@ def test_rules_diff_for_console(client, store):  # noqa: F811
     assert c["counts"] == {"added": 1, "changed": 1, "removed": 0}
     removed = ps.rules_diff({"rules": [{"name": "a", "action": "block"}]}, {"rules": []})
     assert removed["rules"][0]["status"] == "removed"
+
+
+def test_static_token_cannot_write_when_oidc_admin_configured(client, store, monkeypatch):  # noqa: F811
+    """OIDC varken statik token'daki ad beyandır: sahte adla onay (dört gözü atlatma) olmasın."""
+    auth = client.app.state.auth
+    monkeypatch.setattr(auth, "admin_group", "telveguard-admin")
+    content = client.get("/v1/policy/store", headers=as_("ayse")).json()["content"]   # okuma serbest
+    r = client.post("/v1/policy/versions", headers=as_("ayse"), json={"content": draft(content), "comment": "deneme"})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "oidc_required"
+    monkeypatch.setenv("POLICY_STATIC_TOKEN_WRITES", "1")   # bilinçli istisna (ör. geçiş dönemi)
+    assert client.post("/v1/policy/versions", headers=as_("ayse"), json={"content": draft(content), "comment": "deneme"}).status_code == 200
+
+
+def test_rejects_aliases_and_unknown_entities(client, store):  # noqa: F811
+    for text, msg in {"rules:\n  - name: a\n    action: alert\n    message: &m x\n  - name: b\n    action: alert\n    message: *m\n": "takma ad",
+                      "rules:\n  - name: a\n    when: { entity_in: [TCKNN] }\n    action: block\n": "bilinmeyen veri türü",
+                      "rules:\n  - name: a\n    when: { injection_score_gte: '0.5' }\n    action: block\n": "0 ile 1",
+                      "rules:\n  - name: a\n    when: { entity_in: TCKN }\n    action: block\n": "liste",
+                      "rules:\n  - name: a\n    when: { destination: externall }\n    action: block\n": "destination"}.items():
+        v = client.post("/v1/policy/validate", headers=AUTH, json={"content": text}).json()
+        assert not v["ok"] and msg in v["error"], (text, v)
+
+
+def test_routing_rules_validated_too(client, store):  # noqa: F811
+    for text, msg in {"routing:\n  - name: r\n    when: { entity_in: [TCKNN] }\n    to: vllm/qwen3\n": "bilinmeyen veri türü",
+                      "routing:\n  - name: r\n    when: { teams: finans }\n    to: vllm/qwen3\n": "liste"}.items():
+        v = client.post("/v1/policy/validate", headers=AUTH, json={"content": text}).json()
+        assert not v["ok"] and msg in v["error"], (text, v)

@@ -92,6 +92,10 @@ def load() -> Config:
     if managed:
         values.update(managed)
         sources.append(str(managed_path()))
+    gateway = str(values.get("gateway") or "")
+    if gateway and not gateway.lower().startswith(("https://", "http://")):
+        # file:// gibi şemalarla hook yerel dosya okuyup "cevap" sayabilir
+        raise ConfigError(f"Gateway adresi http(s) olmalı: {gateway[:80]}")
     return Config(values, sorted(managed), sources)
 
 

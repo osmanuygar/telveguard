@@ -20,6 +20,7 @@ Yapılandırma (hepsi ortam değişkeni; Helm policy.git.*):
   POLICY_GIT_MESSAGE      commit mesajı şablonu ({version} {event} {author} {actor} {comment} ...)
   POLICY_GIT_TOKEN        HTTP erişim token'ı (proje / depo token'ı, yazma yetkili) — Secret'tan
   POLICY_GIT_CA_FILE      kurum içi CA (PEM)
+  POLICY_GIT_ALLOW_HTTP   1: düz http adresine izin (token şifresiz gider; yalnızca yerel test)
   POLICY_GIT_TIMEOUT      saniye (10)
 
 Strict değilse yazma arka planda, birkaç denemeyle yapılır; sonuç sürümün geçmişine
@@ -67,7 +68,8 @@ class GitConfig:
     content: str = "full"
     strict: bool = False
     message: str = DEFAULT_MESSAGE
-    token: str = ""
+    token: str = field(default="", repr=False)   # loglara / hata çıktısına düşmesin
+    allow_http: bool = False
     ca_file: str = ""
     timeout: float = 10.0
     web_url: str = ""
@@ -88,14 +90,16 @@ class GitConfig:
                   reviewers=[r.strip() for r in e("POLICY_GIT_PR_REVIEWERS", "").split(",") if r.strip()],
                   content=e("POLICY_GIT_CONTENT", "full"), strict=e("POLICY_GIT_STRICT", "0") == "1",
                   message=e("POLICY_GIT_MESSAGE", "") or DEFAULT_MESSAGE, token=e("POLICY_GIT_TOKEN", ""),
+                  allow_http=e("POLICY_GIT_ALLOW_HTTP", "0") == "1",
                   ca_file=e("POLICY_GIT_CA_FILE", ""), timeout=float(e("POLICY_GIT_TIMEOUT", "10")))
         cfg.validate()
         return cfg
 
     def validate(self) -> None:
         problems = []
-        if not self.url.startswith(("https://", "http://")):
-            problems.append("POLICY_GIT_URL http(s) adresi olmalı")
+        if not (self.url.startswith("https://") or (self.allow_http and self.url.startswith("http://"))):
+            # Token her istekte gider: düz http yalnızca bilinçli istisnayla (ör. yerel test)
+            problems.append("POLICY_GIT_URL https:// olmalı (düz http için POLICY_GIT_ALLOW_HTTP=1)")
         if not _SLUG.match(self.project) or not _SLUG.match(self.repo):
             problems.append("POLICY_GIT_PROJECT / POLICY_GIT_REPO geçersiz")
         if self.mode not in ("commit", "pull_request"):
@@ -130,9 +134,12 @@ class GitConfig:
         return f"projects/{quote(self.project)}/repos/{quote(self.repo)}"
 
     def render_message(self, f: Dict[str, Any]) -> str:
+        def line(v, n):   # tek satır: notla sahte "Telveguard-Policy-Version:" satırı eklenemesin
+            return " ".join(str(v or "").split())[:n] or "–"
         values = {**f, "event_text": EVENT_TEXT.get(f["event"], f["event"]),
                   "actor_note": " (beyan)" if f.get("actor_via") == "static_token" else "",
-                  "note": f.get("note") or "–", "comment": (f.get("comment") or "").splitlines()[0][:200] if f.get("comment") else "–"}
+                  "note": line(f.get("note"), 500), "comment": line(f.get("comment"), 200),
+                  "author": line(f.get("author"), 100), "actor": line(f.get("actor"), 100)}
         return self.message.format(**values)
 
 
@@ -256,7 +263,7 @@ class Mirror:
         fields = {"version": version["version"], "event": event, "author": version["author"], "actor": actor,
                   "actor_via": via, "comment": version.get("comment", ""), "note": note}
         message = self.cfg.render_message(fields)
-        title = f"Telveguard politika sürüm {version['version']}: {(version.get('comment') or '').splitlines()[0][:80] if version.get('comment') else ''}".rstrip(": ")
+        title = f"Telveguard politika sürüm {version['version']}: {' '.join((version.get('comment') or '').split())[:80]}".rstrip(": ")
         return await self.client.publish(version["version"], self.file_content(runtime, version["content"]), message, title)
 
     async def record(self, store, version: int, result: Optional[Dict[str, Any]], error: str = "") -> None:

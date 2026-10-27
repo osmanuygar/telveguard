@@ -46,6 +46,7 @@ MAX_CHARS = 2_000_000
 _PARTIAL_PLACEHOLDER = re.compile(r"\[[A-Z0-9_]*$")
 _PARTIAL_TOKEN = re.compile(r"(?:(?:\+?\d+|TR\d*)[ -])*\S*$", re.IGNORECASE)
 MAX_HOLDBACK = 64
+MEMORY_MAX_SESSIONS = 50_000   # REDIS_URL yokken süreç belleğindeki en fazla oturum
 
 
 class GuardrailInputError(ValueError):
@@ -99,6 +100,9 @@ class MemoryStore:
         now = time.time()
         if len(self._data) > 10_000:    # süresi geçenleri ara sıra temizle
             self._data = {k: v for k, v in self._data.items() if v[0] >= now}
+            # Hâlâ çoksa (hepsi süresi içinde) en eskiler düşer: bellek sınırsız büyümesin
+            while len(self._data) > MEMORY_MAX_SESSIONS:
+                self._data.pop(next(iter(self._data)))
         self._data[key] = (now + self.ttl, session.dumps())
 
 

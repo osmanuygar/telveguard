@@ -196,3 +196,9 @@ def test_enterprise_paths_do_not_overwrite_managed_settings():
     p = install.claude_path("enterprise")
     assert p.name == "telveguard.json" and p.parent.name == "managed-settings.d"
     assert install.cursor_path("enterprise").name == "hooks.json"
+
+
+def test_gateway_url_must_be_http(cfg, monkeypatch):
+    monkeypatch.setenv("TELVEGUARD_URL", "file:///etc/passwd")
+    with pytest.raises(config.ConfigError, match="http"):
+        config.load()
