@@ -1,6 +1,6 @@
 # Değişiklik günlüğü
 
-## Yayımlanmadı
+## 0.5.0 — 2026-10-27
 
 ### Güvenlik
 
@@ -66,7 +66,7 @@
   `PolicyEngine("politika.yaml")` ile deneyin.
 - ICAP: `ICAP_MAX_BODY`'yi aşan gövde artık durdurulur; eski davranış `ICAP_OVERSIZE=allow`.
 
-### Gateway
+### Gateway (Docker imajı / Helm chart 0.5.0)
 
 - Onaylanan politika sürümünü Bitbucket Data Center'a yansıtma (`POLICY_GIT_*`, Helm
   `policy.store.git.*`): onay, acil yayın ve geri alma depoya commit (ya da dal + PR) olarak yazılır;
