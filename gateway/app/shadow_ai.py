@@ -9,6 +9,11 @@ olarak yazılır; Röntgen'de kendiliğinden görünür.
 Kimlik: eklenti kurumun MDM'i ile dağıtılır; kullanıcı / ekip MDM yapılandırmasından gelir
 (kendi beyanıdır, JWT gibi doğrulanmaz). Uç SHADOW_AI_TOKEN ile korunur; tanımlı değilse kapalı.
 Tüm alanlar sıkı doğrulanır: bu uç kimliği doğrulanmamış tarayıcılardan veri kabul eder.
+
+Token MDM ile her tarayıcıya dağıtıldığı için fiilen herkestedir: ele geçiren biri başkası adına
+olay yazabilir. Bu yüzden kayıtta kaynak `browser_extension` (beyan) olarak işaretlidir ve uç hız
+sınırlıdır (RateLimiter): beyan edilen kullanıcı başına ve worker genelinde dakikalık olay sayısı.
+Eklenti 429'da olayları kuyrukta tutar, sonra yeniden dener.
 """
 import re
 import time
@@ -119,6 +124,37 @@ def to_audit_event(e: ShadowEvent) -> Dict[str, Any]:
         "masked_count": sum(e.entities.values()) if e.action == "masked" else 0,
         "output_scan": "", "quota": "",
     }
+
+
+class RateLimiter:
+    """Dakikalık sabit pencere: kullanıcı başına (SHADOW_AI_USER_PER_MIN, 300) ve toplam
+    (SHADOW_AI_GLOBAL_PER_MIN, 20000) olay. Sayaç worker içidir; amaç sahte olay seline karşı
+    bir tavan (denetim kaydı, ClickHouse, bildirim kanalları), muhasebe değil."""
+
+    def __init__(self, per_user: int, total: int, clock=time.monotonic):
+        self.per_user, self.total, self.clock = per_user, total, clock
+        self._window, self._users, self._all = -1, {}, 0
+
+    @classmethod
+    def from_env(cls) -> "RateLimiter":
+        import os
+        return cls(int(os.getenv("SHADOW_AI_USER_PER_MIN", "300")), int(os.getenv("SHADOW_AI_GLOBAL_PER_MIN", "20000")))
+
+    def allow(self, events: List[ShadowEvent]) -> bool:
+        """Tüm parti sığıyorsa sayar ve True; sığmıyorsa hiçbirini saymaz (eklenti partiyi yeniden dener)."""
+        window = int(self.clock() // 60)
+        if window != self._window:
+            self._window, self._users, self._all = window, {}, 0
+        counts: Dict[str, int] = {}
+        for e in events:
+            counts[e.user] = counts.get(e.user, 0) + 1
+        if self._all + len(events) > self.total or \
+                any(self._users.get(u, 0) + n > self.per_user for u, n in counts.items()):
+            return False
+        self._all += len(events)
+        for u, n in counts.items():
+            self._users[u] = self._users.get(u, 0) + n
+        return True
 
 
 def check_token(given: Optional[str], expected: str) -> bool:

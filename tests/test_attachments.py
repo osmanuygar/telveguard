@@ -351,3 +351,15 @@ def test_real_tesseract_reads_tckn():
     ImageDraw.Draw(img).text((20, 30), f"TC Kimlik No: {TCKN}", fill="black", font=ImageFont.load_default(size=40))
     text, _ = words_to_text(TesseractOcr().words(img))
     assert TCKN in text
+
+
+def test_attachment_count_limit_makes_extra_unscannable(client):
+    use_scanner(client, FakeOcr("temiz"), max_count=2, unscannable="block")
+    assert chat(client, [image_part(png()), image_part(png(color="gray"))]).status_code == 200
+    r = chat(client, [image_part(png()), image_part(png(color="gray")), image_part(png(color="blue"))])
+    assert r.status_code == 403 and "ek sayısı sınırı (2)" in r.json()["error"]["message"]
+
+
+def test_max_count_validated():
+    with pytest.raises(AttachmentConfigError):
+        Settings.from_config({"attachments": {"max_count": 0}})

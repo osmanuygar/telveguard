@@ -172,10 +172,14 @@ def test_quota_redis_env_and_password_secret():
     assert e["REDIS_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "redis-password"
 
 
+REDIS = ["--set", "quota.redisUrl=redis://redis:6379/0"]
+
+
 def test_policy_store_env():
     assert "POLICY_STORE" not in env(render())
-    e = env(render("--set", "policy.store.enabled=true", "--set", "clickhouse.url=http://ch:8123"))
+    e = env(render("--set", "policy.store.enabled=true", "--set", "clickhouse.url=http://ch:8123", *REDIS))
     assert e["POLICY_STORE"]["value"] == "clickhouse" and e["POLICY_FOUR_EYES"]["value"] == "1"
+    assert e["POLICY_EMERGENCY"]["value"] == "1"
     assert e["POLICY_STORE_CLICKHOUSE_USER"]["value"] == "telveguard_policy"
     assert e["POLICY_STORE_CLICKHOUSE_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "policy-store-password"
     with pytest.raises(RuntimeError, match="clickhouse.url"):
@@ -209,7 +213,7 @@ def test_inventory_in_configmap_matches_repo():
 
 
 def test_policy_git_env():
-    base = ["--set", "policy.store.enabled=true", "--set", "clickhouse.url=http://ch:8123"]
+    base = ["--set", "policy.store.enabled=true", "--set", "clickhouse.url=http://ch:8123", *REDIS]
     assert "POLICY_GIT_PROVIDER" not in env(render(*base))
     e = env(render(*base, "--set", "policy.store.git.enabled=true", "--set", "policy.store.git.url=https://bb.sirket.local",
                    "--set", "policy.store.git.project=SEC", "--set", "policy.store.git.repo=tg-config",
@@ -221,3 +225,38 @@ def test_policy_git_env():
         render(*base, "--set", "policy.store.git.enabled=true")
     with pytest.raises(RuntimeError, match="policy.store.enabled gerekli"):
         render("--set", "policy.store.git.enabled=true")
+
+
+def test_policy_store_needs_redis_with_multiple_processes():
+    store = ["--set", "policy.store.enabled=true", "--set", "clickhouse.url=http://ch:8123"]
+    with pytest.raises(RuntimeError, match="quota.redisUrl"):
+        render(*store)                                             # varsayılan: 2 replica x 2 worker
+    assert env(render(*store, "--set", "replicaCount=1", "--set", "workers=1"))["POLICY_STORE"]["value"] == "clickhouse"
+    e = env(render(*store, *REDIS, "--set", "policy.store.emergency=false"))
+    assert e["POLICY_EMERGENCY"]["value"] == "0"
+
+
+def test_request_limit_and_kafka_security_env():
+    e = env(render())
+    assert e["MAX_REQUEST_BYTES"]["value"] == "32000000" and e["KAFKA_SECURITY_PROTOCOL"]["value"] == "PLAINTEXT"
+    assert "KAFKA_SASL_PASSWORD" not in e
+    e = env(render("--set", "audit.kafka.securityProtocol=SASL_SSL", "--set", "audit.kafka.saslUsername=tg",
+                   "--set", "audit.kafka.caFile=/etc/pki/ca.pem"))
+    assert (e["KAFKA_SASL_MECHANISM"]["value"], e["KAFKA_SASL_USERNAME"]["value"]) == ("SCRAM-SHA-512", "tg")
+    assert e["KAFKA_SASL_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == "kafka-sasl-password"
+    assert e["KAFKA_SSL_CA_FILE"]["value"] == "/etc/pki/ca.pem"
+    with pytest.raises(RuntimeError, match="saslUsername"):
+        render("--set", "audit.kafka.securityProtocol=SASL_SSL")
+    with pytest.raises(RuntimeError, match="securityProtocol"):
+        render("--set", "audit.kafka.securityProtocol=TLS")
+
+
+def test_metrics_token_wires_env_and_service_monitor():
+    with pytest.raises(RuntimeError, match="metricsToken"):
+        render("--set", "metrics.requireToken=true")
+    docs = render("--set", "metrics.requireToken=true", "--set", "secrets.metricsToken=prom",
+                  "--set", "metrics.serviceMonitor.enabled=true")
+    assert env(docs)["METRICS_TOKEN"]["valueFrom"]["secretKeyRef"]["key"] == "metrics-token"
+    auth = docs[("ServiceMonitor", "tg-telveguard-gateway")]["spec"]["endpoints"][0]["authorization"]
+    assert auth == {"type": "Bearer", "credentials": {"name": "tg-telveguard-gateway", "key": "metrics-token"}}
+    assert docs[("Secret", "tg-telveguard-gateway")]["stringData"]["metrics-token"] == "prom"

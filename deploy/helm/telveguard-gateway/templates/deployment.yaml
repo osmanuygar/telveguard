@@ -43,6 +43,8 @@ spec:
           env:
             - name: WORKERS
               value: {{ .Values.workers | quote }}
+            - name: MAX_REQUEST_BYTES
+              value: {{ .Values.maxRequestBytes | int64 | quote }}
             - name: PROMETHEUS_MULTIPROC_DIR
               value: /tmp/prometheus
             - name: AUTH_MODE
@@ -113,6 +115,20 @@ spec:
             {{- end }}
             - name: KAFKA_AUDIT_TOPIC
               value: {{ .Values.audit.topic | quote }}
+            {{- with .Values.audit.kafka }}
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: {{ .securityProtocol | quote }}
+            {{- if hasPrefix "SASL_" .securityProtocol }}
+            - name: KAFKA_SASL_MECHANISM
+              value: {{ .saslMechanism | quote }}
+            - name: KAFKA_SASL_USERNAME
+              value: {{ .saslUsername | quote }}
+            {{- end }}
+            {{- with .caFile }}
+            - name: KAFKA_SSL_CA_FILE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             - name: AUDIT_STORE_MASKED
               value: {{ ternary "1" "0" .Values.audit.storeMasked | quote }}
             {{- with .Values.clickhouse.url }}
@@ -133,6 +149,8 @@ spec:
               value: {{ .pollSeconds | quote }}
             - name: POLICY_FOUR_EYES
               value: {{ ternary "1" "0" .fourEyes | quote }}
+            - name: POLICY_EMERGENCY
+              value: {{ ternary "1" "0" .emergency | quote }}
             {{- with .insertQuorum }}
             - name: POLICY_STORE_INSERT_QUORUM
               value: {{ . | quote }}
@@ -204,6 +222,12 @@ spec:
             {{- include "tg.secretEnv" (dict "env" "SHADOW_AI_TOKEN" "secret" $secret "key" "shadow-ai-token") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "GUARDRAIL_TOKEN" "secret" $secret "key" "guardrail-token") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "TELVEGUARD_SUBJECT_HASH_KEY" "secret" $secret "key" "subject-hash-key") | nindent 12 }}
+            {{- if .Values.metrics.requireToken }}
+            {{- include "tg.secretEnv" (dict "env" "METRICS_TOKEN" "secret" $secret "key" "metrics-token") | nindent 12 }}
+            {{- end }}
+            {{- if hasPrefix "SASL_" .Values.audit.kafka.securityProtocol }}
+            {{- include "tg.secretEnv" (dict "env" "KAFKA_SASL_PASSWORD" "secret" $secret "key" "kafka-sasl-password") | nindent 12 }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

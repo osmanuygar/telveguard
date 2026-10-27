@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -194,3 +196,38 @@ def test_kafka_failure_does_not_break_request_and_event_is_not_lost(client, capl
     fallback = [m for m in caplog.messages if m.startswith("{")]
     assert fallback and '"action": "mask"' in fallback[-1] and make_tckn() not in fallback[-1]
     client.app.state.audit._producer = None
+
+
+# ---------------- istek gövdesi sınırı ----------------
+
+def test_request_body_limit(client, monkeypatch):
+    monkeypatch.setenv("MAX_REQUEST_BYTES", "2000")
+    big = {"model": "gpt-4o", "messages": [{"role": "user", "content": "x" * 3000}]}
+    r = client.post("/v1/chat/completions", json=big)
+    assert r.status_code == 413 and r.json()["error"]["code"] == "request_too_large"
+    r = client.post("/v1/messages", json={**big, "model": "claude-opus-5", "max_tokens": 1})
+    assert r.status_code == 413 and r.json()["type"] == "error"          # Anthropic biçiminde
+    # Content-Length olmadan (chunked) da sayılır
+    r = client.post("/v1/chat/completions", headers={"content-type": "application/json"},
+                    content=iter([json.dumps(big).encode()[:1500], json.dumps(big).encode()[1500:]]))
+    assert r.status_code == 413
+    small = {"model": "gpt-4o", "messages": [{"role": "user", "content": "merhaba"}]}
+    assert client.post("/v1/chat/completions", json=small).status_code == 200
+    assert client.get("/healthz").status_code == 200
+
+
+# ---------------- güvenlik başlıkları ----------------
+
+def test_console_csp_allows_only_its_own_script(client):
+    import base64
+    import hashlib
+    import re
+    r = client.get("/xray")
+    csp = r.headers["content-security-policy"]
+    script = re.search(r"<script>(.*?)</script>", r.text, re.S).group(1)
+    digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
+    assert f"script-src 'sha256-{digest}';" in csp and "frame-ancestors 'none'" in csp and "connect-src 'self'" in csp
+    assert "unsafe-inline" not in csp.split("script-src")[1].split(";")[0]
+    assert r.headers["x-frame-options"] == "DENY"
+    api = client.get("/healthz")
+    assert api.headers["x-content-type-options"] == "nosniff" and api.headers["referrer-policy"] == "no-referrer"

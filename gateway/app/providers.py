@@ -28,6 +28,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple
+from urllib.parse import quote
 
 log = logging.getLogger("telveguard.providers")
 
@@ -90,9 +91,11 @@ class Provider:
             return f"{base}/openai/v1{_PATHS['openai'][kind]}", h
         if kind == "responses":
             return f"{base}/openai/responses?api-version={self.api_version}", h
-        deployment = self.deployments.get(model, model)
+        # Model adı istemciden gelir: yol olarak kodlanır ("gpt-x/../../..." kurumun anahtarıyla başka
+        # bir Azure ucuna gitmesin)
+        deployment = quote(self.deployments.get(model, model), safe="")
         op = "embeddings" if kind == "embeddings" else "chat/completions"
-        return f"{base}/openai/deployments/{deployment}/{op}?api-version={self.api_version}", h
+        return f"{base}/openai/deployments/{deployment}/{op}?api-version={quote(self.api_version, safe='')}", h
 
 
 class ProviderError(ValueError):

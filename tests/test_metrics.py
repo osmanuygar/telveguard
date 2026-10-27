@@ -59,3 +59,11 @@ def test_client_controlled_values_never_become_labels(client):  # noqa: F811
                     json={"model": f"gpt-sahte-{i}-model", "messages": [{"role": "user", "content": "x"}]})
     body = client.get("/metrics").text
     assert "saldiri" not in body and "gpt-sahte" not in body
+
+
+def test_metrics_token_optional(client, monkeypatch):  # noqa: F811
+    assert client.get("/metrics").status_code == 200
+    monkeypatch.setenv("METRICS_TOKEN", "prom-token")
+    assert client.get("/metrics").status_code == 401
+    assert client.get("/metrics", headers={"Authorization": "Bearer yanlis"}).status_code == 401
+    assert client.get("/metrics", headers={"Authorization": "Bearer prom-token"}).status_code == 200

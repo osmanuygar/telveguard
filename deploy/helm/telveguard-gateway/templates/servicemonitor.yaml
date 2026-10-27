@@ -15,4 +15,11 @@ spec:
     - port: http
       path: /metrics
       interval: {{ .Values.metrics.serviceMonitor.interval }}
+      {{- if .Values.metrics.requireToken }}
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ include "tg.secretName" . }}
+          key: metrics-token
+      {{- end }}
 {{- end }}

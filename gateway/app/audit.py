@@ -6,6 +6,12 @@ SHA-256 özeti ve bulunan varlık türleri yazılır. AUDIT_STORE_MASKED=1 ise
 maskelenmiş metin de saklanır (PII'lar yer tutucu halinde).
 
 Kafka yoksa (lokal geliştirme) olaylar stdout'a JSON satır olarak yazılır.
+
+Kurumsal Kafka: KAFKA_SECURITY_PROTOCOL (SSL | SASL_SSL | SASL_PLAINTEXT), KAFKA_SASL_MECHANISM
+(PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512), KAFKA_SASL_USERNAME / KAFKA_SASL_PASSWORD, kurum içi CA
+için KAFKA_SSL_CA_FILE, karşılıklı TLS için KAFKA_SSL_CERT_FILE / KAFKA_SSL_KEY_FILE. Olaylarda
+kullanıcı, ekip ve ilgili kişi özetleri vardır: düz metin bağlantı ve yetkisiz topic yazımı
+(sahte denetim kaydı) üretimde kabul edilemez.
 Kafka çalışırken erişilemez olursa istek BOZULMAZ (politika zaten uygulanmıştır):
 olay stdout'a düşer (log toplayıcı alır) ve "audit_kafka_failed" hatası loglanır.
 """
@@ -26,6 +32,33 @@ def sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+KAFKA_PROTOCOLS = ("PLAINTEXT", "SSL", "SASL_SSL", "SASL_PLAINTEXT")
+KAFKA_SASL_MECHANISMS = ("PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512")
+
+
+def kafka_security() -> dict:
+    """KAFKA_* ortam değişkenlerinden aiokafka güvenlik ayarları; hatalı değer açılışta hata verir."""
+    e = os.getenv
+    protocol = e("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT").upper()
+    if protocol not in KAFKA_PROTOCOLS:
+        raise ValueError(f"KAFKA_SECURITY_PROTOCOL şunlardan biri olmalı: {', '.join(KAFKA_PROTOCOLS)}")
+    out: dict = {"security_protocol": protocol}
+    if protocol in ("SSL", "SASL_SSL"):
+        from aiokafka.helpers import create_ssl_context
+        out["ssl_context"] = create_ssl_context(cafile=e("KAFKA_SSL_CA_FILE") or None,
+                                                certfile=e("KAFKA_SSL_CERT_FILE") or None,
+                                                keyfile=e("KAFKA_SSL_KEY_FILE") or None)
+    if protocol.startswith("SASL_"):
+        mechanism = e("KAFKA_SASL_MECHANISM", "SCRAM-SHA-512").upper()
+        if mechanism not in KAFKA_SASL_MECHANISMS:
+            raise ValueError(f"KAFKA_SASL_MECHANISM şunlardan biri olmalı: {', '.join(KAFKA_SASL_MECHANISMS)}")
+        if not (e("KAFKA_SASL_USERNAME") and e("KAFKA_SASL_PASSWORD")):
+            raise ValueError("SASL için KAFKA_SASL_USERNAME ve KAFKA_SASL_PASSWORD gerekli")
+        out.update(sasl_mechanism=mechanism, sasl_plain_username=e("KAFKA_SASL_USERNAME"),
+                   sasl_plain_password=e("KAFKA_SASL_PASSWORD"))
+    return out
+
+
 class AuditSink:
     def __init__(self):
         self.bootstrap = os.getenv("KAFKA_BOOTSTRAP")
@@ -40,7 +73,7 @@ class AuditSink:
             self._producer = AIOKafkaProducer(
                 bootstrap_servers=self.bootstrap,
                 value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode(),
-                acks="all", enable_idempotence=True, linger_ms=20,
+                acks="all", enable_idempotence=True, linger_ms=20, **kafka_security(),
             )
             await self._producer.start()
 

@@ -243,3 +243,37 @@ def test_routing_rules_validated_too(client, store):  # noqa: F811
                       "routing:\n  - name: r\n    when: { teams: finans }\n    to: vllm/qwen3\n": "liste"}.items():
         v = client.post("/v1/policy/validate", headers=AUTH, json={"content": text}).json()
         assert not v["ok"] and msg in v["error"], (text, v)
+
+
+# ---------------- tek kişiyle yayın: acil yayın kapatılabilir, bildirime düşer ----------------
+
+def test_emergency_can_be_disabled(client, store):  # noqa: F811
+    client.app.state.policy_runtime.store.emergency = False
+    content = client.get("/v1/policy/store", headers=as_("ayse")).json()["content"]
+    client.post("/v1/policy/versions", headers=as_("ayse"), json={"content": draft(content), "comment": "sızıntı"})
+    r = client.post("/v1/policy/versions/1/approve", headers=as_("ayse"),
+                    json={"emergency": True, "comment": "Finans'tan canlı TCKN sızıntısı, SOME-123"})
+    assert r.status_code == 403 and "POLICY_EMERGENCY=0" in r.json()["error"]["message"]
+    assert client.get("/v1/policy/store", headers=as_("ayse")).json()["runtime"]["emergency"] is False
+    assert client.post("/v1/policy/versions/1/approve", headers=as_("mehmet"), json={}).json()["event"] == "approved"
+
+
+def test_solo_publish_notifies_channels(client, store, monkeypatch):  # noqa: F811
+    sent = []
+    monkeypatch.setattr(client.app.state.notifier, "submit", sent.append)
+    content = client.get("/v1/policy/store", headers=as_("ayse")).json()["content"]
+    client.post("/v1/policy/versions", headers=as_("ayse"), json={"content": draft(content), "comment": "sızıntı"})
+    client.post("/v1/policy/versions/1/approve", headers=as_("ayse"),
+                json={"emergency": True, "comment": "Finans'tan canlı TCKN sızıntısı, SOME-123"})
+    client.post("/v1/policy/versions", headers=as_("ayse"), json={"content": content, "comment": "eski hâl"})
+    client.post("/v1/policy/versions/2/approve", headers=as_("mehmet"), json={})     # dört göz: bildirim yok
+    client.post("/v1/policy/versions/1/apply", headers=as_("can"), json={"comment": "geri al"})
+    assert [(e["rules"], e["user"], e["api_format"]) for e in sent] == [
+        (["politika:acil-yayin"], "ayse", "policy"), (["politika:geri-alma"], "can", "policy")]
+    assert "SOME-123" in sent[0]["reason"] and sent[0]["action"] == "alert"
+
+
+def test_policy_event_links_to_policy_tab():
+    from app.notify import event_link
+    assert event_link("https://tg", {"event_id": "x", "api_format": "policy"}) == "https://tg/xray#politika"
+    assert event_link("https://tg", {"event_id": "x", "api_format": "chat"}) == "https://tg/xray#olaylar?event=x"
