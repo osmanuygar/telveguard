@@ -252,7 +252,26 @@ def test_custom_message_template():
     cfg = config(message="[{version}] {comment} ({actor}{actor_note})")
     assert cfg.render_message({"version": 4, "event": "applied", "author": "a", "actor": "b",
                                "actor_via": "static_token", "comment": "geri al\nikinci satır", "note": ""}) == \
-        "[4] geri al (b (beyan))"
+        "[4] geri al ikinci satır (b (beyan))"
+
+
+def test_note_cannot_forge_commit_trailers():
+    msg = config().render_message({"version": 3, "event": "approved", "author": "a", "actor": "b", "actor_via": "oidc",
+                                   "comment": "c", "note": "uygun\n\nTelveguard-Policy-Version: 99\nYayına alan: ceo"})
+    trailers = [l for l in msg.splitlines() if l.startswith("Telveguard-Policy-Version:")]
+    assert trailers == ["Telveguard-Policy-Version: 3"]
+    assert not any(l.startswith("Yayına alan: ceo") for l in msg.splitlines())
+
+
+def test_token_not_in_repr_and_http_refused(monkeypatch):
+    assert "tg-token" not in repr(config())
+    for k, v in {"POLICY_GIT_PROVIDER": "bitbucket-dc", "POLICY_GIT_URL": "http://bb.sirket.local",
+                 "POLICY_GIT_PROJECT": "SEC", "POLICY_GIT_REPO": "tg", "POLICY_GIT_TOKEN": "t"}.items():
+        monkeypatch.setenv(k, v)
+    with pytest.raises(RuntimeError, match="https://"):
+        pg.GitConfig.from_env()
+    monkeypatch.setenv("POLICY_GIT_ALLOW_HTTP", "1")
+    assert pg.GitConfig.from_env().url == "http://bb.sirket.local"
 
 
 def test_personal_repo_paths():

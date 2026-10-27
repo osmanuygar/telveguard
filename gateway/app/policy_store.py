@@ -135,6 +135,12 @@ def parse(content: str, base: Dict[str, Any]) -> Tuple[Dict[str, Any], PolicyEng
     if len(content.encode("utf-8")) > MAX_CONTENT:
         raise StoreError(400, "Politika çok büyük (en fazla 512 KB)")
     try:
+        # YAML takma adları (&a / *a) yasak: küçük bir metin bellekte üstel büyüyebilir
+        for ev in yaml.parse(content):
+            if isinstance(ev, yaml.AliasEvent) or getattr(ev, "anchor", None):
+                mark = ev.start_mark
+                raise StoreError(400, f"YAML takma adları (&, *) kullanılamaz (satır {mark.line + 1}); "
+                                      "tekrar eden değeri açıkça yazın")
         data = yaml.safe_load(content)
     except yaml.YAMLError as e:
         mark = getattr(e, "problem_mark", None)
@@ -155,7 +161,22 @@ def parse(content: str, base: Dict[str, Any]) -> Tuple[Dict[str, Any], PolicyEng
         engine = PolicyEngine(config=merge(base, data))
     except (ValueError, KeyError, TypeError) as e:
         raise StoreError(400, str(e))
+    _check_entities(data)
     return data, engine
+
+
+def _check_entities(data: Dict[str, Any]) -> None:
+    """entity_in'deki her ad bilinen bir veri türüne uymalı: yazım hatası (TCKNN) kuralı sessizce
+    etkisiz bırakır. Kurumsal sözlük türleri (KURUM_*) sözlükle değişir, önekle kabul edilir."""
+    from fnmatch import fnmatchcase
+    from .shadow_ai import KNOWN_ENTITIES
+    for kind in ("rules", "output_rules", "routing"):
+        for rule in data.get(kind) or []:
+            for p in (rule.get("when") or {}).get("entity_in") or []:
+                if p.startswith("KURUM_") or any(fnmatchcase(e, p) for e in KNOWN_ENTITIES):
+                    continue
+                raise StoreError(400, f"Kural '{rule.get('name')}': bilinmeyen veri türü '{p}' "
+                                      "(ör. TCKN, IBAN_TR, SECRET_*, KURUM_*)")
 
 
 def rules_diff(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:

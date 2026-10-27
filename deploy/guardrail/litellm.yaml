@@ -5,8 +5,11 @@
 #   cevap  -> Telveguard: sızıntı taraması, çıktı kuralları, [TCKN_1] -> gerçek değer
 #
 # Kimlik sanal anahtardan gelir: kullanıcı (e-posta / user_id), ekip (team_alias / team_id).
-# Hedef model takma adından çıkar (Telveguard politikasındaki destinations / providers); takma ad
-# kurum içi bir modeli gösteriyorsa aşağıdaki gibi ayrı bir guardrail ile destination: internal.
+# Hedef model takma adından çıkar (Telveguard politikasındaki destinations / providers). Takma ad
+# kurum içi bir modeli gösteriyorsa adı politikadaki destinations.internal'a ekleyin (önerilen).
+# destination: internal bildirimi varsayılan olarak yok sayılır (yalnızca daha sıkı "external"
+# geçerli): istemciler guardrail parametresini istek bazında verebiliyorsa maskeleme atlatılır.
+# Bildirime güvenmek için Telveguard'da GUARDRAIL_TRUST_DESTINATION=1.
 # Kota, maliyet ve yönlendirme LiteLLM'de kalır; Telveguard'ın kayıtlarında token "bilinmiyor".
 
 model_list:
@@ -29,7 +32,8 @@ guardrails:
       streaming_transform_mode: incremental_diff
       streaming_sampling_rate: 5                         # her 5 parçada bir sor (1: en sıkı, en pahalı)
 
-  # Kurum içi modele giden takma adlar için (maskeleme gerekmez, sırlar ve injection yine denetlenir):
+  # Kurum içi modele giden takma adlar için (GUARDRAIL_TRUST_DESTINATION=1 gerekir; önerilen yol
+  # politikadaki destinations.internal):
   # - guardrail_name: telveguard-kurum-ici
   #   litellm_params:
   #     guardrail: generic_guardrail_api

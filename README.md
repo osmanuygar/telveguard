@@ -126,7 +126,11 @@ Kurumda zaten bir AI gateway'i varsa onu değiştirmeyin: Telveguard'ı guardrai
 | Cevapta sızıntı | maskele / engelle (stream'de istemciye gitmeden) | maskele / engelle; stream'de yalnızca engel |
 | Kimlik | sanal anahtar (kullanıcı, ekip) | JWT / başlık (CEL) |
 
-Hedef (yurt içi / dışı) model adından çıkar; model bilinmiyorsa yurt dışı sayılır. Yönlendirme
+Hedef (yurt içi / dışı) model adından çıkar; model bilinmiyorsa yurt dışı sayılır. Kurum içi
+modele giden takma adları politikadaki `destinations.internal`'a ekleyin. Çağıranın bildirdiği
+`destination: internal` varsayılan olarak yok sayılır (yalnızca daha sıkı `external` geçerli):
+istemci bu alanı istek bazında verebiliyorsa maskeleme atlatılır; bildirime güvenmek için
+`GUARDRAIL_TRUST_DESTINATION=1`. Yönlendirme
 (`routing`) bu modda yoktur: modeli çağıran gateway seçer. Kota ve maliyet o gateway'dedir; kayıtta
 `api_format = guardrail` ve token "bilinmiyor". Maske eşleşmesi kısa süreli oturumda tutulur
 (`GUARDRAIL_SESSION_TTL`, varsayılan 600 sn; `REDIS_URL` varsa Redis): ham kişisel veri içerir.
@@ -535,6 +539,11 @@ Konsolun **Politika** sekmesi (`/xray#politika`) kuralları ConfigMap'i değişt
    başlatmadan yürürlüğe girer. Acil durumda yazan, gerekçe yazarak kendisi yayınlayabilir (kayıtta "acil").
 4. **Geri alma:** onaylı eski bir sürüm tek tıkla yeniden yayına alınır.
 
+Taslak yayına alınmadan sıkı doğrulanır: koşul değerlerinin tipi (ör. `injection_score_gte` 0-1 arası
+sayı, `entity_in` / `teams` liste), `destination` (`internal` / `external`), bilinen veri türü adları
+(`TCKNN` gibi yazım hataları reddedilir) ve YAML takma adı (`&` / `*`) yasağı. Böylece hatalı bir kural
+ne istek anında hata verir ne de sessizce etkisiz kalır.
+
 Konsoldan yalnızca `default_action`, `mode`, `rules`, `output_rules` düzenlenir. Sağlayıcılar,
 kurumsal sözlük, bildirim kanalları, kota ve fiyatlar ConfigMap'te kalır (sır ve dosya yolu içerir).
 Çalışan politika = ConfigMap dosyası + yayındaki sürümün kuralları.
@@ -575,7 +584,9 @@ eski sürüm depoya hiçbir zaman yazılmaz.
 | `POLICY_GIT_MESSAGE` | Commit mesajı şablonu: `{version}` `{event}` `{event_text}` `{author}` `{actor}` `{actor_note}` `{comment}` `{note}` |
 | `POLICY_GIT_TOKEN` | Depoya yazma yetkili HTTP erişim token'ı (proje / depo token'ı); Secret'tan |
 | `POLICY_GIT_CA_FILE`, `POLICY_GIT_TIMEOUT` | Kurum içi CA (PEM) ve zaman aşımı (10 sn) |
+| `POLICY_GIT_ALLOW_HTTP=1` | Düz `http://` adrese izin (token şifresiz gider); yalnızca yerel test. Varsayılan: yalnızca `https://` |
 
+Adım adım kurulum (Bitbucket yöneticisi için): [docs/bitbucket.md](docs/bitbucket.md).
 Helm: `policy.store.git.*`, token secret'ta `policy-git-token`. Konsolda "Bağlantıyı dene" depoyu,
 dalı ve dosyayı yazmadan denetler. Dal izinlerinde doğrudan commit kapalıysa `mode: pull_request`
 kullanın; PR merge edilene kadar canlı politika yine konsoldaki onaylı sürümdür.
@@ -671,7 +682,7 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `TELVEGUARD_SUBJECT_HASH_KEY`, `TELVEGUARD_SUBJECT_HASH_KEY_OLD` | İlgili kişi araması için özet anahtarı (en az 32 karakter); boşsa kapalı |
 | `TELVEGUARD_PUBLIC_URL` | Bildirimlerdeki "Konsolda aç" bağlantısının tabanı (politikada `notify.console_url` yoksa) |
 | `TELVEGUARD_ADMIN_TOKEN` | Yönetim uçları (Röntgen, simülatör, rapor); **boşsa bu uçlar kapalıdır** |
-| `POLICY_STORE=clickhouse` | Konsoldan politika yönetimi; `POLICY_STORE_CLICKHOUSE_USER` / `_PASSWORD` (yazma), `POLICY_STORE_POLL_SECONDS` (5), `POLICY_FOUR_EYES` (1), `POLICY_STORE_INSERT_QUORUM` |
+| `POLICY_STORE=clickhouse` | Konsoldan politika yönetimi; `POLICY_STORE_CLICKHOUSE_USER` / `_PASSWORD` (yazma), `POLICY_STORE_POLL_SECONDS` (5), `POLICY_FOUR_EYES` (1), `POLICY_STORE_INSERT_QUORUM`. `OIDC_ADMIN_GROUP` tanımlıyken politika değişikliği yalnızca kurum hesabıyla yapılır; statik token okuma içindir (`POLICY_STATIC_TOKEN_WRITES=1` ile bilinçli istisna) |
 | `ENABLE_TR_NER=1`, `TR_NER_MODEL_PATH` | Türkçe kişi / kurum / yer adı tespiti (BERT, lokal model) |
 | `ENABLE_LLM_GUARD=1`, `LLM_GUARD_MODEL_PATH` | Ek injection sınıflandırıcı (LLM Guard); model lokal dizinden, internetsiz (`/models/prompt-injection`) |
 | `LLM_GUARD_THRESHOLD`, `LLM_GUARD_USE_ONNX=1` | Sınıflandırıcı eşiği (0,92) ve CPU'da daha hızlı ONNX çalıştırma |
@@ -1001,8 +1012,9 @@ Helm: `icap.enabled=true`, `icap.allowedClients=[proxy CIDR'ları]`; ayrı bir `
 | `ICAP_PORT` | ICAP dinleme portu (ör. 1344); **boşsa ICAP kapalı** |
 | `ICAP_ALLOWED_CLIENTS` | Bağlanabilecek proxy'ler, CIDR, virgülle (varsayılan yalnızca 127.0.0.1) |
 | `ICAP_TEAM_PREFIX` | Proxy grupları -> ekip öneki (varsayılan `OIDC_TEAM_PREFIX`) |
-| `ICAP_UNSCANNABLE` | Okunamayan gövde (ikili dosya, desteklenmeyen sıkıştırma): `allow` (varsayılan) / `block` |
-| `ICAP_MAX_BODY` | Taranan en fazla gövde, bayt (5 MB); fazlası taranmaz ve okunamayan içerik sayılır (`ICAP_UNSCANNABLE`) |
+| `ICAP_UNSCANNABLE` | Okunamayan gövde (ikili dosya, desteklenmeyen sıkıştırma, ayrıştırılamayan içerik): `allow` (varsayılan) / `block` |
+| `ICAP_OVERSIZE` | `ICAP_MAX_BODY`'yi aşan gövde (açılmış hâli dahil): `block` (varsayılan; sınırın ötesi taranmadı) / `allow` |
+| `ICAP_MAX_BODY` | Taranan en fazla gövde, bayt (5 MB); sıkıştırılmış gövde de en fazla bu kadar açılır. Aşan gövde: `ICAP_OVERSIZE` |
 | `ICAP_EXTRA_HOSTS` | Listede olmayan, taranacak AI alan adları (virgülle) |
 
 Gateway'in kendi upstream trafiği aynı proxy'den çıkıyorsa ICAP'e gönderilmemeli (Squid'de

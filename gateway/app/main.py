@@ -1099,6 +1099,12 @@ async def _policy_admin(request: Request, write: bool = False):
     if write and not rt.store:
         return _openai_error(404, "Konsoldan politika düzenleme kapalı (POLICY_STORE=clickhouse).",
                              "policy_store_disabled", "admin_error"), None, None
+    if write and actor[1] == "static_token" and request.app.state.auth.admin_group \
+            and os.getenv("POLICY_STATIC_TOKEN_WRITES", "0") != "1":
+        # OIDC varken statik token'daki ad beyandır: token sahibi başkası adına onaylayıp dört gözü
+        # atlatabilir. Politika değişikliği kurum hesabıyla (doğrulanmış kişi) yapılır.
+        return _openai_error(403, "Politika değişikliği için kurum hesabıyla (OIDC) giriş yapın; statik yönetici "
+                                  "token'ı yalnızca okuma içindir.", "oidc_required", "admin_error"), None, None
     if write and not actor[0]:
         return _openai_error(400, "Kayıt için adınızı girin (statik token ile: X-Telveguard-Actor başlığı).",
                              "actor_required", "admin_error"), None, None
@@ -1387,13 +1393,26 @@ async def _guardrail_body(request: Request):
     return body, None
 
 
+def _guardrail_destination(call: guardrail_mod.Call) -> Optional[str]:
+    """Çağıranın bildirdiği hedef yalnızca daha SIKI olabilir (external). "internal" bildirimi
+    maskelemeyi kapatır: istemci bu alanı istek bazında verebiliyorsa (ör. gateway'in istek
+    düzeyindeki guardrail parametreleri) yurt dışı modele maskesiz veri gider. Kurum içi takma
+    adlar politikadaki destinations.internal'a yazılır; bildirime güvenmek için
+    GUARDRAIL_TRUST_DESTINATION=1. None: modelden çıkar (model de yoksa yurt dışı)."""
+    if call.destination == "internal" and os.getenv("GUARDRAIL_TRUST_DESTINATION", "0") != "1":
+        log.warning("guardrail_destination_ignored source=%s model=%s (GUARDRAIL_TRUST_DESTINATION)",
+                    call.source, call.model[:80])
+        return None if call.model else "external"
+    return call.destination or (None if call.model else "external")
+
+
 async def guardrail_input(st, call: guardrail_mod.Call) -> guardrail_mod.Verdict:
     """İstek fazı: gateway'in kendi yoluyla aynı tarama, politika, istisnalar ve maskeleme.
     Model bilinmiyorsa hedef yurt dışı (güvenli varsayılan). Yönlendirme yok: modeli çağıran seçer."""
     t0 = time.perf_counter()
     identity = Identity(call.user or "unknown", call.teams or ["default"], "guardrail")
     body = {"model": call.model, "messages": [{"role": r, "content": t} for r, t in zip(call.roles, call.texts)]}
-    a = _analyze(st, body, identity, CHAT, destination=call.destination or (None if call.model else "external"))
+    a = _analyze(st, body, identity, CHAT, destination=_guardrail_destination(call))
     d = a.decision
     vault: Dict[str, str] = {}
     masked_prompt = _mask_parts(st, a.parts, d, vault)
@@ -1434,7 +1453,7 @@ async def guardrail_output(st, call: guardrail_mod.Call) -> guardrail_mod.Verdic
     if session is None:
         metrics.GUARDRAIL_SESSION_MISSES.labels(call.source).inc()
         session = guardrail_mod.Session(ctx={"user": call.user, "teams": call.teams, "model": call.model,
-                                             "destination": call.destination or "external"})
+                                             "destination": _guardrail_destination(call) or "external"})
     c = session.ctx
     teams = list(c.get("teams") or []) or ["default"]
     ctx = Context(teams[0], c.get("model") or "", c.get("destination") or "external", set(), 0.0,
@@ -1544,6 +1563,10 @@ async def icap_check(st, req: icap_mod.IcapRequest, http: icap_mod.HttpRequest, 
     rules = list(d.rules)
     if d.action in ("block", "mask"):
         action = "block"
+    elif req.body_truncated and os.getenv("ICAP_OVERSIZE", "block") == "block":
+        # Sınırın ötesi taranmadı: sona eklenen veri gözden kaçmasın (ICAP_OVERSIZE=allow ile geçer)
+        action = "block"
+        rules.append("ag:boyut-siniri")
     elif unscannable and os.getenv("ICAP_UNSCANNABLE", "allow") == "block":
         action = "block"
         rules.append("ag:okunamadi")
@@ -1551,7 +1574,8 @@ async def icap_check(st, req: icap_mod.IcapRequest, http: icap_mod.HttpRequest, 
         action = "alert" if d.action == "alert" else "allow"
     entities = sorted(a.entities)
     if action == "block":
-        found = ", ".join(entities) or ("okunamayan içerik" if not d.reason else d.reason)
+        found = ", ".join(entities) or d.reason or ("taranabilir boyutu aşan içerik" if "ag:boyut-siniri" in rules
+                                                    else "okunamayan içerik")
         message = (f"Telveguard: {site.name} isteği {found} içerdiği için gönderilmedi. "
                    "Veriyi çıkarın ya da kurumun onaylı yapay zekâ aracını kullanın.")
     else:

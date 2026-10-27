@@ -92,8 +92,19 @@ def test_litellm_destination(client, events):  # noqa: F811
     assert litellm(client, "request", [f"TC {tckn}"], model="vllm/qwen3") == {"action": "NONE"}
     # Model bilinmiyor: yurt dışı (güvenli varsayılan)
     assert litellm(client, "request", [f"TC {tckn}"], call_id="call-0003", model=None)["action"] == "GUARDRAIL_INTERVENED"
-    # Takma ad kurum içi bir modeli gösteriyorsa yapılandırmayla zorlanır
+    # "internal" bildirimi varsayılan olarak yok sayılır: istemci verebiliyorsa maskeleme atlatılır
     r = litellm(client, "request", [f"TC {tckn}"], call_id="call-0004", model="kurum-asistani",
+                additional_provider_specific_params={"destination": "internal"})
+    assert r["action"] == "GUARDRAIL_INTERVENED" and events[-1]["destination"] == "external"
+    # Daha sıkı bildirim (external) her zaman geçerli
+    r = litellm(client, "request", [f"TC {tckn}"], call_id="call-0005", model="vllm/qwen3",
+                additional_provider_specific_params={"destination": "external"})
+    assert r["action"] == "GUARDRAIL_INTERVENED"
+
+
+def test_litellm_internal_destination_needs_explicit_trust(client, events, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("GUARDRAIL_TRUST_DESTINATION", "1")
+    r = litellm(client, "request", [f"TC {make_tckn()}"], call_id="call-0006", model="kurum-asistani",
                 additional_provider_specific_params={"destination": "internal"})
     assert r == {"action": "NONE"} and events[-1]["destination"] == "internal"
 

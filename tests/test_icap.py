@@ -208,3 +208,37 @@ def test_unscannable_policy(gw, monkeypatch):
     body = b"\x00\x01binary"
     r = reqmod(port, http_request("chatgpt.com", "/backend-api/files/upload", body, ctype="application/octet-stream"), body)
     assert b"403" in r and "ag:okunamadi" in events[0]["rules"]
+
+
+# ---------------- sağlamlaştırma ----------------
+
+def test_decompression_is_bounded():
+    raw = json.dumps({"q": "a" * 200_000}).encode()
+    out, over = icap.decode_body(gzip.compress(raw), "gzip", limit=10_000)
+    assert len(out) <= 10_000 and over
+    out, over = icap.decode_body(gzip.compress(b'{"q":"kisa"}'), "gzip", limit=10_000)
+    assert out == b'{"q":"kisa"}' and not over
+    with pytest.raises(ValueError):
+        icap.decode_body(b"gzip degil", "gzip")
+
+
+def test_parse_failure_does_not_drop_connection(gw, monkeypatch):
+    """Ayrıştırma hatası bağlantıyı düşürmez (proxy'nin bypass'ı taramayı atlamasın): okunamadı sayılır."""
+    port, events = gw
+    monkeypatch.setenv("ICAP_UNSCANNABLE", "block")
+    def boom(*a, **k):
+        raise RecursionError("derin")
+    monkeypatch.setattr(icap, "extract_text", boom)
+    body = chatgpt("merhaba")
+    r = reqmod(port, http_request("chatgpt.com", "/backend-api/conversation", body), body)
+    assert r.startswith(b"ICAP/1.0 200") and b"403 Forbidden" in r and "ag:okunamadi" in events[0]["rules"]
+
+
+def test_oversize_body_blocked_by_default(gw, monkeypatch):
+    port, events = gw
+    main.app.state.icap.settings.max_body = 1000
+    body = chatgpt("x" * 2000 + f" TC {make_tckn()}")
+    r = reqmod(port, http_request("chatgpt.com", "/backend-api/conversation", body), body)
+    assert b"403 Forbidden" in r and "ag:boyut-siniri" in events[0]["rules"]
+    monkeypatch.setenv("ICAP_OVERSIZE", "allow")
+    assert reqmod(port, http_request("chatgpt.com", "/backend-api/conversation", body), body).startswith(b"ICAP/1.0 204")

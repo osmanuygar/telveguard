@@ -38,6 +38,7 @@ services:
       POLICY_GIT_BRANCH: main
       POLICY_GIT_PATH: policies/policy.yaml
       POLICY_GIT_TOKEN: e2e-bitbucket-token   # yalnızca lokal test
+      POLICY_GIT_ALLOW_HTTP: "1"              # sahte Bitbucket düz http (yalnızca lokal test)
     depends_on:
       mock-llm: { condition: service_started }
 

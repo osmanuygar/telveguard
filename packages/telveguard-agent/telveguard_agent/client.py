@@ -44,7 +44,8 @@ def http_json(cfg: Config, method: str, url: str, body: Any = None, headers: Opt
     h.update(headers or {})
     req = urllib.request.Request(url, data=data, headers=h, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=cfg.timeout, context=_ssl(cfg)) as resp:
+        # Adres config.load() içinde http(s) ile sınırlı (file:// vb. reddedilir)
+        with urllib.request.urlopen(req, timeout=cfg.timeout, context=_ssl(cfg)) as resp:  # nosec B310
             status, raw = resp.status, resp.read()
     except urllib.error.HTTPError as e:
         status, raw = e.code, e.read()

@@ -2,6 +2,39 @@
 
 ## Yayımlanmadı
 
+### Güvenlik
+
+- Politika doğrulaması sıkılaştı (`telveguard-core`): `teams` / `entity_in` boş olmayan metin
+  listesi, `destination` `internal` / `external`, `injection_score_gte` 0-1 arası sayı, `name` /
+  `message` metin. Önceden `injection_score_gte: "0.5"` gibi bir değer yüklenip istek anında hata
+  veriyor, `entity_in: TCKN` kuralı sessizce etkisiz bırakıyordu.
+- Konsol taslağında YAML takma adları (`&` / `*`) ve bilinmeyen veri türü adları reddedilir
+  (küçük bir metnin bellekte üstel büyümesi; `TCKNN` gibi yazım hataları).
+- `OIDC_ADMIN_GROUP` tanımlıyken politika değişikliği yalnızca kurum hesabıyla: statik yönetici
+  token'ındaki ad beyan olduğundan başkası adına onaylanıp dört göz atlatılabiliyordu.
+  `POLICY_STATIC_TOKEN_WRITES=1` ile bilinçli istisna.
+- Git yansıtma: commit mesajındaki alanlar tek satıra indirgenir (notla sahte
+  `Telveguard-Policy-Version:` satırı eklenemez); token `repr` çıktısında görünmez; adres
+  varsayılan olarak yalnızca `https://` (`POLICY_GIT_ALLOW_HTTP=1` yalnızca yerel test).
+- ICAP: sıkıştırılmış gövde en fazla `ICAP_MAX_BODY` kadar açılır; gövde ayrıştırma hataları bağlantıyı
+  düşürmez, "okunamadı" sayılır (proxy'nin bypass'ı taramayı atlamasın); parçalar sınırlı dilimlerle
+  okunur; sınırı aşan gövde varsayılan olarak durdurulur (`ICAP_OVERSIZE=block`).
+- `telve`: gateway adresi yalnızca `http(s)://`.
+- Guardrail: çağıranın bildirdiği `destination: internal` varsayılan olarak yok sayılır (yalnızca
+  daha sıkı `external` geçerli); istemci bu alanı istek bazında verebiliyorsa yurt dışı modele
+  maskesiz veri gidebiliyordu. Kurum içi takma adlar politikadaki `destinations.internal`'a;
+  eski davranış için `GUARDRAIL_TRUST_DESTINATION=1`. Konsoldaki `routing` kuralları da aynı
+  doğrulamadan geçer. Redis'siz kurulumda bellekteki oturum sayısı sınırlı.
+
+### Yükseltme notları
+
+- Guardrail'de `additional_provider_specific_params: { destination: internal }` kullanıyorsanız
+  takma adı politikadaki `destinations.internal`'a ekleyin ya da `GUARDRAIL_TRUST_DESTINATION=1`.
+- Daha sıkı politika doğrulaması: yüklenemeyen özel politika artık gateway açılışında hata verir
+  (önceden istek anında hata verebiliyor ya da kural sessizce etkisiz kalıyordu). Yükseltmeden önce
+  `PolicyEngine("politika.yaml")` ile deneyin.
+- ICAP: `ICAP_MAX_BODY`'yi aşan gövde artık durdurulur; eski davranış `ICAP_OVERSIZE=allow`.
+
 ### Gateway
 
 - Onaylanan politika sürümünü Bitbucket Data Center'a yansıtma (`POLICY_GIT_*`, Helm
