@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "telveguard-agent"
-version = "0.4.0"
+version = "0.5.0"
 description = "Cursor ve Claude Code'u Telveguard'a bağlayan hook'lar ve kurum hesabıyla giriş (telve)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Security",
 ]
 # Gateway'e ulaşılamadığında yerel tarama için (yalnızca pyyaml'a bağımlı, hafif)
-dependencies = ["telveguard-core>=0.4.0"]
+dependencies = ["telveguard-core>=0.5.0"]
 
 [project.scripts]
 telve = "telveguard_agent.cli:main"
