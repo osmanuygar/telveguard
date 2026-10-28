@@ -110,6 +110,7 @@ policy:
 # upstream-internal-key, upstream-anthropic-key, upstream-anthropic-internal-key, clickhouse-password,
 # redis-password, shadow-ai-token (tarayıcı eklentisi olayları), policy-store-password, policy-git-token,
 # guardrail-token (LiteLLM / agentgateway guardrail servisi; deploy/guardrail/),
+# contextforge-token (ContextForge eklentisi kurumsal sözlüğü çeker; terimler düz metin),
 # subject-hash-key (KVKK ilgili kişi araması; en az 32 karakter, değişirse eski kayıtlar bulunamaz)
 existingSecret: ""
 # existingSecret boşsa chart bu değerlerden Secret üretir (geliştirme / test için).

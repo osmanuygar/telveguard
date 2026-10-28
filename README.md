@@ -1086,8 +1086,15 @@ docker build -f contextforge/Containerfile -t telveguard/contextforge:dev .
   (başka ekibin izni yasağı aşamaz). Varsayılan yapılandırma yıkıcı araçları (`*delete*`,
   `*drop*`, `*destroy*`) herkese kapatır. İzin verilen çağrılarda da çağıran kullanıcı ve
   servis hesabı (agent) kaydedilir.
+- **Kurumsal sözlük:** eklenti sözlüğü gateway'den çeker (`GET /v1/contextforge/dictionary`, 5 dk'da
+  bir, değişmediyse 304). Gateway'de `CONTEXTFORGE_TOKEN` (Helm Secret anahtarı `contextforge-token`),
+  ContextForge'da aynı değer `TELVEGUARD_CONTEXTFORGE_TOKEN` ortam değişkeninde. Bu uçta terimler düz
+  metindir (tarayıcıya özet gider); token'ı yalnızca ContextForge'a verin. Terimler araç çıktısında
+  maskelenir, dış araca gönderilemez (`KURUM_*`). Gateway'siz kurulumda `dictionary_file` ile
+  politika dosyasından okunur.
 
 ```yaml
+dictionary_gateway_url: https://telveguard.sirket.local
 tool_access:
   default: allow                    # deny: yalnızca açıkça izin verilen araçlar
   rules:
@@ -1166,8 +1173,8 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
   Kimlik / dekont fotoğrafı yüklenen ekipler için `unscannable: block` ile birlikte görsel
   eklerini tamamen engelleyen bir ekip kuralı düşünün. OCR görsel başına ~0,5-2 sn ekler.
 - Kota, maskesiz gerçek streaming isteklerinde yalnızca istek sayısını sayar (token bilgisi gelmez).
-- Kurumsal sözlük şimdilik yalnızca gateway'de çalışır; tarayıcı eklentisi ve ContextForge
-  eklentisi sözlüğü kullanmaz.
+- Kurumsal sözlük gateway'de, tarayıcı eklentisinde ve ContextForge eklentisinde çalışır; `telve`
+  gateway'e ulaşamadığında yaptığı yerel taramada sözlük yoktur.
 - ICAP yalnızca proxy'nin TLS denetimiyle çözebildiği trafiği görür. Sertifika sabitleme (pinning)
   yapan uygulamalar, websocket üzerinden gönderilen mesajlar (ör. Copilot'un sohbeti) ve
   büyük dosya yüklemelerinin ayrı depolama adreslerine (ör. bulut blob) giden içeriği taranmaz.

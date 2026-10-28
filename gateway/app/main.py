@@ -1117,6 +1117,24 @@ async def shadow_ai_dictionary(request: Request):
     return JSONResponse(payload, headers={"ETag": etag, "Cache-Control": "no-cache"})
 
 
+@app.get("/v1/contextforge/dictionary")
+async def contextforge_dictionary(request: Request):
+    """Kurumsal sözlük ContextForge eklentisine: terimler düz metin (sunucudan sunucuya, güvenilen
+    bileşen; tarayıcıdaki gibi özet değil). CONTEXTFORGE_TOKEN tanımlı değilse kapalı. ETag = sürüm."""
+    expected = os.getenv("CONTEXTFORGE_TOKEN", "")
+    if not expected:
+        return _openai_error(404, "ContextForge sözlük ucu kapalı (CONTEXTFORGE_TOKEN tanımlı değil).",
+                             "contextforge_disabled", "admin_error")
+    header = request.headers.get("authorization", "")
+    if not shadow_ai.check_token(header[7:].strip() if header.lower().startswith("bearer ") else None, expected):
+        return _openai_error(401, "Geçersiz ContextForge token'ı.", "unauthorized", "authentication_error")
+    payload = request.app.state.dictionary.server_payload()
+    etag = f'"{payload["version"]}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return JSONResponse(payload, headers={"ETag": etag, "Cache-Control": "no-store"})
+
+
 # ---------------- kod asistanı hook'ları (telve: Cursor, Claude Code) ----------------
 
 @app.get("/v1/agent/config")

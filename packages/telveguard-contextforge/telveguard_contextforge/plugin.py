@@ -17,6 +17,13 @@ Metadata'ya yalnızca sayılar ve tür adları yazılır; ham değerler asla log
 """
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import os
+import time
+import urllib.error
+import urllib.request
 from fnmatch import fnmatch
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 
@@ -36,12 +43,17 @@ from cpex.framework import (
 )
 from cpex.framework.constants import TOOL_METADATA
 from telveguard_core import InjectionDetector, TrPiiEngine, entity_matches, matching_entities
+from telveguard_core.dictionary import Dictionary, DictionaryError, load as load_dictionary
+
+log = logging.getLogger("telveguard.contextforge")
 
 # context.state anahtarı: istek boyunca yer tutucu tutarlılığı
 VAULT_KEY = "telveguard_vault"
 
-# Listeler joker karakter destekler: "SECRET_*" tüm API anahtarı / token / parola türleri
-DEFAULT_MASK = ["TCKN", "VKN", "IBAN_TR", "CREDIT_CARD", "PHONE_TR", "EMAIL_ADDRESS", "PLATE_TR", "SECRET_*"]
+# Listeler joker karakter destekler: "SECRET_*" tüm API anahtarı / token / parola türleri,
+# "KURUM_*" kurumsal sözlük terimleri (sözlük yüklenmemişse hiç bulunmaz)
+DEFAULT_MASK = ["TCKN", "VKN", "IBAN_TR", "CREDIT_CARD", "PHONE_TR", "EMAIL_ADDRESS", "PLATE_TR", "SECRET_*",
+                "KURUM_*"]
 
 
 class ToolAccessRule(BaseModel):
@@ -65,11 +77,18 @@ class TelveguardConfig(BaseModel):
     mask_entities: List[str] = Field(default_factory=lambda: list(DEFAULT_MASK))
     # Kurum dışına veri taşıyabilen araçlar (fnmatch desenleri)
     external_tools: List[str] = Field(default_factory=lambda: ["slack*", "email*", "web_*", "http_*", "github*"])
-    exfil_block_entities: List[str] = Field(default_factory=lambda: ["TCKN", "VKN", "IBAN_TR", "CREDIT_CARD", "SECRET_*"])
+    exfil_block_entities: List[str] = Field(
+        default_factory=lambda: ["TCKN", "VKN", "IBAN_TR", "CREDIT_CARD", "SECRET_*", "KURUM_*"])
     injection_block_threshold: float = 0.85
     scan_tool_results_for_injection: bool = True
     mask_tool_results: bool = True
     enable_ner: bool = False
+    # Kurumsal sözlük. Gateway'den (GET /v1/contextforge/dictionary, token ortam değişkeninde) ya da
+    # politika dosyasından (`dictionary` bölümü). İkisi de verilmişse dosya açılışta, gateway üzerine yazar.
+    dictionary_gateway_url: str = ""
+    dictionary_token_env: str = "TELVEGUARD_CONTEXTFORGE_TOKEN"
+    dictionary_file: str = ""
+    dictionary_refresh_seconds: int = Field(default=300, ge=30)
 
 
 def _norm_tool(name: str) -> str:
@@ -124,6 +143,57 @@ class TelveguardPlugin(Plugin):
         self._cfg = TelveguardConfig(**(config.config or {}))
         self._pii = TrPiiEngine(enable_ner=self._cfg.enable_ner)
         self._inj = InjectionDetector()
+        self._dict_version: Optional[str] = None
+        self._dict_checked = 0.0
+        self._dict_task: Optional[asyncio.Task] = None
+        if self._cfg.dictionary_file:
+            # Açılışta okunamayan sözlük sessizce yok sayılmasın: terimler maskesiz gider
+            load_dictionary(self._cfg.dictionary_file).install(self._pii)
+        if self._cfg.dictionary_gateway_url and not self._cfg.dictionary_gateway_url.startswith(("https://", "http://")):
+            raise ValueError("dictionary_gateway_url http(s):// ile başlamalı")
+
+    async def initialize(self) -> None:
+        if self._cfg.dictionary_gateway_url:
+            await self._refresh_dictionary()
+
+    # ---------- kurumsal sözlük ----------
+
+    def _fetch_dictionary(self) -> Optional[Dict[str, Any]]:
+        """None: değişmedi (304). Hata: istisna (çağıran eldeki sözlükle devam eder)."""
+        url = self._cfg.dictionary_gateway_url.rstrip("/") + "/v1/contextforge/dictionary"
+        headers = {"Authorization": f"Bearer {os.getenv(self._cfg.dictionary_token_env, '')}"}
+        if self._dict_version:
+            headers["If-None-Match"] = f'"{self._dict_version}"'
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=10) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 304:
+                return None
+            raise
+
+    async def _refresh_dictionary(self) -> None:
+        self._dict_checked = time.monotonic()
+        try:
+            payload = await asyncio.to_thread(self._fetch_dictionary)
+            if payload is None:
+                return
+            Dictionary.from_config(payload).install(self._pii)
+            self._dict_version = payload.get("version")
+            log.info("Telveguard: kurumsal sözlük yüklendi (sürüm %s)", self._dict_version)
+        except (OSError, ValueError, DictionaryError) as e:   # ağ, JSON, geçersiz sözlük
+            log.warning("Telveguard: kurumsal sözlük gateway'den alınamadı, eldekiyle devam: %s", e)
+
+    def _maybe_refresh_dictionary(self) -> None:
+        """Süresi dolduysa arka planda yenile; istek beklemez."""
+        if not self._cfg.dictionary_gateway_url:
+            return
+        if time.monotonic() - self._dict_checked < self._cfg.dictionary_refresh_seconds:
+            return
+        if self._dict_task is not None and not self._dict_task.done():
+            return
+        self._dict_checked = time.monotonic()
+        self._dict_task = asyncio.get_running_loop().create_task(self._refresh_dictionary())
 
     # ---------- yardımcılar ----------
 
@@ -228,6 +298,7 @@ class TelveguardPlugin(Plugin):
     # ---------- hook'lar ----------
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
+        self._maybe_refresh_dictionary()
         args = payload.args or {}
         if v := self._injection_violation(_collect_text(args), "prompt argümanları"):
             return PromptPrehookResult(continue_processing=False, violation=v)
@@ -240,6 +311,7 @@ class TelveguardPlugin(Plugin):
         return PromptPrehookResult(continue_processing=True)
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        self._maybe_refresh_dictionary()
         # İzin önce: yetkisiz araç için argüman bile taranmaz
         if v := self._access_violation(payload.name, context):
             return ToolPreInvokeResult(continue_processing=False, violation=v)
@@ -266,6 +338,7 @@ class TelveguardPlugin(Plugin):
             "caller": caller["user"], "teams": caller["teams"], "service_account": caller["service_account"]}})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        self._maybe_refresh_dictionary()
         if self._cfg.scan_tool_results_for_injection:
             if v := self._injection_violation(_collect_text(payload.result), f"'{payload.name}' araç çıktısı"):
                 return ToolPostInvokeResult(continue_processing=False, violation=v)

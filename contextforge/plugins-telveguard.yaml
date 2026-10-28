@@ -11,10 +11,15 @@ plugins:
     mode: "enforce"          # önce "permissive" ile gözlem modunda açıp yanlış pozitifleri ölçün
     priority: 10
     config:
-      mask_entities: [TCKN, VKN, IBAN_TR, CREDIT_CARD, PHONE_TR, EMAIL_ADDRESS, PLATE_TR, "SECRET_*"]
+      mask_entities: [TCKN, VKN, IBAN_TR, CREDIT_CARD, PHONE_TR, EMAIL_ADDRESS, PLATE_TR, "SECRET_*", "KURUM_*"]
       external_tools: ["slack*", "email*", "web_*", "http_*", "github*"]
-      exfil_block_entities: [TCKN, VKN, IBAN_TR, CREDIT_CARD, "SECRET_*"]
+      exfil_block_entities: [TCKN, VKN, IBAN_TR, CREDIT_CARD, "SECRET_*", "KURUM_*"]
       injection_block_threshold: 0.85
+      # Kurumsal sözlük (proje kod adları, müşteri unvanları): gateway'den çekilir, 5 dk'da bir yenilenir.
+      # Token ortam değişkeninde (gateway'deki CONTEXTFORGE_TOKEN ile aynı). "KURUM_*" varsayılan olarak
+      # maskelenir ve dış araca gönderilemez. Gateway'siz kurulumda: dictionary_file: /politika/policy.yaml
+      # dictionary_gateway_url: https://telveguard.sirket.local
+      # dictionary_token_env: TELVEGUARD_CONTEXTFORGE_TOKEN
       # Araç izin listesi. Deny her zaman kazanır; default: deny ile yalnızca izin verilenler çalışır.
       # Ekip / grup ContextForge'un kimlik bilgisinden (UserContext) gelir.
       tool_access:

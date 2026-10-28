@@ -9,6 +9,12 @@
   varsa (sayı tablosu) 11 hanelik pencere seçilmez. Bağlamsız bölünmüş TCKN 0.8 skor alır (kart /
   IBAN çakışmada kazanır); "TC", "T.C.", "TCKN", "kimlik no" yakındaysa 1.0. VKN zaten
   "vergi no" / "vkn" bağlamı ister.
+- Kurumsal sözlük ContextForge'da: eklenti sözlüğü gateway'den çeker (`GET /v1/contextforge/dictionary`,
+  `CONTEXTFORGE_TOKEN`; Helm Secret anahtarı `contextforge-token`) ya da `dictionary_file` ile politika
+  dosyasından okur. `KURUM_*` varsayılan olarak araç çıktısında maskelenir ve dış araca gönderilemez.
+  Gateway'e ulaşılamazsa eldeki sözlükle devam edilir.
+- Sözlük ayrıştırması `telveguard-core`'a taşındı (`telveguard_core.dictionary`); `gateway/app/dictionary`
+  aynı adları dışa aktarmaya devam eder.
 
 ## 0.5.0 — 2026-10-27
 
