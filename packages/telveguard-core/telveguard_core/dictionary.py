@@ -221,6 +221,10 @@ class Dictionary:
         """PII motoruna ekler (önceki kurulumu değiştirir; yeniden yüklemede çift kayıt olmaz)."""
         pii.recognizers = [r for r in pii.recognizers if not r.entity.startswith(PREFIX)] + self.recognizers
 
+    def max_term_length(self) -> int:
+        """En uzun terim (artımlı streaming'in tutma penceresi bundan kısa olmamalı)."""
+        return max((len(t) for it in self._browser_items for t in it["terms"]), default=0)
+
     def server_payload(self) -> Dict[str, Any]:
         """Güvenilen sunucu bileşenleri için (ContextForge eklentisi): terimler DÜZ METİN, `from_config`
         ile aynen yüklenir. Terimler katlanmış hâldedir (case_sensitive: false ise küçük harf);

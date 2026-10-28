@@ -689,6 +689,8 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `REDIS_URL`, `REDIS_PASSWORD` | Kota sayacı ve politika deposunun onay kilidi (tüm pod / worker'lar için ortak); birden fazla süreç varken gerekli |
 | `WORKERS` | Pod başına uvicorn worker sayısı (metrikler worker'lar arasında birleştirilir) |
 | `MAX_REQUEST_BYTES` | İstek gövdesi sınırı, bayt (32 MB); aşan istek 413 `request_too_large` |
+| `STREAM_MODE` | `buffer` (varsayılan): streaming cevap taranıp tek parça; `incremental`: akarken taranır, ilk token hemen gelir. Sonuç iki modda aynıdır |
+| `STREAM_HOLDBACK_CHARS` | Artımlı modda cevabın sonunda bekletilen karakter (64; sözlükteki en uzun terimden kısa olmaz). Son kelime ve yarım yer tutucu da bekletilir |
 | `UPSTREAM_INTERNAL_URL` / `UPSTREAM_EXTERNAL_URL` | Kurum içi ve yurt dışı LLM adresleri (OpenAI uyumlu); `providers` ile eşleşmeyen modeller için |
 | `UPSTREAM_INTERNAL_KEY` / `UPSTREAM_EXTERNAL_KEY` | Upstream API anahtarları |
 | `UPSTREAM_ANTHROPIC_URL`, `UPSTREAM_ANTHROPIC_KEY` | Anthropic biçimi için upstream (varsayılan `https://api.anthropic.com`) |
@@ -1170,8 +1172,11 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 - Boşluk / tire / noktayla bölünmüş TCKN (`100 000 001 46`) yakalanır, ama bir sayı tablosunun
   içindeyse (ayraçla devam eden başka rakam varsa) yakalanmaz. Bağlamsız bölünmüş TCKN'nin skoru
   0.8'dir; "TC", "T.C.", "TCKN", "kimlik no" yakındaysa 1.0.
-- Maskeleme veya çıktı kuralı olan streaming istekleri tamponlanıp tek parça döner. Hiçbiri
-  yoksa gerçek streaming yapılır; bu durumda cevap taranmaz ve token / maliyet bilgisi gelmez.
+- Varsayılan (`STREAM_MODE=buffer`): maskeleme veya çıktı kuralı olan streaming istekleri
+  tamponlanıp tek parça döner; hiçbiri yoksa gerçek streaming yapılır, cevap taranmaz ve token /
+  maliyet bilgisi gelmez. `STREAM_MODE=incremental` ile cevap akarken taranır (aşağıda); uygulanan bir
+  `block` çıktı kuralı varsa yine tamponlanır (akmaya başlamış cevap geri alınamaz). Artımlı modda
+  araç argümanları (tool_calls / tool_use) blok bitince tek parça gelir.
 - Injection kuralları sezgisel bir başlangıç setidir; Türkçe saldırı veri setiyle eğitilmiş
   bir sınıflandırıcı hedefleniyor (LLM Guard İngilizce ağırlıklıdır).
 - ContextForge araç izin listesinde **ekip** kuralları, ContextForge'un kimlik bilgisinde ekip
@@ -1180,7 +1185,8 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 - Ek taramada OCR'ın okuyamadığı veri (el yazısı, çok düşük çözünürlük, eğik fotoğraf) yakalanmaz.
   Kimlik / dekont fotoğrafı yüklenen ekipler için `unscannable: block` ile birlikte görsel
   eklerini tamamen engelleyen bir ekip kuralı düşünün. OCR görsel başına ~0,5-2 sn ekler.
-- Kota, maskesiz gerçek streaming isteklerinde yalnızca istek sayısını sayar (token bilgisi gelmez).
+- Kota, `STREAM_MODE=buffer` iken maskesiz gerçek streaming isteklerinde yalnızca istek sayısını sayar
+  (token bilgisi gelmez); artımlı modda token da sayılır.
 - Kurumsal sözlük gateway'de, tarayıcı eklentisinde ve ContextForge eklentisinde çalışır; `telve`
   gateway'e ulaşamadığında yaptığı yerel taramada sözlük yoktur.
 - ICAP yalnızca proxy'nin TLS denetimiyle çözebildiği trafiği görür. Sertifika sabitleme (pinning)

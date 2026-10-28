@@ -56,6 +56,7 @@ services:
   gateway-jwt:
     build: { context: ., dockerfile: gateway/Dockerfile }
     environment:
+      STREAM_MODE: incremental     # artımlı streaming e2e (tests/e2e/test_e2e_streaming.py)
       POLICY_PATH: /policies/default.yaml
       KAFKA_BOOTSTRAP: kafka:9092
       UPSTREAM_INTERNAL_URL: http://mock-llm:9000/v1

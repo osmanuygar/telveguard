@@ -21,6 +21,14 @@
   aldığı `[TCKN_1]`'i başka bir araca vermesi iş akışını kırıyordu.
 - Aynı numaranın farklı yazımları tek yer tutucu (gateway, ContextForge, tarayıcı eklentisi):
   `391 417 776 94` ve `39141777694` ikisi de `[TCKN_1]`; telefon, IBAN, kart, VKN da.
+- Artımlı streaming (`STREAM_MODE=incremental`, Helm `streamMode`; varsayılan `buffer`): cevap akarken
+  taranır, sızıntı gizlenir, yer tutucular geri açılır; ilk token cevabın tamamını beklemez. Cevabın
+  sonundaki son kelime, son 64 karakter (`STREAM_HOLDBACK_CHARS`), yarım yer tutucu ve sınırı kesen
+  bulgu bekletilir: sonuç her parçalamada tamponlu yolla aynıdır. Araç argümanları blok bitince tek
+  parça. Uygulanan `block` çıktı kuralı varsa tamponlanır. Usage streaming'de de okunur (OpenAI chat'te
+  `stream_options.include_usage` gateway ekler; istemci istemediyse usage parçası ona gitmez): Röntgen,
+  kota ve maliyet doğru. Denetim kaydı akış bitince yazılır; istemci koparsa `stream_aborted`.
+  Yeni metrik: `telveguard_first_token_seconds` (`mode`: incremental | buffered).
 - Sözlük ayrıştırması `telveguard-core`'a taşındı (`telveguard_core.dictionary`); `gateway/app/dictionary`
   aynı adları dışa aktarmaya devam eder.
 

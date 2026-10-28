@@ -14,6 +14,11 @@ replicaCount: 2
 workers: 2
 # İstek gövdesi sınırı (bayt); aşan istek 413. Ekler base64 olarak gövdededir.
 maxRequestBytes: 32000000
+# Streaming cevaplar: buffer = taranıp tek parça (varsayılan), incremental = akarken taranır (ilk token
+# hemen gelir; uygulanan bir `block` çıktı kuralı varsa yine tamponlanır). streamHoldbackChars: cevabın
+# sonunda taranmadan bekletilen karakter (boşluklu IBAN / kart / bölünmüş TCKN sığmalı).
+streamMode: buffer
+streamHoldbackChars: 64
 
 # ---------------- istemci kimliği ----------------
 auth:
