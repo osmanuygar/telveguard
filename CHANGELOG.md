@@ -32,6 +32,21 @@
 - Sözlük ayrıştırması `telveguard-core`'a taşındı (`telveguard_core.dictionary`); `gateway/app/dictionary`
   aynı adları dışa aktarmaya devam eder.
 
+### Performans
+
+- İstek taraması parça parça ve önbellekli (`telveguard-core` `analyze_parts`, `scan_parts`;
+  `TELVEGUARD_SCAN_CACHE_SIZE`, worker başına 4096 parça): değişmeyen parçalar (önceki turlar, sistem
+  istemi, araç tanımları) yeniden taranmaz. Claude Code tarzı 286 KB istekte sonraki tur 278 ms -> 8 ms.
+  Önbellek anahtarı metnin SHA-256 özeti + tanıyıcı kuşağı (ham metin saklanmaz); sözlük / istisna
+  değişince boşalır. Parça sınırını aşan bulgular (iki mesaja bölünmüş telefon, sonraki mesajdaki VKN'nin
+  "vergi no:" bağlamı, bölünmüş saldırı cümlesi) sınır pencereleriyle bulunur: sonuç tüm metni tek seferde
+  taramakla aynı (300'er rastgele senaryoyla doğrulanır). Kapanmamış private key artık sonraki
+  parçalardaki bulguları saymadan bırakmıyor.
+- Maskeleme parçaları yeniden taramaz (analizdeki bulgular kullanılır; önbelleksiz de ~%36 daha hızlı).
+- `SCAN_THREAD_MIN_BYTES` (64 KB) üstündeki istekler thread'de taranır: büyük istek o worker'daki diğer
+  istekleri ve akan stream'leri dondurmaz (GIL nedeniyle throughput artmaz; ölçek worker / pod sayısıyla).
+- `telveguard_scan_duration_seconds` kovaları 5 sn'ye kadar (önceden 0,25 sn üstü `+Inf`'e düşüyordu).
+
 ## 0.5.0 — 2026-10-27
 
 ### Güvenlik

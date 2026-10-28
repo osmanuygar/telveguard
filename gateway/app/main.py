@@ -262,6 +262,7 @@ class Analysis:
     provider_error: Optional[str] = None
     scans: List[attachments_mod.Scan] = field(default_factory=list)   # görsel / PDF ekleri
     subject_hashes: List[str] = field(default_factory=list)          # ilgili kişi araması (subjects.py)
+    part_findings: List[List[Any]] = field(default_factory=list)     # parça başına bulgular (maskeleme yeniden taramaz)
     routed_from: str = ""                                            # yönlendirildiyse istenen model
 
     @property
@@ -281,9 +282,18 @@ class Analysis:
         return self.body.get("messages", [])
 
 
-async def _scan_analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT) -> Analysis:
+# Bu boyutun üstündeki istekler (bayt) thread'de taranır: tarama CPU'da ~1 ms/KB ve event loop'u
+# bloklar (o worker'daki diğer istekler ve akan stream'ler bekler). GIL nedeniyle throughput artmaz;
+# event loop GIL'i aralıklarla geri alır, diğer istekler donmaz. Asıl ölçek: worker / pod sayısı.
+SCAN_THREAD_MIN_BYTES = int(os.getenv("SCAN_THREAD_MIN_BYTES", "65536"))
+
+
+async def _scan_analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT,
+                        size: int = 0) -> Analysis:
     """Ekleri (görsel / PDF) tarar, sonra metinle birlikte politikadan geçirir."""
     scans = await st.attachments.scan(fmt.request_attachments(body))
+    if size >= SCAN_THREAD_MIN_BYTES:
+        return await asyncio.to_thread(_analyze, st, body, identity, fmt, scans)
     return _analyze(st, body, identity, fmt, scans)
 
 
@@ -295,17 +305,21 @@ def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT
     model = body.get("model", "") if isinstance(body.get("model"), str) else ""
     parts = fmt.request_parts(body)
     # Eklerden okunan metin de taranır: görsele gömülü injection ("visual prompt injection") dahil
-    full_text = "\n".join([p.text for p in parts if p.role in fmt.injection_roles]
-                          + [s.text for s in scans if s.text and s.att.role in fmt.injection_roles])
-    all_text = "\n".join([p.text for p in parts] + [s.text for s in scans if s.text])
-    findings = st.pii.analyze(all_text)
+    inj_texts = ([p.text for p in parts if p.role in fmt.injection_roles]
+                 + [s.text for s in scans if s.text and s.att.role in fmt.injection_roles])
+    texts = [p.text for p in parts] + [s.text for s in scans if s.text]
+    full_text = "\n".join(inj_texts)
+    all_text = "\n".join(texts)
+    # Parça parça ve önbellekli: değişmeyen parçalar (önceki turlar, sistem istemi, araç tanımları)
+    # yeniden taranmaz. Sonuç tüm metni tek seferde taramakla aynı (sınır pencereleri dahil)
+    per_text, findings = st.pii.analyze_parts(texts)
     entity_counts = Counter(f.entity for f in findings)
-    injection = st.injection.scan(full_text)
+    injection = st.injection.scan_parts(inj_texts)
     provider, provider_error, destination, ctx, decision = _decide(
         st, identity, fmt, model, set(entity_counts), injection.score, scans, destination)
     return Analysis(identity, fmt, model, destination, body, parts, full_text, all_text,
                     entity_counts, injection, ctx, decision, provider, provider_error, list(scans),
-                    st.subjects.event_hashes(all_text, findings))
+                    st.subjects.event_hashes(all_text, findings), part_findings=per_text[:len(parts)])
 
 
 def _decide(st, identity: Identity, fmt: ApiFormat, model: str, entities: Set[str], injection_score: float,
@@ -423,13 +437,16 @@ def _usage_fields(st, fmt: ApiFormat, model: str, resp: Optional[dict]) -> Dict[
 
 
 def _mask_parts(st, parts: List[Part], decision: Decision, vault: Dict[str, str],
-                scans: List[attachments_mod.Scan] = ()) -> Optional[str]:
+                scans: List[attachments_mod.Scan] = (), part_findings: Optional[List[List[Any]]] = None) -> Optional[str]:
     """Karar maskeleme gerektiriyorsa tüm parçaları (system ve araç argümanları dahil) ve ekleri
-    (görsel karartma, PDF -> maskeli metin) yerinde maskeler; denetim için maskeli metni döndürür."""
+    (görsel karartma, PDF -> maskeli metin) yerinde maskeler; denetim için maskeli metni döndürür.
+    part_findings: _analyze'ın parça başına bulguları (verilirse parçalar yeniden taranmaz)."""
     if decision.action != "mask" or not decision.mask_entities:
         return None
-    for p in parts:
-        p.set(st.pii.mask(p.text, list(decision.mask_entities), vault).text)
+    if part_findings is None or len(part_findings) != len(parts):
+        part_findings = [None] * len(parts)
+    for p, found in zip(parts, part_findings):
+        p.set(st.pii.mask(p.text, list(decision.mask_entities), vault, findings=found).text)
     notes = st.attachments.mask(st.pii, list(scans), decision.mask_entities, vault)
     return "\n".join([p.text for p in parts] + notes)
 
@@ -510,7 +527,7 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
 
     # 1-2) Tarama + politika
     t_scan = time.perf_counter()
-    a = _route(st, await _scan_analyze(st, body, identity, fmt), request.headers)
+    a = _route(st, await _scan_analyze(st, body, identity, fmt, len(await request.body())), request.headers)
     metrics.SCAN_SECONDS.observe(time.perf_counter() - t_scan)
     model, destination, decision = a.model, a.destination, a.decision
     request.state.destination = destination
@@ -569,7 +586,7 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
 
     # 3) Maskeleme (tüm konuşma boyunca ortak vault -> tutarlı yer tutucular)
     vault: Dict[str, str] = {}
-    masked_prompt = _mask_parts(st, a.parts, decision, vault, a.scans)
+    masked_prompt = _mask_parts(st, a.parts, decision, vault, a.scans, a.part_findings)
 
     wants_stream = bool(body.get("stream"))
     # STREAM_MODE=incremental: cevap akarken taranır (streaming.py). Uygulanan bir `block` çıktı
@@ -754,7 +771,7 @@ async def messages_count_tokens(request: Request):
                 else MESSAGES.upstream(a.destination, request.headers, path="/v1/messages/count_tokens"))
     if upstream is None:
         return MESSAGES.error(400, "Bu model için Anthropic upstream'i tanımlı değil.", "no_upstream")
-    _mask_parts(st, a.parts, a.decision, {}, a.scans)
+    _mask_parts(st, a.parts, a.decision, {}, a.scans, a.part_findings)
     try:
         resp = await st.http.post(upstream[0], json=body, headers=upstream[1])
     except httpx.HTTPError:
@@ -787,7 +804,7 @@ async def policy_simulate(request: Request, format: str = "chat"):
     a = _route(request.app.state, await _scan_analyze(request.app.state, body, identity, fmt), request.headers)
     d = a.decision
     originals = [p.text for p in a.parts]
-    _mask_parts(request.app.state, a.parts, d, {}, a.scans)
+    _mask_parts(request.app.state, a.parts, d, {}, a.scans, a.part_findings)
     blocked = d.action == "block"
     parts = [{"role": p.role, "segments": _segments(request.app.state, text),
               "sent": None if blocked else p.text}
@@ -1639,7 +1656,7 @@ async def guardrail_input(st, call: guardrail_mod.Call) -> guardrail_mod.Verdict
     a = _analyze(st, body, identity, CHAT, destination=_guardrail_destination(call))
     d = a.decision
     vault: Dict[str, str] = {}
-    masked_prompt = _mask_parts(st, a.parts, d, vault)
+    masked_prompt = _mask_parts(st, a.parts, d, vault, part_findings=a.part_findings)
     action = "block" if d.action == "block" else "mask" if vault else "pass"
     metrics.GUARDRAIL_CHECKS.labels(call.source, "request", action).inc()
     for entity in a.entities:

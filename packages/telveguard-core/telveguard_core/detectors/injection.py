@@ -7,11 +7,14 @@ Prompt injection tespiti - iki katman:
    ENABLE_LLM_GUARD=1 ile açılır, modeli LLM_GUARD_MODEL_PATH dizininden okur (internet yok).
    LLM_GUARD_THRESHOLD (0,92), LLM_GUARD_USE_ONNX=1 (CPU'da daha hızlı, onnx/ alt dizini).
 """
+import hashlib
 import os
 import re
+import threading
 import unicodedata
+from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import List
+from typing import FrozenSet, List
 
 # (desen, ağırlık) - Türkçe ekler için kök + \w* kullanılıyor
 _RULES = [
@@ -81,20 +84,62 @@ def _build_llm_guard():
     return PromptInjection(model=model, threshold=threshold, use_onnx=use_onnx)
 
 
+# Parça sınırı penceresi: iki mesaja bölünmüş saldırı cümlesi ("Önceki tüm" + "talimatları yok say")
+BOUNDARY_CHARS = 200
+_CACHE_SIZE = int(os.getenv("TELVEGUARD_SCAN_CACHE_SIZE", "4096"))
+_CACHE_MIN_CHARS = 256
+
+
 class InjectionDetector:
     def __init__(self):
         self._llm_guard = _build_llm_guard() if os.getenv("ENABLE_LLM_GUARD") == "1" else None
+        self._cache: "OrderedDict[bytes, FrozenSet[int]]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _rules(text: str) -> FrozenSet[int]:
+        """Eşleşen kural sıra numaraları."""
+        lowered = _fold(text)
+        return frozenset(i for i, (rx, _) in enumerate(_COMPILED) if rx.search(lowered))
+
+    def _rules_cached(self, text: str) -> FrozenSet[int]:
+        if _CACHE_SIZE <= 0 or len(text) < _CACHE_MIN_CHARS:
+            return self._rules(text)
+        key = hashlib.sha256(text.encode("utf-8", "surrogatepass")).digest()
+        with self._lock:
+            hit = self._cache.get(key)
+            if hit is not None:
+                self._cache.move_to_end(key)
+                return hit
+        found = self._rules(text)
+        with self._lock:
+            self._cache[key] = found
+            while len(self._cache) > _CACHE_SIZE:
+                self._cache.popitem(last=False)
+        return found
 
     def scan(self, text: str) -> InjectionResult:
-        lowered = _fold(text)
-        matched, score = [], 0.0
-        for rx, weight in _COMPILED:
-            if rx.search(lowered):
-                matched.append(rx.pattern[:60])
-                score = max(score, weight)
+        return self._result(self._rules(text), text)
+
+    def scan_parts(self, texts: List[str]) -> InjectionResult:
+        """scan("\n".join(texts)) ile aynı sonuç; değişmeyen parçalar yeniden taranmaz (önbellek).
+        Kural eşleşmesi parçaların ve parça sınırı pencerelerinin birleşimidir (_fold karakter
+        bazlıdır, "\n" ayırıcıdır). LLM Guard açıksa sınıflandırıcı yine birleşik metne bakar."""
+        hits = set()
+        for t in texts:
+            hits |= self._rules_cached(t)
+        for prev, nxt in zip(texts, texts[1:]):
+            if prev and nxt:
+                hits |= self._rules_cached(prev[-BOUNDARY_CHARS:] + "\n" + nxt[:BOUNDARY_CHARS])
+        return self._result(frozenset(hits), None, texts)
+
+    def _result(self, hits: FrozenSet[int], text, texts=None) -> InjectionResult:
+        matched = [_COMPILED[i][0].pattern[:60] for i in sorted(hits)]
+        score = max((_COMPILED[i][1] for i in hits), default=0.0)
         result = InjectionResult(score=score, matched=matched)
 
         if self._llm_guard is not None and score < LLM_GUARD_DETECTED_SCORE:
+            text = text if text is not None else "\n".join(texts)
             # scan() -> (metin, is_valid, risk_score). risk_score OLASILIK DEĞİL: eşiğe göre
             # ölçeklenmiş [-1, 1] (0,95 olasılık / 0,92 eşik -> 0,4). Olasılık gibi okunursa
             # tespit edilen injection engelleme eşiğinin altında kalır. Karar is_valid'dedir.

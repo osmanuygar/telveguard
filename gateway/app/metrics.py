@@ -45,7 +45,7 @@ REQUEST_SECONDS = Histogram("telveguard_request_duration_seconds", "Uçtan uca i
                             ["destination"], buckets=_BUCKETS)
 SCAN_SECONDS = Histogram("telveguard_scan_duration_seconds",
                          "Tarama + politika süresi (gateway'in eklediği gecikme)",
-                         buckets=(0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25))
+                         buckets=(0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5))
 ATTACHMENT_SCAN_SECONDS = Histogram("telveguard_attachment_scan_seconds", "Ek başına tarama (OCR / PDF) süresi",
                                     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30))
 FIRST_TOKEN_SECONDS = Histogram("telveguard_first_token_seconds",
