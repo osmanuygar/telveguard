@@ -48,6 +48,8 @@
 - Artımlı streaming yeni metin 32 karakter birikince tarar (`STREAM_SCAN_EVERY_CHARS`): her delta'da
   pencereyi yeniden taramak tamponlu yolun ~40 katı CPU harcıyordu (10 KB cevap 148 -> 23 ms). Sonuç
   aynı; içeriği boş kalan delta olayları istemciye gönderilmez.
+- ContextForge vault'u Redis pipeline'ıyla: bir araç çıktısındaki tüm değerler 1-3 gidiş-dönüşte
+  (önceden değer başına sıralı 2-4; 50 değerde ~200). Geri açma tek gidiş-dönüş. Araç çıktısı bir kez taranır.
 - `telveguard_scan_duration_seconds` kovaları 5 sn'ye kadar (önceden 0,25 sn üstü `+Inf`'e düşüyordu).
 
 ## 0.5.0 — 2026-10-27

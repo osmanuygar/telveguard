@@ -19,7 +19,7 @@ import base64
 import hashlib
 import hmac
 import os
-from typing import Optional
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from telveguard_core.pii.engine import canonical_value
 
@@ -79,30 +79,66 @@ class RedisVault:
 
     def assign(self, scope: str, entity: str, value: str) -> str:
         """Değerin bu kullanıcıdaki yer tutucusu; yoksa yeni numara alır."""
+        return self.assign_many(scope, [(entity, value)])[0]
+
+    def assign_many(self, scope: str, items: Sequence[Tuple[str, str]]) -> List[str]:
+        """Bir araç çıktısındaki tüm değerler toplu: 1 gidiş-dönüş (hepsi biliniyorsa) ya da 3
+        (yeni değer varsa; aynı anda başka worker da atadıysa +1). Değer başına sıralı istek yok."""
+        if not items:
+            return []
         v_key, r_key, n_key = self._keys(scope)
-        rev = self._mac("value", entity, canonical_value(entity, value))
-        existing = self._r.hget(r_key, rev)
-        if existing is None:
-            n = self._r.hincrby(n_key, entity, 1)
-            candidate = f"[{entity}_{n}]"
-            # Önce değer, sonra ters eşleme: ters eşlemeyi gören worker değeri de bulur
-            self._r.hset(v_key, candidate, self._seal(scope, candidate, value))
-            if self._r.hsetnx(r_key, rev, candidate):
-                existing = candidate.encode("utf-8")
-            else:   # başka worker aynı anda atadı: onunkini kullan (bizim numara boşa gider)
-                self._r.hdel(v_key, candidate)
-                existing = self._r.hget(r_key, rev)
-        pipe = self._r.pipeline()
+        macs = [self._mac("value", e, canonical_value(e, v)) for e, v in items]
+        new: Dict[str, Tuple[str, str]] = {}
+        known: Dict[str, bytes] = {}
+        uniq = list(dict.fromkeys(macs))
+        pipe = self._r.pipeline(transaction=False)
+        pipe.hmget(r_key, uniq)
         for k in (v_key, r_key, n_key):
             pipe.expire(k, self.ttl)
-        pipe.execute()
-        return existing.decode("utf-8")
+        for mac, ph in zip(uniq, pipe.execute()[0]):
+            if ph is not None:
+                known[mac] = ph
+        for (e, v), mac in zip(items, macs):
+            if mac not in known and mac not in new:
+                new[mac] = (e, v)
+        if new:
+            pipe = self._r.pipeline(transaction=False)
+            for e, _ in new.values():
+                pipe.hincrby(n_key, e, 1)
+            numbers = pipe.execute()
+            candidates = {mac: f"[{e}_{n}]" for (mac, (e, _)), n in zip(new.items(), numbers)}
+            pipe = self._r.pipeline(transaction=False)
+            for mac, (_, v) in new.items():
+                # Önce değer, sonra ters eşleme: ters eşlemeyi gören worker değeri de bulur
+                pipe.hset(v_key, candidates[mac], self._seal(scope, candidates[mac], v))
+                pipe.hsetnx(r_key, mac, candidates[mac])
+            for k in (v_key, r_key, n_key):
+                pipe.expire(k, self.ttl)
+            won = pipe.execute()[1:2 * len(new):2]
+            lost = [mac for mac, ok in zip(new, won) if not ok]
+            for mac, ok in zip(new, won):
+                if ok:
+                    known[mac] = candidates[mac].encode("utf-8")
+            if lost:   # başka worker aynı anda atadı: onunkini kullan (bizim numara boşa gider)
+                pipe = self._r.pipeline(transaction=False)
+                for mac in lost:
+                    pipe.hdel(v_key, candidates[mac])
+                pipe.hmget(r_key, lost)
+                for mac, ph in zip(lost, pipe.execute()[-1]):
+                    known[mac] = ph
+        return [known[m].decode("utf-8") for m in macs]
 
     def lookup(self, scope: str, placeholder: str) -> Optional[str]:
-        blob = self._r.hget(self._keys(scope)[0], placeholder)
-        if blob is None:
-            return None
-        try:
-            return self._open(scope, placeholder, blob)
-        except Exception:   # bozuk / başka anahtarla yazılmış kayıt: bulunamadı say
-            return None
+        return self.lookup_many(scope, [placeholder])[0]
+
+    def lookup_many(self, scope: str, placeholders: Sequence[str]) -> List[Optional[str]]:
+        """Tek gidiş-dönüş. Bulunamayan ya da açılamayan kayıt None."""
+        if not placeholders:
+            return []
+        out: List[Optional[str]] = []
+        for ph, blob in zip(placeholders, self._r.hmget(self._keys(scope)[0], list(placeholders))):
+            try:
+                out.append(None if blob is None else self._open(scope, ph, blob))
+            except Exception:   # bozuk / başka anahtarla yazılmış kayıt: bulunamadı say
+                out.append(None)
+        return out

@@ -258,14 +258,20 @@ class TelveguardPlugin(Plugin):
 
     def _mask_with(self, value: Any, vault: Dict[str, str], scope: Optional[str]) -> Tuple[Any, Dict[str, int]]:
         counts: Dict[str, int] = {}
+        # 1. geçiş: her metin bir kez taranır; kalıcı vault'ta tüm değerler tek seferde numaralanır
+        texts: List[str] = []
+        _walk_strings(value, lambda s: texts.append(s) or s)
+        scanned = [self._pii.analyze(t) for t in texts]
+        if scope is not None:
+            items = [(f.entity, t[f.start:f.end]) for t, found in zip(texts, scanned) for f in found
+                     if entity_matches(f.entity, self._cfg.mask_entities)]
+            # Numara Redis'ten: aynı kullanıcıda aynı değer her çağrıda aynı yer tutucu
+            for (_, v), ph in zip(items, self._store.assign_many(scope, items)):
+                vault.setdefault(ph, v)
+        it = iter(scanned)
 
         def fn(s: str) -> str:
-            if scope is not None:
-                # Numara Redis'ten: aynı kullanıcıda aynı değer her çağrıda aynı yer tutucu
-                for f in self._pii.analyze(s):
-                    if entity_matches(f.entity, self._cfg.mask_entities):
-                        vault.setdefault(self._store.assign(scope, f.entity, s[f.start:f.end]), s[f.start:f.end])
-            m = self._pii.mask(s, self._cfg.mask_entities, vault)
+            m = self._pii.mask(s, self._cfg.mask_entities, vault, findings=next(it))
             for f in m.findings:
                 if entity_matches(f.entity, self._cfg.mask_entities):
                     counts[f.entity] = counts.get(f.entity, 0) + 1
@@ -275,10 +281,14 @@ class TelveguardPlugin(Plugin):
 
     def _unmask_with(self, value: Any, scope: str) -> Tuple[Any, int]:
         n = 0
+        found: List[str] = []
+        _walk_strings(value, lambda s: found.extend(PLACEHOLDER_RX.findall(s)) or s)
+        wanted = list(dict.fromkeys(found))
+        values = dict(zip(wanted, self._store.lookup_many(scope, wanted)))   # tek gidiş-dönüş
 
         def sub(m: "re.Match[str]") -> str:
             nonlocal n
-            original = self._store.lookup(scope, m.group(0))
+            original = values.get(m.group(0))
             if original is None:      # bu kullanıcının vault'unda yok: olduğu gibi
                 return m.group(0)
             n += 1

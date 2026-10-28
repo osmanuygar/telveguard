@@ -111,8 +111,8 @@ async def test_redis_down_blocks_masking_but_not_unmasking(plugin, monkeypatch):
 
     def down(*_a, **_k):
         raise redis.exceptions.ConnectionError("yok")
-    monkeypatch.setattr(p._store, "assign", down)
-    monkeypatch.setattr(p._store, "lookup", down)
+    monkeypatch.setattr(p._store, "assign_many", down)
+    monkeypatch.setattr(p._store, "lookup_many", down)
     r = await p.tool_post_invoke(ToolPostInvokePayload(
         name="crm_lookup", result={"content": [{"type": "text", "text": f"TCKN {make_tckn()}"}]}), ctx())
     assert r.continue_processing is False and r.violation.code == "TELVEGUARD_VAULT_UNAVAILABLE"
@@ -146,3 +146,48 @@ def test_ciphertext_bound_to_scope_and_placeholder():
     # Başka kullanıcının kaydına kopyalanan şifreli değer açılmaz
     v._r.hset(f"tv:cf:{b}:v", ph, blob)
     assert v.lookup(b, ph) is None and v.lookup(a, ph) == make_tckn()
+
+
+class _CountingRedis:
+    """Redis'e giden gidiş-dönüş sayısı (pipeline.execute ya da tek komut = 1)."""
+
+    def __init__(self, inner):
+        self.inner, self.round_trips = inner, 0
+
+    def pipeline(self, **kw):
+        outer, pipe = self, self.inner.pipeline(**kw)
+        real = pipe.execute
+
+        def execute(*a, **k):
+            outer.round_trips += 1
+            return real(*a, **k)
+        pipe.execute = execute
+        return pipe
+
+    def __getattr__(self, name):
+        attr = getattr(self.inner, name)
+        if not callable(attr):
+            return attr
+
+        def call(*a, **k):
+            self.round_trips += 1
+            return attr(*a, **k)
+        return call
+
+
+async def test_many_values_use_few_round_trips(plugin):
+    p = plugin()
+    counting = _CountingRedis(p._store._r)
+    p._store._r = counting
+    tcknler = [make_tckn(i) for i in range(1, 51)]
+    text = "\n".join(f"Müşteri {t}" for t in tcknler)
+    masked = await post(p, text)
+    assert counting.round_trips <= 3                       # 50 yeni değer: oku + numara + yaz
+    assert masked.splitlines()[0] == "Müşteri [TCKN_1]" and masked.splitlines()[-1] == "Müşteri [TCKN_50]"
+    counting.round_trips = 0
+    assert await post(p, text) == masked                   # hepsi biliniyor
+    assert counting.round_trips == 1
+    counting.round_trips = 0
+    args = {"liste": [f"[TCKN_{i}]" for i in range(1, 51)]}
+    r = await pre(p, args)
+    assert r.modified_payload.args == {"liste": tcknler} and counting.round_trips == 1
