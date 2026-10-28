@@ -304,5 +304,41 @@
   "text_b64": "VGFibG8gMTIgMzkxIDQxNyA3NzYgOTQgMzQsIHNpcGFyacWfIDEyMyA0NTYgNzg5IDAxLCBzdG9rIDEyMyA0NTYgNzg5MA==",
   "findings": [],
   "masked_b64": "VGFibG8gMTIgMzkxIDQxNyA3NzYgOTQgMzQsIHNpcGFyacWfIDEyMyA0NTYgNzg5IDAxLCBzdG9rIDEyMyA0NTYgNzg5MA=="
+ },
+ {
+  "text_b64": "VEMgMzkxNDE3Nzc2OTQgdmUgMzkxIDQxNyA3NzYgOTQsIGNlcCAwNTMyIDEyMyA0NSA2NyB2ZSArOTAgNTMyIDEyMzQ1NjcsIElCQU4gVFI4MTAwMDYyMDAwMDAwMDAxMjM0NTY3ODkgLyB0cjgxMDAwNjIwMDAwMDAwMDEyMzQ1Njc4OQ==",
+  "findings": [
+   [
+    "TCKN",
+    3,
+    14
+   ],
+   [
+    "TCKN",
+    18,
+    32
+   ],
+   [
+    "PHONE_TR",
+    38,
+    52
+   ],
+   [
+    "PHONE_TR",
+    56,
+    71
+   ],
+   [
+    "IBAN_TR",
+    78,
+    104
+   ],
+   [
+    "IBAN_TR",
+    107,
+    133
+   ]
+  ],
+  "masked_b64": "VEMgW1RDS05fMV0gdmUgW1RDS05fMV0sIGNlcCBbUEhPTkVfVFJfMV0gdmUgW1BIT05FX1RSXzFdLCBJQkFOIFtJQkFOX1RSXzFdIC8gW0lCQU5fVFJfMV0="
  }
 ]

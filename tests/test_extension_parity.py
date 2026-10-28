@@ -57,6 +57,9 @@ TEXTS = [
     f"T.C. {make_tckn(3)[:5]}.{make_tckn(3)[5:]}, vergi no: {make_vkn()[:3]} {make_vkn()[3:6]} {make_vkn()[6:]}",
     f"Tablo 12 {make_tckn(1)[:3]} {make_tckn(1)[3:6]} {make_tckn(1)[6:9]} {make_tckn(1)[9:]} 34, "
     "sipariş 123 456 789 01, stok 123 456 7890",
+    # aynı numaranın farklı yazımları tek yer tutucu
+    f"TC {make_tckn(1)} ve {make_tckn(1)[:3]} {make_tckn(1)[3:6]} {make_tckn(1)[6:9]} {make_tckn(1)[9:]}, "
+    "cep 0532 123 45 67 ve +90 532 1234567, IBAN " + make_iban() + " / " + make_iban().lower(),
 ]
 
 

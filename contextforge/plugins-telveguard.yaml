@@ -20,6 +20,10 @@ plugins:
       # maskelenir ve dış araca gönderilemez. Gateway'siz kurulumda: dictionary_file: /politika/policy.yaml
       # dictionary_gateway_url: https://telveguard.sirket.local
       # dictionary_token_env: TELVEGUARD_CONTEXTFORGE_TOKEN
+      # Araç çağrıları arası yer tutucu: ContextForge ortamında TELVEGUARD_VAULT_REDIS_URL ve
+      # TELVEGUARD_VAULT_KEY (en az 32 karakter) tanımlayın. Kurum içi araç önceki çağrıdaki [TCKN_1]'in
+      # gerçek değerini alır; dış araca yer tutucu gider. Kapatmak için: unmask_tool_args: false
+      # vault_ttl_seconds: 28800
       # Araç izin listesi. Deny her zaman kazanır; default: deny ile yalnızca izin verilenler çalışır.
       # Ekip / grup ContextForge'un kimlik bilgisinden (UserContext) gelir.
       tool_access:

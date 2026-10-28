@@ -312,6 +312,14 @@
   /** Geri çevrilemez yerel maskeleme: yapıştırılan metin [TCKN_1] gibi yer tutucularla gider.
    *  continueNumbering: metinde zaten [TCKN_1] varsa (önceden maskeli yapıştırılmış) yeni değer
    *  [TCKN_2] olur; aynı yer tutucu iki farklı değeri göstermesin. */
+  /** Python canonical_value ile aynı: aynı numaranın farklı yazımları aynı yer tutucuyu alır. */
+  function canonicalValue(entity, value) {
+    if (entity === "TCKN" || entity === "VKN" || entity === "CREDIT_CARD") return value.replace(/\D/g, "");
+    if (entity === "PHONE_TR") return value.replace(/\D/g, "").slice(-10);
+    if (entity === "IBAN_TR") return value.replace(/\s/g, "").toUpperCase();
+    return value;
+  }
+
   function mask(text, { continueNumbering = false } = {}) {
     const findings = analyze(text);
     const counters = {};
@@ -324,12 +332,12 @@
     let out = "";
     let cursor = 0;
     for (const f of findings) {
-      const original = text.slice(f.start, f.end);
-      let ph = seen.get(original);
+      const key = `${f.entity}\n${canonicalValue(f.entity, text.slice(f.start, f.end))}`;
+      let ph = seen.get(key);
       if (!ph) {
         counters[f.entity] = (counters[f.entity] || 0) + 1;
         ph = `[${f.entity}_${counters[f.entity]}]`;
-        seen.set(original, ph);
+        seen.set(key, ph);
       }
       out += text.slice(cursor, f.start) + ph;
       cursor = f.end;

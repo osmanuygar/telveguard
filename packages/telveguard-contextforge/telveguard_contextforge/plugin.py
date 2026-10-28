@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -45,10 +46,13 @@ from cpex.framework.constants import TOOL_METADATA
 from telveguard_core import InjectionDetector, TrPiiEngine, entity_matches, matching_entities
 from telveguard_core.dictionary import Dictionary, DictionaryError, load as load_dictionary
 
+from .vault import RedisVault
+
 log = logging.getLogger("telveguard.contextforge")
 
 # context.state anahtarı: istek boyunca yer tutucu tutarlılığı
 VAULT_KEY = "telveguard_vault"
+PLACEHOLDER_RX = re.compile(r"\[[A-Z][A-Z0-9_]*_\d+\]")
 
 # Listeler joker karakter destekler: "SECRET_*" tüm API anahtarı / token / parola türleri,
 # "KURUM_*" kurumsal sözlük terimleri (sözlük yüklenmemişse hiç bulunmaz)
@@ -89,6 +93,13 @@ class TelveguardConfig(BaseModel):
     dictionary_token_env: str = "TELVEGUARD_CONTEXTFORGE_TOKEN"
     dictionary_file: str = ""
     dictionary_refresh_seconds: int = Field(default=300, ge=30)
+    # Araç çağrıları arası yer tutucu vault'u (Redis, kullanıcı kapsamında, değerler şifreli). Redis
+    # adresi ortam değişkeninde yoksa tutarlılık tek araç çağrısı içinde kalır.
+    vault_redis_url_env: str = "TELVEGUARD_VAULT_REDIS_URL"
+    vault_key_env: str = "TELVEGUARD_VAULT_KEY"
+    vault_ttl_seconds: int = Field(default=8 * 3600, ge=60)
+    # Kurum içi araca giden argümanlardaki yer tutucular gerçek değere çevrilir (dış araca asla)
+    unmask_tool_args: bool = True
 
 
 def _norm_tool(name: str) -> str:
@@ -146,6 +157,8 @@ class TelveguardPlugin(Plugin):
         self._dict_version: Optional[str] = None
         self._dict_checked = 0.0
         self._dict_task: Optional[asyncio.Task] = None
+        self._store = RedisVault.from_env(self._cfg.vault_redis_url_env, self._cfg.vault_key_env,
+                                          self._cfg.vault_ttl_seconds)
         if self._cfg.dictionary_file:
             # Açılışta okunamayan sözlük sessizce yok sayılmasın: terimler maskesiz gider
             load_dictionary(self._cfg.dictionary_file).install(self._pii)
@@ -219,16 +232,39 @@ class TelveguardPlugin(Plugin):
         vermezse tutarlılık tek çağrı içinde kalır. Vault istekle birlikte ölür.
 
         Not (ContextForge v1.0.10'da doğrulandı): her MCP tools/call ayrı bir HTTP
-        isteğidir ve pre hook local_contexts=None ile çağrılır; yani ContextForge'da
-        tutarlılık tek araç çağrısı (pre -> post) içindedir, çağrılar arası değil.
+        isteğidir ve pre hook local_contexts=None ile çağrılır; yani bu vault'la
+        tutarlılık tek araç çağrısı (pre -> post) içindedir. Çağrılar arası tutarlılık
+        için Redis vault'u (vault.py, `vault_redis_url_env`); bu yalnızca Redis yokken
+        ya da çağıran anonimken kullanılır.
         """
         return context.state.setdefault(VAULT_KEY, {})
 
-    def _mask(self, value: Any, context: PluginContext) -> Tuple[Any, Dict[str, int]]:
+    def _scope(self, context: PluginContext) -> Optional[str]:
+        """Kalıcı vault kapsamı: kimliği bilinen kullanıcı. Anonim çağrıda yok (anonim kullanıcılar
+        birbirinin değerini geri açabilirdi)."""
+        if self._store is None:
+            return None
+        user = _caller(context)["user"]
+        return self._store.scope(context.global_context.tenant_id, str(user)) if user else None
+
+    async def _mask(self, value: Any, context: PluginContext) -> Tuple[Any, Dict[str, int]]:
+        scope = self._scope(context)
+        if scope is None:
+            return self._mask_with(value, self._vault(context), None)
+        # Redis senkron istemci: olay döngüsü beklemesin. Redis'e ulaşılamazsa istisna yükselir;
+        # çağıran engeller (çağrı içi numara, Redis'teki başka bir değerin numarasıyla çakışırsa
+        # sonraki geri açma kurum içi araca YANLIŞ kişinin verisini verirdi)
+        return await asyncio.to_thread(self._mask_with, value, {}, scope)
+
+    def _mask_with(self, value: Any, vault: Dict[str, str], scope: Optional[str]) -> Tuple[Any, Dict[str, int]]:
         counts: Dict[str, int] = {}
-        vault = self._vault(context)
 
         def fn(s: str) -> str:
+            if scope is not None:
+                # Numara Redis'ten: aynı kullanıcıda aynı değer her çağrıda aynı yer tutucu
+                for f in self._pii.analyze(s):
+                    if entity_matches(f.entity, self._cfg.mask_entities):
+                        vault.setdefault(self._store.assign(scope, f.entity, s[f.start:f.end]), s[f.start:f.end])
             m = self._pii.mask(s, self._cfg.mask_entities, vault)
             for f in m.findings:
                 if entity_matches(f.entity, self._cfg.mask_entities):
@@ -236,6 +272,28 @@ class TelveguardPlugin(Plugin):
             return m.text
 
         return _walk_strings(value, fn), counts
+
+    def _unmask_with(self, value: Any, scope: str) -> Tuple[Any, int]:
+        n = 0
+
+        def sub(m: "re.Match[str]") -> str:
+            nonlocal n
+            original = self._store.lookup(scope, m.group(0))
+            if original is None:      # bu kullanıcının vault'unda yok: olduğu gibi
+                return m.group(0)
+            n += 1
+            return original
+
+        return _walk_strings(value, lambda s: PLACEHOLDER_RX.sub(sub, s)), n
+
+    @staticmethod
+    def _vault_violation() -> PluginViolation:
+        return PluginViolation(
+            reason="Yer tutucu deposuna ulaşılamadı",
+            description="Telveguard: kişisel veri maskelenemedi (vault erişilemez); çıktı gönderilmedi.",
+            code="TELVEGUARD_VAULT_UNAVAILABLE",
+            details={},
+        )
 
     def _is_external(self, tool_name: str, context: PluginContext) -> bool:
         """ContextForge araç adını "<gateway>-<slug>" yapar ve "_" -> "-" çevirir
@@ -302,7 +360,11 @@ class TelveguardPlugin(Plugin):
         args = payload.args or {}
         if v := self._injection_violation(_collect_text(args), "prompt argümanları"):
             return PromptPrehookResult(continue_processing=False, violation=v)
-        masked, counts = self._mask(args, context)
+        try:
+            masked, counts = await self._mask(args, context)
+        except Exception as e:   # redis.exceptions.* + zaman aşımı
+            log.warning("Telveguard: vault erişilemez: %s", e)
+            return PromptPrehookResult(continue_processing=False, violation=self._vault_violation())
         if counts:
             return PromptPrehookResult(
                 modified_payload=PromptPrehookPayload(prompt_id=payload.prompt_id, args=masked),
@@ -334,8 +396,24 @@ class TelveguardPlugin(Plugin):
                 )
         # Agent kimliği: izin verilen çağrıda da kim / hangi servis hesabı adına
         caller = _caller(context)
-        return ToolPreInvokeResult(continue_processing=True, metadata={"telveguard": {
-            "caller": caller["user"], "teams": caller["teams"], "service_account": caller["service_account"]}})
+        meta: Dict[str, Any] = {"caller": caller["user"], "teams": caller["teams"],
+                                "service_account": caller["service_account"]}
+        # Kurum içi araç önceki çağrıdan gelen [TCKN_1]'in gerçek değerini alır. Dış araçta geri açma
+        # YOK: oraya yalnızca yer tutucu gider (sızdırma kontrolü yukarıda yer tutucuyu görür)
+        scope = self._scope(context)
+        if (scope is not None and self._cfg.unmask_tool_args and not self._is_external(payload.name, context)
+                and PLACEHOLDER_RX.search(text)):
+            try:
+                args, n = await asyncio.to_thread(self._unmask_with, payload.args or {}, scope)
+            except Exception as e:   # Redis yok: araç yer tutucuyla çalışır (veri sızmaz, yanlış veri de gitmez)
+                log.warning("Telveguard: vault erişilemez, argümanlar geri açılmadı: %s", e)
+                meta["unmask"] = "vault_unavailable"
+            else:
+                if n:
+                    meta["unmasked"] = n
+                    return ToolPreInvokeResult(modified_payload=payload.model_copy(update={"args": args}),
+                                               metadata={"telveguard": meta})
+        return ToolPreInvokeResult(continue_processing=True, metadata={"telveguard": meta})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         self._maybe_refresh_dictionary()
@@ -344,7 +422,11 @@ class TelveguardPlugin(Plugin):
                 return ToolPostInvokeResult(continue_processing=False, violation=v)
 
         if self._cfg.mask_tool_results:
-            masked, counts = self._mask(payload.result, context)
+            try:
+                masked, counts = await self._mask(payload.result, context)
+            except Exception as e:   # redis.exceptions.* + zaman aşımı
+                log.warning("Telveguard: vault erişilemez: %s", e)
+                return ToolPostInvokeResult(continue_processing=False, violation=self._vault_violation())
             if counts:
                 return ToolPostInvokeResult(
                     modified_payload=ToolPostInvokePayload(name=payload.name, result=masked),

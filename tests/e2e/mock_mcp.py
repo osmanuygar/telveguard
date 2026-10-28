@@ -3,6 +3,7 @@ Uçtan uca ContextForge testi için sahte MCP sunucusu (streamable-http, /mcp).
 
 Araçlar:
   crm_lookup(musteri_id)  -> kurum içi araç; müşterinin TCKN/IBAN'ını döndürür (çıktı maskelenmeli)
+  crm_verify(musteri_id, tckn) -> kurum içi araç; önceki çağrının yer tutucusu gerçek değere döndü mü
   email_send(to, body)    -> kurum dışı araç (external_tools: "email*"); TCKN içerirse engellenmeli
   web_fetch(url)          -> içine gömülü dolaylı prompt injection olan sayfa döndürür
 """
@@ -26,6 +27,12 @@ mcp = FastMCP("telveguard-mock-crm", host="0.0.0.0", port=9100)
 def crm_lookup(musteri_id: int) -> str:
     """Müşteri kaydını getirir."""
     return f"Müşteri #{musteri_id}: TCKN {make_tckn(musteri_id)}, durum aktif"
+
+
+@mcp.tool()
+def crm_verify(musteri_id: int, tckn: str) -> str:
+    """Kurum içi araç: verilen TCKN müşterininkiyle aynı mı (yer tutucu geri açıldı mı)."""
+    return "eşleşti" if tckn == make_tckn(musteri_id) else "eşleşmedi"
 
 
 @mcp.tool()

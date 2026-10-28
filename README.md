@@ -1092,6 +1092,14 @@ docker build -f contextforge/Containerfile -t telveguard/contextforge:dev .
   metindir (tarayıcıya özet gider); token'ı yalnızca ContextForge'a verin. Terimler araç çıktısında
   maskelenir, dış araca gönderilemez (`KURUM_*`). Gateway'siz kurulumda `dictionary_file` ile
   politika dosyasından okunur.
+- **Araç çağrıları arası yer tutucu:** `TELVEGUARD_VAULT_REDIS_URL` ve `TELVEGUARD_VAULT_KEY` (en az 32
+  karakter) tanımlıysa aynı değer aynı kullanıcı için her araç çağrısında aynı yer tutucuyu alır ve
+  agent bir araçtan aldığı `[TCKN_1]`'i **kurum içi** bir araca verdiğinde araç gerçek değeri alır.
+  Dış araca (`external_tools`) yalnızca yer tutucu gider. Kapsam kullanıcı + tenant; Redis'te
+  değerler AES-GCM ile şifreli, anahtarlar HMAC'li (kullanıcı adı / ham değer yok), süre 8 saat
+  (`vault_ttl_seconds`). Redis'e ulaşılamazsa araç çıktısı engellenir (`TELVEGUARD_VAULT_UNAVAILABLE`):
+  çağrı içi numara Redis'teki başka bir değerinkiyle çakışıp kurum içi araca yanlış kişinin verisini
+  verebilirdi. Kimliksiz çağrıda kalıcı vault kullanılmaz.
 
 ```yaml
 dictionary_gateway_url: https://telveguard.sirket.local
@@ -1108,7 +1116,7 @@ Ayarlar: `contextforge/plugins-telveguard.yaml`.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r gateway/requirements.txt pytest pytest-asyncio cpex \
+pip install -r gateway/requirements.txt pytest pytest-asyncio cpex fakeredis \
     -e packages/telveguard-core -e packages/telveguard-contextforge
 pytest -q
 node extension/tests/detectors.test.js      # eklentinin JS motoru == Python motoru
@@ -1179,8 +1187,8 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
   yapan uygulamalar, websocket üzerinden gönderilen mesajlar (ör. Copilot'un sohbeti) ve
   büyük dosya yüklemelerinin ayrı depolama adreslerine (ör. bulut blob) giden içeriği taranmaz.
   Maskeleme yapılmaz; yalnızca geçir / durdur.
-- ContextForge'da yer tutucu numaraları (`[TCKN_1]`) tek araç çağrısı içinde tutarlıdır,
-  çağrılar arasında değil.
+- ContextForge'da yer tutucular (`[TCKN_1]`) araç çağrıları arasında yalnızca Redis vault'u
+  tanımlıysa ve çağıran kimliği biliniyorsa tutarlıdır; yoksa tek araç çağrısı içinde.
 
 ## Sürümler
 

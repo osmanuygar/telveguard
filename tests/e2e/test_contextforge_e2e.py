@@ -8,6 +8,7 @@ Uçtan uca: gerçek ContextForge imajı + Telveguard eklentisi + sahte MCP sunuc
 Ortam değişkeni yoksa atlanır.
 """
 import os
+import re
 
 import httpx
 import pytest
@@ -57,7 +58,7 @@ def test_plugin_sees_prefixed_tool_names(tools):
 def test_tool_result_pii_masked(api, tools):
     resp = call(api, tools["crm_lookup"], {"musteri_id": 1})
     assert make_tckn(1) not in str(resp)  # structuredContent dahil hiçbir yerde
-    assert "[TCKN_1]" in text_of(resp)
+    assert re.search(r"\[TCKN_\d+\]", text_of(resp))
 
 
 def test_exfiltration_to_email_blocked(api, tools):
@@ -75,13 +76,27 @@ def test_indirect_injection_in_tool_result_blocked(api, tools):
     assert resp["error"]["data"]["plugin_error_code"] == "TELVEGUARD_PROMPT_INJECTION"
 
 
-def test_placeholders_reset_per_tools_call(api, tools):
-    """Bilinen sınır (ContextForge v1.0.10): her tools/call ayrı istek, context tablosu
-    taşınmıyor; farklı müşterilerin TCKN'leri ayrı çağrılarda ikisi de [TCKN_1] olur.
-    Bu test kırılırsa ContextForge tabloyu taşımaya başlamıştır: eklenti notunu güncelleyin."""
-    a = text_of(call(api, tools["crm_lookup"], {"musteri_id": 1}))
-    b = text_of(call(api, tools["crm_lookup"], {"musteri_id": 2}))
-    assert "[TCKN_1]" in a and "[TCKN_1]" in b
+def _placeholder(text):
+    return re.search(r"\[TCKN_\d+\]", text).group(0)
+
+
+def test_placeholders_consistent_across_tools_calls(api, tools):
+    """Her tools/call ayrı istek; yer tutucular Redis vault'unda (kullanıcı kapsamı) tutarlı."""
+    a = _placeholder(text_of(call(api, tools["crm_lookup"], {"musteri_id": 1})))
+    b = _placeholder(text_of(call(api, tools["crm_lookup"], {"musteri_id": 2})))
+    again = _placeholder(text_of(call(api, tools["crm_lookup"], {"musteri_id": 1})))
+    assert a != b and again == a
+
+
+def test_internal_tool_receives_real_value_for_placeholder(api, tools):
+    ph = _placeholder(text_of(call(api, tools["crm_lookup"], {"musteri_id": 3})))
+    assert text_of(call(api, tools["crm_verify"], {"musteri_id": 3, "tckn": ph})) == "eşleşti"
+
+
+def test_external_tool_gets_placeholder_not_value(api, tools):
+    ph = _placeholder(text_of(call(api, tools["crm_lookup"], {"musteri_id": 4})))
+    resp = call(api, tools["email_send"], {"to": "x@disari.com", "body": f"Kimlik: {ph}"})
+    assert "error" not in resp      # yer tutucu sızıntı değil; geri açılmadığı birim testte doğrulanır
 
 
 def test_destructive_tool_denied_with_real_user_context(api, tools):

@@ -20,6 +20,10 @@ classifiers = [
 ]
 dependencies = ["telveguard-core>=0.5.0", "cpex>=0.1.4"]
 
+[project.optional-dependencies]
+# Araç çağrıları arası yer tutucu vault'u (ContextForge imajında ikisi de hazır)
+vault = ["redis>=5", "cryptography>=42"]
+
 [project.urls]
 Homepage = "https://github.com/osmanuygar/telveguard"
 Source = "https://github.com/osmanuygar/telveguard"

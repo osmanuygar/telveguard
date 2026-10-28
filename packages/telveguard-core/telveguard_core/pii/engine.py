@@ -10,6 +10,7 @@ genişlikli boşluk, yumuşak tire, yön işaretleri, etiket karakterleri) atıl
 TCKN'dir; regex'e değildi. Bulguların ofsetleri ORİJİNAL metne geri eşlenir: maskeleme araya
 sıkıştırılmış karakterler dahil tüm değeri kapatır.
 """
+import re
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
@@ -43,6 +44,24 @@ def normalize_for_scan(text: str) -> Tuple[str, Optional[List[int]]]:
         out.append(n)
         index.extend([i] * len(n))
     return "".join(out), index
+
+
+def canonical_value(entity: str, value: str) -> str:
+    """Yer tutucu eşlemesi için: aynı numaranın farklı yazımları ("391 417 776 94", "39141777694")
+    aynı yer tutucuyu alsın. Yalnızca biçimi anlamı değiştirmeyen numaralar; sır, e-posta, sözlük
+    terimi olduğu gibi (büyük / küçük harf farkı farklı bir sır olabilir)."""
+    if entity in ("TCKN", "VKN", "CREDIT_CARD"):
+        return re.sub(r"\D", "", value)
+    if entity == "PHONE_TR":
+        return re.sub(r"\D", "", value)[-10:]
+    if entity == "IBAN_TR":
+        return re.sub(r"\s", "", value).upper()
+    return value
+
+
+def placeholder_entity(placeholder: str) -> str:
+    """[TCKN_3] -> TCKN"""
+    return placeholder.strip("[]").rsplit("_", 1)[0]
 
 
 def normalize_text(text: str) -> str:
@@ -110,13 +129,15 @@ class TrPiiEngine:
 
     def mask(self, text: str, entities_to_mask: Optional[List[str]] = None,
              vault: Optional[Dict[str, str]] = None) -> MaskResult:
-        """Aynı vault birden fazla mesajda paylaşılır: aynı TCKN hep [TCKN_1] olur."""
+        """Aynı vault birden fazla mesajda paylaşılır: aynı TCKN hep [TCKN_1] olur (farklı yazımı da:
+        "391 417 776 94" ve "39141777694"; geri açılınca ilk görülen yazım döner)."""
         findings = self.analyze(text)
         vault = vault if vault is not None else {}
-        reverse = {v: k for k, v in vault.items()}
+        reverse: Dict[Tuple[str, str], str] = {}
         counters: Dict[str, int] = {}
-        for k in vault:
-            ent = k.strip("[]").rsplit("_", 1)[0]
+        for k, v in vault.items():
+            ent = placeholder_entity(k)
+            reverse.setdefault((ent, canonical_value(ent, v)), k)
             counters[ent] = counters.get(ent, 0) + 1
 
         out, cursor = [], 0
@@ -124,12 +145,13 @@ class TrPiiEngine:
             if entities_to_mask is not None and not entity_matches(f.entity, entities_to_mask):
                 continue
             original = text[f.start:f.end]
-            placeholder = reverse.get(original)
+            key = (f.entity, canonical_value(f.entity, original))
+            placeholder = reverse.get(key)
             if placeholder is None:
                 counters[f.entity] = counters.get(f.entity, 0) + 1
                 placeholder = f"[{f.entity}_{counters[f.entity]}]"
                 vault[placeholder] = original
-                reverse[original] = placeholder
+                reverse[key] = placeholder
             out.append(text[cursor:f.start])
             out.append(placeholder)
             cursor = f.end

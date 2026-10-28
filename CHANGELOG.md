@@ -13,6 +13,14 @@
   `CONTEXTFORGE_TOKEN`; Helm Secret anahtarı `contextforge-token`) ya da `dictionary_file` ile politika
   dosyasından okur. `KURUM_*` varsayılan olarak araç çıktısında maskelenir ve dış araca gönderilemez.
   Gateway'e ulaşılamazsa eldeki sözlükle devam edilir.
+- ContextForge'da araç çağrıları arası yer tutucu vault'u (Redis; `TELVEGUARD_VAULT_REDIS_URL`,
+  `TELVEGUARD_VAULT_KEY`): aynı değer aynı kullanıcı için her çağrıda aynı `[TCKN_n]`; kurum içi araca
+  giden argümanlardaki yer tutucular gerçek değere çevrilir (`unmask_tool_args`, dış araca asla).
+  Kullanıcı + tenant kapsamı, değerler AES-GCM ile şifreli, Redis anahtarlarında kullanıcı adı ve ham
+  değer yok, 8 saat TTL. Redis'e ulaşılamazsa araç çıktısı engellenir. Önceden agent'ın bir araçtan
+  aldığı `[TCKN_1]`'i başka bir araca vermesi iş akışını kırıyordu.
+- Aynı numaranın farklı yazımları tek yer tutucu (gateway, ContextForge, tarayıcı eklentisi):
+  `391 417 776 94` ve `39141777694` ikisi de `[TCKN_1]`; telefon, IBAN, kart, VKN da.
 - Sözlük ayrıştırması `telveguard-core`'a taşındı (`telveguard_core.dictionary`); `gateway/app/dictionary`
   aynı adları dışa aktarmaya devam eder.
 
