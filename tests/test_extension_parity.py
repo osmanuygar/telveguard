@@ -51,6 +51,12 @@ TEXTS = [
     "Kart 4111\u200b1111 1111 1111, e-posta ali\u200d@ornek.com.tr, tam genişlik TC " + make_tckn(2).translate(
         str.maketrans("0123456789", "０１２３４５６７８９")),
     "Sipariş 1234\u200b5678901 (sağlama toplamı tutmaz)",
+    # bölünmüş TCKN / VKN: bağlamsız 0.8, bağlamla 1.0; sayı tablosundan pencere seçilmez
+    f"Müşteri {make_tckn(1)[:3]} {make_tckn(1)[3:6]} {make_tckn(1)[6:9]} {make_tckn(1)[9:]}, "
+    f"KİMLİK NO: {make_tckn(2)[:3]}-{make_tckn(2)[3:6]}-{make_tckn(2)[6:9]}-{make_tckn(2)[9:]}, "
+    f"T.C. {make_tckn(3)[:5]}.{make_tckn(3)[5:]}, vergi no: {make_vkn()[:3]} {make_vkn()[3:6]} {make_vkn()[6:]}",
+    f"Tablo 12 {make_tckn(1)[:3]} {make_tckn(1)[3:6]} {make_tckn(1)[6:9]} {make_tckn(1)[9:]} 34, "
+    "sipariş 123 456 789 01, stok 123 456 7890",
 ]
 
 

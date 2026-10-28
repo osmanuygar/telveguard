@@ -1,5 +1,15 @@
 # Değişiklik günlüğü
 
+## Yayımlanmadı
+
+### Koruma
+
+- Bölünmüş TCKN ve VKN (`telveguard-core` ve tarayıcı eklentisi): rakamlar arasında tek boşluk, tire
+  ya da nokta olan yazım (`100 000 001 46`, `100-000-001-46`) yakalanır. Ayraçla devam eden rakam
+  varsa (sayı tablosu) 11 hanelik pencere seçilmez. Bağlamsız bölünmüş TCKN 0.8 skor alır (kart /
+  IBAN çakışmada kazanır); "TC", "T.C.", "TCKN", "kimlik no" yakındaysa 1.0. VKN zaten
+  "vergi no" / "vkn" bağlamı ister.
+
 ## 0.5.0 — 2026-10-27
 
 ### Güvenlik

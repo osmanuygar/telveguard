@@ -1152,8 +1152,9 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
   injection için taranmaz: uygulamanın kendi metni sayılır (Claude Code'un uzun araç açıklamaları
   sezgisel kurallara takılmasın). Üçüncü taraf MCP sunucusunun araç açıklamasına gizlenmiş talimat
   (tool poisoning) için ContextForge eklentisinin araç izin listesini kullanın.
-- Boşluk / tireyle bölünmüş TCKN ve VKN (`100 000 001 46`) yakalanmaz (IBAN, kart ve telefonun
-  boşluklu yazımı yakalanır).
+- Boşluk / tire / noktayla bölünmüş TCKN (`100 000 001 46`) yakalanır, ama bir sayı tablosunun
+  içindeyse (ayraçla devam eden başka rakam varsa) yakalanmaz. Bağlamsız bölünmüş TCKN'nin skoru
+  0.8'dir; "TC", "T.C.", "TCKN", "kimlik no" yakındaysa 1.0.
 - Maskeleme veya çıktı kuralı olan streaming istekleri tamponlanıp tek parça döner. Hiçbiri
   yoksa gerçek streaming yapılır; bu durumda cevap taranmaz ve token / maliyet bilgisi gelmez.
 - Injection kuralları sezgisel bir başlangıç setidir; Türkçe saldırı veri setiyle eğitilmiş

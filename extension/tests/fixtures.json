@@ -273,5 +273,36 @@
   "text_b64": "U2lwYXJpxZ8gMTIzNOKAizU2Nzg5MDEgKHNhxJ9sYW1hIHRvcGxhbcSxIHR1dG1heik=",
   "findings": [],
   "masked_b64": "U2lwYXJpxZ8gMTIzNOKAizU2Nzg5MDEgKHNhxJ9sYW1hIHRvcGxhbcSxIHR1dG1heik="
+ },
+ {
+  "text_b64": "TcO8xZ90ZXJpIDM5MSA0MTcgNzc2IDk0LCBLxLBNTMSwSyBOTzogMTExLTUyNC00OTMtODgsIFQuQy4gNDk4MjUuOTc5MTYwLCB2ZXJnaSBubzogMTIzIDQ1NiA3ODkw",
+  "findings": [
+   [
+    "TCKN",
+    8,
+    22
+   ],
+   [
+    "TCKN",
+    35,
+    49
+   ],
+   [
+    "TCKN",
+    56,
+    68
+   ],
+   [
+    "VKN",
+    80,
+    92
+   ]
+  ],
+  "masked_b64": "TcO8xZ90ZXJpIFtUQ0tOXzFdLCBLxLBNTMSwSyBOTzogW1RDS05fMl0sIFQuQy4gW1RDS05fM10sIHZlcmdpIG5vOiBbVktOXzFd"
+ },
+ {
+  "text_b64": "VGFibG8gMTIgMzkxIDQxNyA3NzYgOTQgMzQsIHNpcGFyacWfIDEyMyA0NTYgNzg5IDAxLCBzdG9rIDEyMyA0NTYgNzg5MA==",
+  "findings": [],
+  "masked_b64": "VGFibG8gMTIgMzkxIDQxNyA3NzYgOTQgMzQsIHNpcGFyacWfIDEyMyA0NTYgNzg5IDAxLCBzdG9rIDEyMyA0NTYgNzg5MA=="
  }
 ]

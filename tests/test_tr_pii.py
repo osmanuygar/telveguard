@@ -178,3 +178,61 @@ def test_exemption_sees_normalized_value():
     pii.exempt = lambda entity, value: entity == "TCKN" and value == tckn
     assert pii.analyze(f"Test TC {tckn[:4]}\u200b{tckn[4:]}") == []
     assert normalize_text(f"{tckn[:4]}\u200b{tckn[4:]}") == tckn
+
+
+def _split(value, sep, groups):
+    out, i = [], 0
+    for n in groups:
+        out.append(value[i:i + n])
+        i += n
+    return sep.join(out)
+
+
+@pytest.mark.parametrize("sep", [" ", "-", "."])
+@pytest.mark.parametrize("groups", [(3, 3, 3, 2), (1, 3, 3, 4), (5, 6)])
+def test_split_tckn_detected(engine, sep, groups):
+    tckn = make_tckn()
+    value = _split(tckn, sep, groups)
+    text = f"Müşteri {value} için özet"
+    findings = engine.analyze(text)
+    assert [(f.entity, text[f.start:f.end]) for f in findings] == [("TCKN", value)]
+    assert findings[0].score == 0.8        # bağlamsız: kart / IBAN çakışmada kazanır
+    vault = {}
+    masked = engine.mask(text, None, vault).text
+    assert masked == "Müşteri [TCKN_1] için özet"
+    assert engine.unmask(masked, vault) == text
+
+
+@pytest.mark.parametrize("context", ["TC", "T.C.", "TCKN:", "tc no", "kimlik no:", "KİMLİK NUMARASI", "Kimlik numarası"])
+def test_split_tckn_with_context_scores_full(engine, context):
+    value = _split(make_tckn(), " ", (3, 3, 3, 2))
+    findings = engine.analyze(f"{context} {value}")
+    assert [(f.entity, f.score) for f in findings] == [("TCKN", 1.0)]
+
+
+def test_split_tckn_not_cut_from_longer_digit_run(engine):
+    # Ayraçla devam eden rakam varsa 11 hanelik pencere seçilmez (sayı tablosu, uzun hesap no)
+    value = _split(make_tckn(), " ", (3, 3, 3, 2))
+    for text in (f"1 {value}", f"{value} 7", f"tablo: 12 {value} 34", f"{value}-1"):
+        assert "TCKN" not in {f.entity for f in engine.analyze(text)}, text
+
+
+def test_split_tckn_needs_checksum_and_single_separator(engine):
+    assert engine.analyze("Sipariş 123 456 789 01") == []                       # checksum tutmaz
+    value = _split(make_tckn(), "  ", (3, 3, 3, 2))                            # çift boşluk: ayrı sayılar
+    assert "TCKN" not in {f.entity for f in engine.analyze(f"Sıra {value}")}
+
+
+def test_split_tckn_does_not_steal_card_or_phone(engine):
+    text = "Kart 4111 1111 1111 1111, cep 0532 123 45 67, +90 532 123 45 67"
+    assert [f.entity for f in engine.analyze(text)] == ["CREDIT_CARD", "PHONE_TR", "PHONE_TR"]
+
+
+@pytest.mark.parametrize("sep", [" ", "-", "."])
+def test_split_vkn_detected(engine, sep):
+    vkn = make_vkn()
+    value = _split(vkn, sep, (3, 3, 4))
+    text = f"Vergi no: {value} olan firma"
+    assert [(f.entity, text[f.start:f.end]) for f in engine.analyze(text)] == [("VKN", value)]
+    # Bağlamsız bölünmüş 10 hane VKN sayılmaz
+    assert "VKN" not in {f.entity for f in engine.analyze(f"Stok {value}")}
