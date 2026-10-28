@@ -114,7 +114,7 @@ async def lifespan(app: FastAPI):
 
 admin_log = logging.getLogger("telveguard.admin")
 log = logging.getLogger("telveguard.gateway")
-app = FastAPI(title="Telveguard Gateway", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="Telveguard Gateway", version="0.6.0", lifespan=lifespan)
 
 DEFAULT_MAX_REQUEST_BYTES = 32_000_000   # Anthropic API'nin istek sınırı; ekler base64 olarak gövdede
 

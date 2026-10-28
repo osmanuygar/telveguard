@@ -1,6 +1,6 @@
 # Değişiklik günlüğü
 
-## Yayımlanmadı
+## 0.6.0 — 2026-10-28
 
 ### Koruma
 
@@ -51,6 +51,22 @@
 - ContextForge vault'u Redis pipeline'ıyla: bir araç çıktısındaki tüm değerler 1-3 gidiş-dönüşte
   (önceden değer başına sıralı 2-4; 50 değerde ~200). Geri açma tek gidiş-dönüş. Araç çıktısı bir kez taranır.
 - `telveguard_scan_duration_seconds` kovaları 5 sn'ye kadar (önceden 0,25 sn üstü `+Inf`'e düşüyordu).
+
+### Yükseltme notları
+
+- `telveguard-contextforge` ve `telveguard-agent` `telveguard-core>=0.6.0` ister (sözlük modülü
+  `telveguard_core.dictionary`, `canonical_value`, parça bazlı tarama).
+- Bölünmüş TCKN artık yakalanır: önceden maskesiz geçen `100 000 001 46` gibi yazımlar maskelenir.
+  Sayı listeleri yoğun ekiplerde ilk hafta yanlış pozitifleri Röntgen'de izleyin.
+- ContextForge sözlüğü (opsiyonel): gateway'de `CONTEXTFORGE_TOKEN` (Helm Secret anahtarı
+  `contextforge-token`), ContextForge'da aynı değer `TELVEGUARD_CONTEXTFORGE_TOKEN`, eklentide
+  `dictionary_gateway_url`. `KURUM_*` eklentinin varsayılan maske ve dış araç listelerinde: özel
+  `mask_entities` / `exfil_block_entities` tanımladıysanız ekleyin.
+- ContextForge vault'u (opsiyonel): `TELVEGUARD_VAULT_REDIS_URL` ve `TELVEGUARD_VAULT_KEY` (en az 32
+  karakter; değişirse eski kayıtlar açılamaz). Redis'e ulaşılamazsa araç çıktısı engellenir.
+- Artımlı streaming varsayılan olarak kapalı (`streamMode: buffer`); önce bir ekipte deneyin.
+- Denetim olayındaki yeni `stream_aborted` alanı ClickHouse'a yazılmaz (kolon yok; Kafka bilinmeyen
+  alanı atlar); SIEM / Kafka tüketicilerine gider.
 
 ## 0.5.0 — 2026-10-27
 
