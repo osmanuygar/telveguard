@@ -10,7 +10,12 @@ genişlikli boşluk, yumuşak tire, yön işaretleri, etiket karakterleri) atıl
 TCKN'dir; regex'e değildi. Bulguların ofsetleri ORİJİNAL metne geri eşlenir: maskeleme araya
 sıkıştırılmış karakterler dahil tüm değeri kapatır.
 """
+import hashlib
+import os
+import re
+import threading
 import unicodedata
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -45,6 +50,24 @@ def normalize_for_scan(text: str) -> Tuple[str, Optional[List[int]]]:
     return "".join(out), index
 
 
+def canonical_value(entity: str, value: str) -> str:
+    """Yer tutucu eşlemesi için: aynı numaranın farklı yazımları ("391 417 776 94", "39141777694")
+    aynı yer tutucuyu alsın. Yalnızca biçimi anlamı değiştirmeyen numaralar; sır, e-posta, sözlük
+    terimi olduğu gibi (büyük / küçük harf farkı farklı bir sır olabilir)."""
+    if entity in ("TCKN", "VKN", "CREDIT_CARD"):
+        return re.sub(r"\D", "", value)
+    if entity == "PHONE_TR":
+        return re.sub(r"\D", "", value)[-10:]
+    if entity == "IBAN_TR":
+        return re.sub(r"\s", "", value).upper()
+    return value
+
+
+def placeholder_entity(placeholder: str) -> str:
+    """[TCKN_3] -> TCKN"""
+    return placeholder.strip("[]").rsplit("_", 1)[0]
+
+
 def normalize_text(text: str) -> str:
     """Değer karşılaştırması için (ilgili kişi araması, istisnalar): taramayla aynı normalleştirme."""
     return normalize_for_scan(text)[0]
@@ -65,19 +88,111 @@ class MaskResult:
     vault: Dict[str, str] = field(default_factory=dict)  # placeholder -> orijinal
 
 
+# Tarama önbelleği: aynı metin (Claude Code her turda tüm konuşmayı yeniden gönderir) yeniden
+# taranmaz. Anahtar metnin SHA-256 özeti + tanıyıcı kuşağı; değer bulgular (ham metin saklanmaz).
+# Tanıyıcılar ya da istisnalar değişince kuşak artar, önbellek boşalır.
+SCAN_CACHE_SIZE = int(os.getenv("TELVEGUARD_SCAN_CACHE_SIZE", "4096"))
+SCAN_CACHE_MIN_CHARS = 256      # kısa metni taramak özetlemekten ucuz
+# Parça sınırı penceresi: "\n" ile birleştirilmiş metinde sınırı aşan bulgu (ör. iki mesaja bölünmüş
+# telefon, çok kelimeli sözlük terimi) için sınırın iki yanından bu kadar karakter taranır
+BOUNDARY_CHARS = 128
+_EDGE = 8   # kesilmiş pencere kenarında lookbehind / lookahead bağlamı eksik: bu kadar içeriden başlamalı
+
+
 class TrPiiEngine:
     def __init__(self, enable_ner: bool = False, min_score: float = 0.5):
-        self.recognizers = TR_RECOGNIZERS + SECRET_RECOGNIZERS
+        self._recognizers = TR_RECOGNIZERS + SECRET_RECOGNIZERS
+        self._exempt: Optional[Callable[[str, str], bool]] = None
+        self._gen = 0
+        self._cache: "OrderedDict[Tuple[int, bytes], Tuple]" = OrderedDict()
+        self._cache_lock = threading.Lock()
         self.min_score = min_score
         # (tür, değer) -> True ise bulgu yok sayılır: kurumun kendi IBAN'ı, destek e-postası gibi
         # kamuya açık değerler (gateway'de politikadaki `exceptions`)
-        self.exempt: Optional[Callable[[str, str], bool]] = None
         self._ner = None
         if enable_ner:
             from .tr_ner import TurkishNer
             self._ner = TurkishNer()
 
-    def analyze(self, text: str) -> List[Finding]:
+    # Tanıyıcı / istisna değişince önbellek geçersiz (Dictionary.install, Exemptions.install atar)
+    @property
+    def recognizers(self):
+        return self._recognizers
+
+    @recognizers.setter
+    def recognizers(self, value) -> None:
+        self._recognizers = value
+        self._invalidate()
+
+    @property
+    def exempt(self) -> Optional[Callable[[str, str], bool]]:
+        return self._exempt
+
+    @exempt.setter
+    def exempt(self, value: Optional[Callable[[str, str], bool]]) -> None:
+        self._exempt = value
+        self._invalidate()
+
+    def _invalidate(self) -> None:
+        with self._cache_lock:
+            self._gen += 1
+            self._cache.clear()
+
+    def analyze(self, text: str, cache: bool = False) -> List[Finding]:
+        """cache=True: tekrar eden metinler için (istek parçaları). Her çağrıda yeni Finding
+        nesneleri döner; çağıranın ofsetleri değiştirmesi önbelleği bozmaz."""
+        if not cache or SCAN_CACHE_SIZE <= 0 or len(text) < SCAN_CACHE_MIN_CHARS:
+            return self._analyze(text)
+        gen = self._gen
+        key = (gen, hashlib.sha256(text.encode("utf-8", "surrogatepass")).digest())
+        with self._cache_lock:
+            hit = self._cache.get(key)
+            if hit is not None:
+                self._cache.move_to_end(key)
+        if hit is not None:
+            return [Finding(*t) for t in hit]
+        found = self._analyze(text)
+        with self._cache_lock:
+            if gen == self._gen:     # tarama sırasında tanıyıcılar değiştiyse eski sonucu saklama
+                self._cache[key] = tuple((f.entity, f.start, f.end, f.score) for f in found)
+                while len(self._cache) > SCAN_CACHE_SIZE:
+                    self._cache.popitem(last=False)
+        return found
+
+    def analyze_parts(self, texts: List[str], cache: bool = True) -> Tuple[List[List[Finding]], List[Finding]]:
+        """Parça parça tarama: (parça başına bulgular, "\n".join(texts) içindeki tüm bulgular).
+        Tek parça değişince yalnızca o yeniden taranır (önbellek). Sınır pencereleri iki tür bulgu
+        ekler: sınırı aşan (iki mesaja bölünmüş telefon) ve bağlamı öteki parçada kalan ("vergi no:"
+        bir parçanın sonunda, numara sonrakinin başında). Parça içi bir bulguyla çakışan eklenmez;
+        pencerenin kesilmiş kenarına yakın olan da (uzun sayının ortasından başlayan sahte eşleşme)."""
+        per = [self.analyze(t, cache=cache) for t in texts]
+        combined: List[Finding] = []
+        offset = 0
+        starts = []
+        for t, found in zip(texts, per):
+            starts.append(offset)
+            combined.extend(Finding(f.entity, f.start + offset, f.end + offset, f.score) for f in found)
+            offset += len(t) + 1
+        for i in range(1, len(texts)):
+            prev, nxt = texts[i - 1], texts[i]
+            if not prev or not nxt:
+                continue
+            left, right = prev[-BOUNDARY_CHARS:], nxt[:BOUNDARY_CHARS]
+            window = left + "\n" + right
+            base = starts[i] - 1 - len(left)          # pencerenin birleşik metindeki başlangıcı
+            cut = len(left)                            # pencerede "\n"in konumu
+            lo = _EDGE if len(left) < len(prev) else 0          # kesilmiş kenar payı
+            hi = len(window) - (_EDGE if len(right) < len(nxt) else 0)
+            for f in self.analyze(window, cache=cache):
+                if not (f.start <= cut < f.end) and (f.start < lo or f.end > hi):
+                    continue
+                g = Finding(f.entity, f.start + base, f.end + base, f.score)
+                if all(g.end <= k.start or g.start >= k.end for k in combined):
+                    combined.append(g)
+        combined.sort(key=lambda f: f.start)
+        return per, combined
+
+    def _analyze(self, text: str) -> List[Finding]:
         scan, index = normalize_for_scan(text)
         results: List[Finding] = []
         for rec in self.recognizers:
@@ -109,14 +224,16 @@ class TrPiiEngine:
         return sorted(kept, key=lambda r: r.start)
 
     def mask(self, text: str, entities_to_mask: Optional[List[str]] = None,
-             vault: Optional[Dict[str, str]] = None) -> MaskResult:
-        """Aynı vault birden fazla mesajda paylaşılır: aynı TCKN hep [TCKN_1] olur."""
-        findings = self.analyze(text)
+             vault: Optional[Dict[str, str]] = None, findings: Optional[List[Finding]] = None) -> MaskResult:
+        """Aynı vault birden fazla mesajda paylaşılır: aynı TCKN hep [TCKN_1] olur (farklı yazımı da:
+        "391 417 776 94" ve "39141777694"; geri açılınca ilk görülen yazım döner)."""
+        findings = self.analyze(text) if findings is None else findings   # hazır bulgu: yeniden taranmaz
         vault = vault if vault is not None else {}
-        reverse = {v: k for k, v in vault.items()}
+        reverse: Dict[Tuple[str, str], str] = {}
         counters: Dict[str, int] = {}
-        for k in vault:
-            ent = k.strip("[]").rsplit("_", 1)[0]
+        for k, v in vault.items():
+            ent = placeholder_entity(k)
+            reverse.setdefault((ent, canonical_value(ent, v)), k)
             counters[ent] = counters.get(ent, 0) + 1
 
         out, cursor = [], 0
@@ -124,12 +241,13 @@ class TrPiiEngine:
             if entities_to_mask is not None and not entity_matches(f.entity, entities_to_mask):
                 continue
             original = text[f.start:f.end]
-            placeholder = reverse.get(original)
+            key = (f.entity, canonical_value(f.entity, original))
+            placeholder = reverse.get(key)
             if placeholder is None:
                 counters[f.entity] = counters.get(f.entity, 0) + 1
                 placeholder = f"[{f.entity}_{counters[f.entity]}]"
                 vault[placeholder] = original
-                reverse[original] = placeholder
+                reverse[key] = placeholder
             out.append(text[cursor:f.start])
             out.append(placeholder)
             cursor = f.end

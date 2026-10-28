@@ -10,6 +10,7 @@ Anthropic /v1/messages (Claude Code dahil). İstemciler yalnızca taban adresi d
     OpenAI(base_url="http://telveguard:8080/v1", ...)
     Anthropic(base_url="http://telveguard:8080", ...)   /  ANTHROPIC_BASE_URL=http://telveguard:8080
 """
+import asyncio
 import copy
 import dataclasses
 import hmac
@@ -36,6 +37,7 @@ from . import exemptions as exemptions_mod
 from . import guardrail as guardrail_mod
 from . import icap as icap_mod
 from . import shadow_ai
+from . import streaming
 from . import subjects as subjects_mod
 from . import metrics
 from . import notify as notify_mod
@@ -260,6 +262,7 @@ class Analysis:
     provider_error: Optional[str] = None
     scans: List[attachments_mod.Scan] = field(default_factory=list)   # görsel / PDF ekleri
     subject_hashes: List[str] = field(default_factory=list)          # ilgili kişi araması (subjects.py)
+    part_findings: List[List[Any]] = field(default_factory=list)     # parça başına bulgular (maskeleme yeniden taramaz)
     routed_from: str = ""                                            # yönlendirildiyse istenen model
 
     @property
@@ -279,9 +282,18 @@ class Analysis:
         return self.body.get("messages", [])
 
 
-async def _scan_analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT) -> Analysis:
+# Bu boyutun üstündeki istekler (bayt) thread'de taranır: tarama CPU'da ~1 ms/KB ve event loop'u
+# bloklar (o worker'daki diğer istekler ve akan stream'ler bekler). GIL nedeniyle throughput artmaz;
+# event loop GIL'i aralıklarla geri alır, diğer istekler donmaz. Asıl ölçek: worker / pod sayısı.
+SCAN_THREAD_MIN_BYTES = int(os.getenv("SCAN_THREAD_MIN_BYTES", "65536"))
+
+
+async def _scan_analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT,
+                        size: int = 0) -> Analysis:
     """Ekleri (görsel / PDF) tarar, sonra metinle birlikte politikadan geçirir."""
     scans = await st.attachments.scan(fmt.request_attachments(body))
+    if size >= SCAN_THREAD_MIN_BYTES:
+        return await asyncio.to_thread(_analyze, st, body, identity, fmt, scans)
     return _analyze(st, body, identity, fmt, scans)
 
 
@@ -293,17 +305,21 @@ def _analyze(st, body: Dict[str, Any], identity: Identity, fmt: ApiFormat = CHAT
     model = body.get("model", "") if isinstance(body.get("model"), str) else ""
     parts = fmt.request_parts(body)
     # Eklerden okunan metin de taranır: görsele gömülü injection ("visual prompt injection") dahil
-    full_text = "\n".join([p.text for p in parts if p.role in fmt.injection_roles]
-                          + [s.text for s in scans if s.text and s.att.role in fmt.injection_roles])
-    all_text = "\n".join([p.text for p in parts] + [s.text for s in scans if s.text])
-    findings = st.pii.analyze(all_text)
+    inj_texts = ([p.text for p in parts if p.role in fmt.injection_roles]
+                 + [s.text for s in scans if s.text and s.att.role in fmt.injection_roles])
+    texts = [p.text for p in parts] + [s.text for s in scans if s.text]
+    full_text = "\n".join(inj_texts)
+    all_text = "\n".join(texts)
+    # Parça parça ve önbellekli: değişmeyen parçalar (önceki turlar, sistem istemi, araç tanımları)
+    # yeniden taranmaz. Sonuç tüm metni tek seferde taramakla aynı (sınır pencereleri dahil)
+    per_text, findings = st.pii.analyze_parts(texts)
     entity_counts = Counter(f.entity for f in findings)
-    injection = st.injection.scan(full_text)
+    injection = st.injection.scan_parts(inj_texts)
     provider, provider_error, destination, ctx, decision = _decide(
         st, identity, fmt, model, set(entity_counts), injection.score, scans, destination)
     return Analysis(identity, fmt, model, destination, body, parts, full_text, all_text,
                     entity_counts, injection, ctx, decision, provider, provider_error, list(scans),
-                    st.subjects.event_hashes(all_text, findings))
+                    st.subjects.event_hashes(all_text, findings), part_findings=per_text[:len(parts)])
 
 
 def _decide(st, identity: Identity, fmt: ApiFormat, model: str, entities: Set[str], injection_score: float,
@@ -421,13 +437,16 @@ def _usage_fields(st, fmt: ApiFormat, model: str, resp: Optional[dict]) -> Dict[
 
 
 def _mask_parts(st, parts: List[Part], decision: Decision, vault: Dict[str, str],
-                scans: List[attachments_mod.Scan] = ()) -> Optional[str]:
+                scans: List[attachments_mod.Scan] = (), part_findings: Optional[List[List[Any]]] = None) -> Optional[str]:
     """Karar maskeleme gerektiriyorsa tüm parçaları (system ve araç argümanları dahil) ve ekleri
-    (görsel karartma, PDF -> maskeli metin) yerinde maskeler; denetim için maskeli metni döndürür."""
+    (görsel karartma, PDF -> maskeli metin) yerinde maskeler; denetim için maskeli metni döndürür.
+    part_findings: _analyze'ın parça başına bulguları (verilirse parçalar yeniden taranmaz)."""
     if decision.action != "mask" or not decision.mask_entities:
         return None
-    for p in parts:
-        p.set(st.pii.mask(p.text, list(decision.mask_entities), vault).text)
+    if part_findings is None or len(part_findings) != len(parts):
+        part_findings = [None] * len(parts)
+    for p, found in zip(parts, part_findings):
+        p.set(st.pii.mask(p.text, list(decision.mask_entities), vault, findings=found).text)
     notes = st.attachments.mask(st.pii, list(scans), decision.mask_entities, vault)
     return "\n".join([p.text for p in parts] + notes)
 
@@ -508,7 +527,7 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
 
     # 1-2) Tarama + politika
     t_scan = time.perf_counter()
-    a = _route(st, await _scan_analyze(st, body, identity, fmt), request.headers)
+    a = _route(st, await _scan_analyze(st, body, identity, fmt, len(await request.body())), request.headers)
     metrics.SCAN_SECONDS.observe(time.perf_counter() - t_scan)
     model, destination, decision = a.model, a.destination, a.decision
     request.state.destination = destination
@@ -567,9 +586,15 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
 
     # 3) Maskeleme (tüm konuşma boyunca ortak vault -> tutarlı yer tutucular)
     vault: Dict[str, str] = {}
-    masked_prompt = _mask_parts(st, a.parts, decision, vault, a.scans)
+    masked_prompt = _mask_parts(st, a.parts, decision, vault, a.scans, a.part_findings)
 
     wants_stream = bool(body.get("stream"))
+    # STREAM_MODE=incremental: cevap akarken taranır (streaming.py). Uygulanan bir `block` çıktı
+    # kuralı varsa tamponlanır: akmaya başlamış cevap geri alınamaz
+    if wants_stream and fmt.streams and streaming.incremental_enabled() \
+            and not streaming.has_block_output_rule(st.policy):
+        return await _stream_incremental(st, a, fmt, url, headers, body, vault, masked_prompt, audit, t0)
+
     # Maskeleme ya da çıktı kuralı varsa stream tamponlanır: yer tutucular parça sınırında
     # bölünmesin ve cevap müşteriye gitmeden taransın
     must_buffer = bool(vault) or bool(st.policy.output_rules)
@@ -648,9 +673,81 @@ async def _proxy(request: Request, t0: float, fmt: ApiFormat):
     await audit(masked_prompt, resp.status_code, masked_count=len(vault), **output_audit, **usage)
 
     if wants_stream:
+        metrics.FIRST_TOKEN_SECONDS.labels(destination, "buffered").observe(time.perf_counter() - t0)
         return StreamingResponse(fmt.buffered_sse(result), media_type="text/event-stream",
                                  headers=_routed_headers(a))
     return JSONResponse(result, headers=_routed_headers(a))
+
+
+_STREAM_TASKS: Set[asyncio.Task] = set()   # istemci koptuğunda arka planda biten denetim kayıtları
+
+
+async def _stream_incremental(st, a: Analysis, fmt: ApiFormat, url: str, headers: Dict[str, str],
+                              body: Dict[str, Any], vault: Dict[str, str], masked_prompt, audit, t0: float):
+    """Artımlı streaming: upstream'in SSE'si olay olay çıktı korumasından geçer (streaming.py).
+    Denetim kaydı, kota ve metrikler akış bitince (istemci koparsa da) yazılır."""
+    destination, model = a.destination, a.model
+    strip_usage = False
+    if fmt is CHAT and not (body.get("stream_options") or {}).get("include_usage"):
+        # Röntgen / kota için usage gerekli; istemci istemediyse son usage parçası ona gitmez
+        body["stream_options"] = {**(body.get("stream_options") or {}), "include_usage": True}
+        strip_usage = True
+    req = st.http.build_request("POST", url, json=body, headers=headers)
+    try:
+        resp = await st.http.send(req, stream=True)
+    except httpx.HTTPError:
+        metrics.UPSTREAM_ERRORS.labels(destination, "unreachable").inc()
+        await audit(masked_prompt, 502, **_usage_fields(st, fmt, model, None))
+        return fmt.error(502, "Upstream'e ulaşılamadı.", "upstream_unreachable", "upstream_error")
+    if resp.status_code >= 400:
+        await resp.aread()
+        await resp.aclose()
+        metrics.UPSTREAM_ERRORS.labels(destination, metrics.upstream_error_kind(resp.status_code)).inc()
+        await audit(masked_prompt, resp.status_code, **_usage_fields(st, fmt, model, None))
+        return _upstream_error(fmt, resp)
+
+    guard = streaming.OutputGuard(st.pii, st.policy, a.ctx, a.all_text, vault,
+                                  extra_holdback=st.dictionary.max_term_length() + 8)
+    stream = streaming.Stream(guard, on_first=lambda: metrics.FIRST_TOKEN_SECONDS.labels(
+        destination, "incremental").observe(time.perf_counter() - t0))
+    events = streaming.sse_events(resp.aiter_bytes())
+    if fmt is MESSAGES:
+        source = streaming.anthropic_messages(stream, events)
+    elif fmt is RESPONSES:
+        source = streaming.openai_responses(stream, events)
+    else:
+        source = streaming.openai_chat(stream, events, strip_usage)
+
+    async def finalize(aborted: bool):
+        await resp.aclose()
+        usage = _usage_fields(st, fmt, model, stream.usage)
+        await st.quota.record(a.team, usage["prompt_tokens"] + usage["completion_tokens"], usage["est_cost_usd"])
+        out = st.policy.evaluate_output(a.ctx, guard.leaked)
+        for entity in guard.leaked:
+            metrics.ENTITIES.labels(entity, "output_leak").inc()
+        if guard.leaked:
+            metrics.OUTPUT_ACTIONS.labels(out.action).inc()
+        await audit(masked_prompt, resp.status_code, masked_count=len(vault), stream_aborted=int(aborted),
+                    output_entities=sorted(guard.entities), output_leaked=sorted(guard.leaked),
+                    output_action=out.action if guard.leaked else "", output_rules=out.rules,
+                    monitored_rules=a.decision.monitored_rules + out.monitored_rules, **usage)
+
+    async def relay():
+        done = False
+        try:
+            async for chunk in source:
+                yield chunk
+            done = True
+        finally:
+            if done:
+                await finalize(False)
+            else:   # istemci koptu / iptal: bu görev iptal edildiği için kayıt ayrı görevde
+                task = asyncio.get_running_loop().create_task(finalize(True))
+                _STREAM_TASKS.add(task)
+                task.add_done_callback(_STREAM_TASKS.discard)
+
+    return StreamingResponse(relay(), status_code=resp.status_code, headers=_routed_headers(a),
+                             media_type="text/event-stream")
 
 
 @app.post("/v1/messages/count_tokens")
@@ -674,7 +771,7 @@ async def messages_count_tokens(request: Request):
                 else MESSAGES.upstream(a.destination, request.headers, path="/v1/messages/count_tokens"))
     if upstream is None:
         return MESSAGES.error(400, "Bu model için Anthropic upstream'i tanımlı değil.", "no_upstream")
-    _mask_parts(st, a.parts, a.decision, {}, a.scans)
+    _mask_parts(st, a.parts, a.decision, {}, a.scans, a.part_findings)
     try:
         resp = await st.http.post(upstream[0], json=body, headers=upstream[1])
     except httpx.HTTPError:
@@ -707,7 +804,7 @@ async def policy_simulate(request: Request, format: str = "chat"):
     a = _route(request.app.state, await _scan_analyze(request.app.state, body, identity, fmt), request.headers)
     d = a.decision
     originals = [p.text for p in a.parts]
-    _mask_parts(request.app.state, a.parts, d, {}, a.scans)
+    _mask_parts(request.app.state, a.parts, d, {}, a.scans, a.part_findings)
     blocked = d.action == "block"
     parts = [{"role": p.role, "segments": _segments(request.app.state, text),
               "sent": None if blocked else p.text}
@@ -1115,6 +1212,24 @@ async def shadow_ai_dictionary(request: Request):
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers={"ETag": etag})
     return JSONResponse(payload, headers={"ETag": etag, "Cache-Control": "no-cache"})
+
+
+@app.get("/v1/contextforge/dictionary")
+async def contextforge_dictionary(request: Request):
+    """Kurumsal sözlük ContextForge eklentisine: terimler düz metin (sunucudan sunucuya, güvenilen
+    bileşen; tarayıcıdaki gibi özet değil). CONTEXTFORGE_TOKEN tanımlı değilse kapalı. ETag = sürüm."""
+    expected = os.getenv("CONTEXTFORGE_TOKEN", "")
+    if not expected:
+        return _openai_error(404, "ContextForge sözlük ucu kapalı (CONTEXTFORGE_TOKEN tanımlı değil).",
+                             "contextforge_disabled", "admin_error")
+    header = request.headers.get("authorization", "")
+    if not shadow_ai.check_token(header[7:].strip() if header.lower().startswith("bearer ") else None, expected):
+        return _openai_error(401, "Geçersiz ContextForge token'ı.", "unauthorized", "authentication_error")
+    payload = request.app.state.dictionary.server_payload()
+    etag = f'"{payload["version"]}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return JSONResponse(payload, headers={"ETag": etag, "Cache-Control": "no-store"})
 
 
 # ---------------- kod asistanı hook'ları (telve: Cursor, Claude Code) ----------------
@@ -1541,7 +1656,7 @@ async def guardrail_input(st, call: guardrail_mod.Call) -> guardrail_mod.Verdict
     a = _analyze(st, body, identity, CHAT, destination=_guardrail_destination(call))
     d = a.decision
     vault: Dict[str, str] = {}
-    masked_prompt = _mask_parts(st, a.parts, d, vault)
+    masked_prompt = _mask_parts(st, a.parts, d, vault, part_findings=a.part_findings)
     action = "block" if d.action == "block" else "mask" if vault else "pass"
     metrics.GUARDRAIL_CHECKS.labels(call.source, "request", action).inc()
     for entity in a.entities:

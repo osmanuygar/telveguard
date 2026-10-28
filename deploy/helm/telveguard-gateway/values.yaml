@@ -14,6 +14,11 @@ replicaCount: 2
 workers: 2
 # İstek gövdesi sınırı (bayt); aşan istek 413. Ekler base64 olarak gövdededir.
 maxRequestBytes: 32000000
+# Streaming cevaplar: buffer = taranıp tek parça (varsayılan), incremental = akarken taranır (ilk token
+# hemen gelir; uygulanan bir `block` çıktı kuralı varsa yine tamponlanır). streamHoldbackChars: cevabın
+# sonunda taranmadan bekletilen karakter (boşluklu IBAN / kart / bölünmüş TCKN sığmalı).
+streamMode: buffer
+streamHoldbackChars: 64
 
 # ---------------- istemci kimliği ----------------
 auth:
@@ -110,6 +115,7 @@ policy:
 # upstream-internal-key, upstream-anthropic-key, upstream-anthropic-internal-key, clickhouse-password,
 # redis-password, shadow-ai-token (tarayıcı eklentisi olayları), policy-store-password, policy-git-token,
 # guardrail-token (LiteLLM / agentgateway guardrail servisi; deploy/guardrail/),
+# contextforge-token (ContextForge eklentisi kurumsal sözlüğü çeker; terimler düz metin),
 # subject-hash-key (KVKK ilgili kişi araması; en az 32 karakter, değişirse eski kayıtlar bulunamaz)
 existingSecret: ""
 # existingSecret boşsa chart bu değerlerden Secret üretir (geliştirme / test için).

@@ -1,5 +1,57 @@
 # Değişiklik günlüğü
 
+## Yayımlanmadı
+
+### Koruma
+
+- Bölünmüş TCKN ve VKN (`telveguard-core` ve tarayıcı eklentisi): rakamlar arasında tek boşluk, tire
+  ya da nokta olan yazım (`100 000 001 46`, `100-000-001-46`) yakalanır. Ayraçla devam eden rakam
+  varsa (sayı tablosu) 11 hanelik pencere seçilmez. Bağlamsız bölünmüş TCKN 0.8 skor alır (kart /
+  IBAN çakışmada kazanır); "TC", "T.C.", "TCKN", "kimlik no" yakındaysa 1.0. VKN zaten
+  "vergi no" / "vkn" bağlamı ister.
+- Kurumsal sözlük ContextForge'da: eklenti sözlüğü gateway'den çeker (`GET /v1/contextforge/dictionary`,
+  `CONTEXTFORGE_TOKEN`; Helm Secret anahtarı `contextforge-token`) ya da `dictionary_file` ile politika
+  dosyasından okur. `KURUM_*` varsayılan olarak araç çıktısında maskelenir ve dış araca gönderilemez.
+  Gateway'e ulaşılamazsa eldeki sözlükle devam edilir.
+- ContextForge'da araç çağrıları arası yer tutucu vault'u (Redis; `TELVEGUARD_VAULT_REDIS_URL`,
+  `TELVEGUARD_VAULT_KEY`): aynı değer aynı kullanıcı için her çağrıda aynı `[TCKN_n]`; kurum içi araca
+  giden argümanlardaki yer tutucular gerçek değere çevrilir (`unmask_tool_args`, dış araca asla).
+  Kullanıcı + tenant kapsamı, değerler AES-GCM ile şifreli, Redis anahtarlarında kullanıcı adı ve ham
+  değer yok, 8 saat TTL. Redis'e ulaşılamazsa araç çıktısı engellenir. Önceden agent'ın bir araçtan
+  aldığı `[TCKN_1]`'i başka bir araca vermesi iş akışını kırıyordu.
+- Aynı numaranın farklı yazımları tek yer tutucu (gateway, ContextForge, tarayıcı eklentisi):
+  `391 417 776 94` ve `39141777694` ikisi de `[TCKN_1]`; telefon, IBAN, kart, VKN da.
+- Artımlı streaming (`STREAM_MODE=incremental`, Helm `streamMode`; varsayılan `buffer`): cevap akarken
+  taranır, sızıntı gizlenir, yer tutucular geri açılır; ilk token cevabın tamamını beklemez. Cevabın
+  sonundaki son kelime, son 64 karakter (`STREAM_HOLDBACK_CHARS`), yarım yer tutucu ve sınırı kesen
+  bulgu bekletilir: sonuç her parçalamada tamponlu yolla aynıdır. Araç argümanları blok bitince tek
+  parça. Uygulanan `block` çıktı kuralı varsa tamponlanır. Usage streaming'de de okunur (OpenAI chat'te
+  `stream_options.include_usage` gateway ekler; istemci istemediyse usage parçası ona gitmez): Röntgen,
+  kota ve maliyet doğru. Denetim kaydı akış bitince yazılır; istemci koparsa `stream_aborted`.
+  Yeni metrik: `telveguard_first_token_seconds` (`mode`: incremental | buffered).
+- Sözlük ayrıştırması `telveguard-core`'a taşındı (`telveguard_core.dictionary`); `gateway/app/dictionary`
+  aynı adları dışa aktarmaya devam eder.
+
+### Performans
+
+- İstek taraması parça parça ve önbellekli (`telveguard-core` `analyze_parts`, `scan_parts`;
+  `TELVEGUARD_SCAN_CACHE_SIZE`, worker başına 4096 parça): değişmeyen parçalar (önceki turlar, sistem
+  istemi, araç tanımları) yeniden taranmaz. Claude Code tarzı 286 KB istekte sonraki tur 278 ms -> 8 ms.
+  Önbellek anahtarı metnin SHA-256 özeti + tanıyıcı kuşağı (ham metin saklanmaz); sözlük / istisna
+  değişince boşalır. Parça sınırını aşan bulgular (iki mesaja bölünmüş telefon, sonraki mesajdaki VKN'nin
+  "vergi no:" bağlamı, bölünmüş saldırı cümlesi) sınır pencereleriyle bulunur: sonuç tüm metni tek seferde
+  taramakla aynı (300'er rastgele senaryoyla doğrulanır). Kapanmamış private key artık sonraki
+  parçalardaki bulguları saymadan bırakmıyor.
+- Maskeleme parçaları yeniden taramaz (analizdeki bulgular kullanılır; önbelleksiz de ~%36 daha hızlı).
+- `SCAN_THREAD_MIN_BYTES` (64 KB) üstündeki istekler thread'de taranır: büyük istek o worker'daki diğer
+  istekleri ve akan stream'leri dondurmaz (GIL nedeniyle throughput artmaz; ölçek worker / pod sayısıyla).
+- Artımlı streaming yeni metin 32 karakter birikince tarar (`STREAM_SCAN_EVERY_CHARS`): her delta'da
+  pencereyi yeniden taramak tamponlu yolun ~40 katı CPU harcıyordu (10 KB cevap 148 -> 23 ms). Sonuç
+  aynı; içeriği boş kalan delta olayları istemciye gönderilmez.
+- ContextForge vault'u Redis pipeline'ıyla: bir araç çıktısındaki tüm değerler 1-3 gidiş-dönüşte
+  (önceden değer başına sıralı 2-4; 50 değerde ~200). Geri açma tek gidiş-dönüş. Araç çıktısı bir kez taranır.
+- `telveguard_scan_duration_seconds` kovaları 5 sn'ye kadar (önceden 0,25 sn üstü `+Inf`'e düşüyordu).
+
 ## 0.5.0 — 2026-10-27
 
 ### Güvenlik

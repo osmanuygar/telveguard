@@ -69,9 +69,15 @@
 
   // ---------- tanıyıcılar (entity, desen, skor, doğrulayıcı, grup) ----------
   const R = (entity, re, score, validator = null, group = 0) => ({ entity, re, score, validator, group });
+  // Bölünmüş TCKN ("100 000 001 46"); Python tr_recognizers._SPLIT_TCKN ile aynı
+  const SEP = "[ .\\-]";
+  const SPLIT_TCKN = `(?<!\\d)(?<!\\d${SEP})[1-9](?:${SEP}?\\d){10}(?!${SEP}?\\d)`;
+  const TCKN_CONTEXT = "(?:\\btc(?:kn)?\\b(?:\\s*no\\b)?|\\bt\\.\\s?c\\.|\\bk[iİ]ml[iİ]k(?:\\s*(?:no|numaras[ıiIİ]))?)";
   const RECOGNIZERS = [
     R("TCKN", /(?<!\d)[1-9]\d{10}(?!\d)/g, 1.0, isValidTckn),
-    R("VKN", /(?:vkn|vergi\s*(?:kimlik\s*)?(?:no|numarası)?)\W{0,3}(\d{10})(?!\d)/gid, 1.0, isValidVkn, 1),
+    R("TCKN", new RegExp(SPLIT_TCKN, "g"), 0.8, isValidTckn),
+    R("TCKN", new RegExp(`${TCKN_CONTEXT}\\W{0,5}(${SPLIT_TCKN})`, "gid"), 1.0, isValidTckn, 1),
+    R("VKN", /(?:vkn|vergi\s*(?:kimlik\s*)?(?:no|numarası)?)\W{0,3}(\d(?:[ .\-]?\d){9})(?![ .\-]?\d)/gid, 1.0, isValidVkn, 1),
     R("IBAN_TR", /\bTR\d{2}(?:\s?\d{4}){5}\s?\d{2}\b/gi, 1.0, isValidTrIban),
     R("CREDIT_CARD", /(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g, 1.0, isValidLuhn),
     R("EMAIL_ADDRESS", /\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g, 1.0),
@@ -306,6 +312,14 @@
   /** Geri çevrilemez yerel maskeleme: yapıştırılan metin [TCKN_1] gibi yer tutucularla gider.
    *  continueNumbering: metinde zaten [TCKN_1] varsa (önceden maskeli yapıştırılmış) yeni değer
    *  [TCKN_2] olur; aynı yer tutucu iki farklı değeri göstermesin. */
+  /** Python canonical_value ile aynı: aynı numaranın farklı yazımları aynı yer tutucuyu alır. */
+  function canonicalValue(entity, value) {
+    if (entity === "TCKN" || entity === "VKN" || entity === "CREDIT_CARD") return value.replace(/\D/g, "");
+    if (entity === "PHONE_TR") return value.replace(/\D/g, "").slice(-10);
+    if (entity === "IBAN_TR") return value.replace(/\s/g, "").toUpperCase();
+    return value;
+  }
+
   function mask(text, { continueNumbering = false } = {}) {
     const findings = analyze(text);
     const counters = {};
@@ -318,12 +332,12 @@
     let out = "";
     let cursor = 0;
     for (const f of findings) {
-      const original = text.slice(f.start, f.end);
-      let ph = seen.get(original);
+      const key = `${f.entity}\n${canonicalValue(f.entity, text.slice(f.start, f.end))}`;
+      let ph = seen.get(key);
       if (!ph) {
         counters[f.entity] = (counters[f.entity] || 0) + 1;
         ph = `[${f.entity}_${counters[f.entity]}]`;
-        seen.set(original, ph);
+        seen.set(key, ph);
       }
       out += text.slice(cursor, f.start) + ph;
       cursor = f.end;

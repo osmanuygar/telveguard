@@ -7,6 +7,8 @@ Mesaj "SIZINTI_TESTI" ile başlarsa girdide olmayan sahte bir AWS anahtarı "ür
 (çıktı koruması testi; anahtar kaynakta parça parça durur).
 Cevaplardaki "mock_received_*" alanları upstream'e ne gittiğini gösterir.
 /webhook/<kanal> Slack / Teams bildirimlerini kaydeder; GET /webhook/received son 100'ünü döner.
+"stream": true ise cevap 4 karakterlik delta'larla, olaylar arasında 20 ms beklenerek SSE olarak akar
+(artımlı streaming testi; usage biçimin kendi yerinde).
 /bitbucket/... Bitbucket Data Center taklidi (politika Git yansıtma): SEC/telveguard-config deposu,
 bellekte; commit / PR bağlantıları tarayıcıda düz metin olarak açılır.
 """
@@ -32,6 +34,53 @@ def _texts(content):
             out.append(b.get("text") or (b.get("content") if isinstance(b.get("content"), str) else "")
                        or b.get("output", ""))
     return " ".join(x for x in out if x)
+
+
+def _pieces(text, n=4):
+    return [text[i:i + n] for i in range(0, len(text), n)] or [""]
+
+
+def _chat_events(resp, body):
+    base = {k: resp[k] for k in ("id", "created", "model")}
+    base["object"] = "chat.completion.chunk"
+    yield None, {**base, "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]}
+    for p in _pieces(resp["choices"][0]["message"]["content"]):
+        yield None, {**base, "choices": [{"index": 0, "delta": {"content": p}, "finish_reason": None}]}
+    yield None, {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+    if (body.get("stream_options") or {}).get("include_usage"):
+        yield None, {**base, "choices": [], "usage": resp["usage"]}
+    yield None, "[DONE]"
+
+
+def _anthropic_events(resp):
+    start = {**resp, "content": [], "stop_reason": None, "usage": {**resp["usage"], "output_tokens": 1}}
+    yield "message_start", {"type": "message_start", "message": start}
+    yield "content_block_start", {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}
+    for p in _pieces(resp["content"][0]["text"]):
+        yield "content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": p}}
+    yield "content_block_stop", {"type": "content_block_stop", "index": 0}
+    yield "message_delta", {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                            "usage": {"output_tokens": resp["usage"]["output_tokens"]}}
+    yield "message_stop", {"type": "message_stop"}
+
+
+def _responses_events(resp):
+    seq = iter(range(10_000))
+
+    def ev(d):
+        return d["type"], {**d, "sequence_number": next(seq)}
+    item = resp["output"][0]
+    text = item["content"][0]["text"]
+    yield ev({"type": "response.created", "response": {**resp, "status": "in_progress", "output": [], "usage": None}})
+    yield ev({"type": "response.output_item.added", "output_index": 0, "item": {**item, "content": [], "status": "in_progress"}})
+    loc = {"item_id": item["id"], "output_index": 0, "content_index": 0}
+    yield ev({"type": "response.content_part.added", **loc, "part": {"type": "output_text", "text": "", "annotations": []}})
+    for p in _pieces(text):
+        yield ev({"type": "response.output_text.delta", **loc, "delta": p, "logprobs": []})
+    yield ev({"type": "response.output_text.done", **loc, "text": text, "logprobs": []})
+    yield ev({"type": "response.content_part.done", **loc, "part": item["content"][0]})
+    yield ev({"type": "response.output_item.done", "output_index": 0, "item": item})
+    yield ev({"type": "response.completed", "response": resp})
 
 
 def _answer(last):
@@ -104,12 +153,28 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.endswith("/count_tokens"):
             return self._json({"input_tokens": len(json.dumps(body).split())})
         if self.path.endswith("/v1/messages"):
-            return self._json(self._anthropic(body, model))
+            resp = self._anthropic(body, model)
+            return self._sse(_anthropic_events(resp)) if body.get("stream") else self._json(resp)
         if self.path.endswith("/embeddings"):
             return self._json(self._embeddings(body, model))
         if self.path.endswith("/responses"):
-            return self._json(self._responses(body, model))
-        return self._json(self._chat(body, model))
+            resp = self._responses(body, model)
+            return self._sse(_responses_events(resp)) if body.get("stream") else self._json(resp)
+        resp = self._chat(body, model)
+        return self._sse(_chat_events(resp, body)) if body.get("stream") else self._json(resp)
+
+    def _sse(self, events):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        for event, data in events:
+            head = f"event: {event}\n" if event else ""
+            body = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
+            self.wfile.write(f"{head}data: {body}\n\n".encode())
+            self.wfile.flush()
+            time.sleep(0.02)
+        self.close_connection = True
 
     def _chat(self, body, model):
         seen = [m.get("content") for m in body.get("messages", [])]

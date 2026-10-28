@@ -45,6 +45,10 @@ spec:
               value: {{ .Values.workers | quote }}
             - name: MAX_REQUEST_BYTES
               value: {{ .Values.maxRequestBytes | int64 | quote }}
+            - name: STREAM_MODE
+              value: {{ .Values.streamMode | quote }}
+            - name: STREAM_HOLDBACK_CHARS
+              value: {{ .Values.streamHoldbackChars | int | quote }}
             - name: PROMETHEUS_MULTIPROC_DIR
               value: /tmp/prometheus
             - name: AUTH_MODE
@@ -221,6 +225,7 @@ spec:
             {{- include "tg.secretEnv" (dict "env" "REDIS_PASSWORD" "secret" $secret "key" "redis-password") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "SHADOW_AI_TOKEN" "secret" $secret "key" "shadow-ai-token") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "GUARDRAIL_TOKEN" "secret" $secret "key" "guardrail-token") | nindent 12 }}
+            {{- include "tg.secretEnv" (dict "env" "CONTEXTFORGE_TOKEN" "secret" $secret "key" "contextforge-token") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "TELVEGUARD_SUBJECT_HASH_KEY" "secret" $secret "key" "subject-hash-key") | nindent 12 }}
             {{- if .Values.metrics.requireToken }}
             {{- include "tg.secretEnv" (dict "env" "METRICS_TOKEN" "secret" $secret "key" "metrics-token") | nindent 12 }}

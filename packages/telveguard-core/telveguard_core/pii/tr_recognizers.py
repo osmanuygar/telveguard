@@ -75,10 +75,21 @@ def _rx(p: str, flags: int = 0) -> "re.Pattern[str]":
     return re.compile(p, flags)
 
 
+# Boşluk / tire / noktayla bölünmüş yazım ("100 000 001 46"): rakamlar arasında tek ayraç.
+# Sınırlar ayraçla devam eden rakamı da dışlar: sayı tablosunun ortasından 11 hanelik pencere seçilmez.
+_SEP = r"[ .\-]"
+_SPLIT_TCKN = rf"(?<!\d)(?<!\d{_SEP})[1-9](?:{_SEP}?\d){{10}}(?!{_SEP}?\d)"
+_TCKN_CONTEXT = r"(?:\btc(?:kn)?\b(?:\s*no\b)?|\bt\.\s?c\.|\bk[iİ]ml[iİ]k(?:\s*(?:no|numaras[ıiIİ]))?)"   # İ: JS /i Türkçe İ-i eşini tanımaz
+
 TR_RECOGNIZERS: List[Recognizer] = [
     Recognizer("TCKN", _rx(r"(?<!\d)[1-9]\d{10}(?!\d)"), 1.0, is_valid_tckn),
+    # Bölünmüş TCKN: checksum'ı tesadüfen ~%1 sayı geçer; bağlamsız 0.8 (kart / IBAN çakışmada kazanır),
+    # "TC", "T.C.", "TCKN", "kimlik no" yakındaysa 1.0
+    Recognizer("TCKN", _rx(_SPLIT_TCKN), 0.8, is_valid_tckn),
+    Recognizer("TCKN", _rx(_TCKN_CONTEXT + r"\W{0,5}(" + _SPLIT_TCKN + ")", re.I), 1.0, is_valid_tckn, group=1),
     # 10 haneli sayıların ~%10'u tesadüfen checksum'ı geçer: sadece "vergi/vkn" bağlamıyla
-    Recognizer("VKN", _rx(r"(?:vkn|vergi\s*(?:kimlik\s*)?(?:no|numarası)?)\W{0,3}(\d{10})(?!\d)", re.I),
+    Recognizer("VKN", _rx(r"(?:vkn|vergi\s*(?:kimlik\s*)?(?:no|numarası)?)\W{0,3}"
+                          rf"(\d(?:{_SEP}?\d){{9}})(?!{_SEP}?\d)", re.I),
                1.0, is_valid_vkn, group=1),
     Recognizer("IBAN_TR", _rx(r"\bTR\d{2}(?:\s?\d{4}){5}\s?\d{2}\b", re.I), 1.0, is_valid_tr_iban),
     Recognizer("CREDIT_CARD", _rx(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)"), 1.0, is_valid_luhn),

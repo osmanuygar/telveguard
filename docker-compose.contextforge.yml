@@ -13,9 +13,16 @@ services:
     volumes:
       - ./tests/e2e/mock_mcp.py:/mock/mock_mcp.py:ro
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
   contextforge:
     image: telveguard/contextforge:dev
     environment:
+      # Araç çağrıları arası yer tutucu vault'u (Telveguard eklentisi)
+      TELVEGUARD_VAULT_REDIS_URL: redis://redis:6379/0
+      TELVEGUARD_VAULT_KEY: telveguard-e2e-only-vault-key-0123456789abcdef
       HOST: 0.0.0.0
       PORT: "4444"
       DATABASE_URL: sqlite:////tmp/mcp.db
@@ -35,4 +42,4 @@ services:
       SSRF_ALLOW_PRIVATE_NETWORKS: "true"
       LOG_LEVEL: INFO
     ports: ["4444:4444"]
-    depends_on: [mock-mcp]
+    depends_on: [mock-mcp, redis]

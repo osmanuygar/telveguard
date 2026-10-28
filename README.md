@@ -689,6 +689,11 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `REDIS_URL`, `REDIS_PASSWORD` | Kota sayacı ve politika deposunun onay kilidi (tüm pod / worker'lar için ortak); birden fazla süreç varken gerekli |
 | `WORKERS` | Pod başına uvicorn worker sayısı (metrikler worker'lar arasında birleştirilir) |
 | `MAX_REQUEST_BYTES` | İstek gövdesi sınırı, bayt (32 MB); aşan istek 413 `request_too_large` |
+| `SCAN_THREAD_MIN_BYTES` | Bu boyutun (bayt, 64 KB) üstündeki istekler thread'de taranır: tarama ~1 ms/KB CPU'dur, event loop'u bloklamasın (diğer istekler ve stream'ler donmaz). Throughput için worker / pod sayısını artırın |
+| `TELVEGUARD_SCAN_CACHE_SIZE` | Worker başına tarama önbelleği (parça sayısı, 4096; 0 kapatır). Metnin özeti -> bulgular; ham metin saklanmaz. Claude Code gibi her turda tüm konuşmayı gönderen istemcilerde değişmeyen parçalar yeniden taranmaz |
+| `STREAM_MODE` | `buffer` (varsayılan): streaming cevap taranıp tek parça; `incremental`: akarken taranır, ilk token hemen gelir. Sonuç iki modda aynıdır |
+| `STREAM_SCAN_EVERY_CHARS` | Artımlı modda yeni metin bu kadar birikince taranır (32): her token'da taramak CPU'yu ~6 kat artırır; ilk token en fazla bu kadar karakter geç gelir |
+| `STREAM_HOLDBACK_CHARS` | Artımlı modda cevabın sonunda bekletilen karakter (64; sözlükteki en uzun terimden kısa olmaz). Son kelime ve yarım yer tutucu da bekletilir |
 | `UPSTREAM_INTERNAL_URL` / `UPSTREAM_EXTERNAL_URL` | Kurum içi ve yurt dışı LLM adresleri (OpenAI uyumlu); `providers` ile eşleşmeyen modeller için |
 | `UPSTREAM_INTERNAL_KEY` / `UPSTREAM_EXTERNAL_KEY` | Upstream API anahtarları |
 | `UPSTREAM_ANTHROPIC_URL`, `UPSTREAM_ANTHROPIC_KEY` | Anthropic biçimi için upstream (varsayılan `https://api.anthropic.com`) |
@@ -1086,8 +1091,23 @@ docker build -f contextforge/Containerfile -t telveguard/contextforge:dev .
   (başka ekibin izni yasağı aşamaz). Varsayılan yapılandırma yıkıcı araçları (`*delete*`,
   `*drop*`, `*destroy*`) herkese kapatır. İzin verilen çağrılarda da çağıran kullanıcı ve
   servis hesabı (agent) kaydedilir.
+- **Kurumsal sözlük:** eklenti sözlüğü gateway'den çeker (`GET /v1/contextforge/dictionary`, 5 dk'da
+  bir, değişmediyse 304). Gateway'de `CONTEXTFORGE_TOKEN` (Helm Secret anahtarı `contextforge-token`),
+  ContextForge'da aynı değer `TELVEGUARD_CONTEXTFORGE_TOKEN` ortam değişkeninde. Bu uçta terimler düz
+  metindir (tarayıcıya özet gider); token'ı yalnızca ContextForge'a verin. Terimler araç çıktısında
+  maskelenir, dış araca gönderilemez (`KURUM_*`). Gateway'siz kurulumda `dictionary_file` ile
+  politika dosyasından okunur.
+- **Araç çağrıları arası yer tutucu:** `TELVEGUARD_VAULT_REDIS_URL` ve `TELVEGUARD_VAULT_KEY` (en az 32
+  karakter) tanımlıysa aynı değer aynı kullanıcı için her araç çağrısında aynı yer tutucuyu alır ve
+  agent bir araçtan aldığı `[TCKN_1]`'i **kurum içi** bir araca verdiğinde araç gerçek değeri alır.
+  Dış araca (`external_tools`) yalnızca yer tutucu gider. Kapsam kullanıcı + tenant; Redis'te
+  değerler AES-GCM ile şifreli, anahtarlar HMAC'li (kullanıcı adı / ham değer yok), süre 8 saat
+  (`vault_ttl_seconds`). Redis'e ulaşılamazsa araç çıktısı engellenir (`TELVEGUARD_VAULT_UNAVAILABLE`):
+  çağrı içi numara Redis'teki başka bir değerinkiyle çakışıp kurum içi araca yanlış kişinin verisini
+  verebilirdi. Kimliksiz çağrıda kalıcı vault kullanılmaz.
 
 ```yaml
+dictionary_gateway_url: https://telveguard.sirket.local
 tool_access:
   default: allow                    # deny: yalnızca açıkça izin verilen araçlar
   rules:
@@ -1101,7 +1121,7 @@ Ayarlar: `contextforge/plugins-telveguard.yaml`.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r gateway/requirements.txt pytest pytest-asyncio cpex \
+pip install -r gateway/requirements.txt pytest pytest-asyncio cpex fakeredis \
     -e packages/telveguard-core -e packages/telveguard-contextforge
 pytest -q
 node extension/tests/detectors.test.js      # eklentinin JS motoru == Python motoru
@@ -1152,10 +1172,14 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
   injection için taranmaz: uygulamanın kendi metni sayılır (Claude Code'un uzun araç açıklamaları
   sezgisel kurallara takılmasın). Üçüncü taraf MCP sunucusunun araç açıklamasına gizlenmiş talimat
   (tool poisoning) için ContextForge eklentisinin araç izin listesini kullanın.
-- Boşluk / tireyle bölünmüş TCKN ve VKN (`100 000 001 46`) yakalanmaz (IBAN, kart ve telefonun
-  boşluklu yazımı yakalanır).
-- Maskeleme veya çıktı kuralı olan streaming istekleri tamponlanıp tek parça döner. Hiçbiri
-  yoksa gerçek streaming yapılır; bu durumda cevap taranmaz ve token / maliyet bilgisi gelmez.
+- Boşluk / tire / noktayla bölünmüş TCKN (`100 000 001 46`) yakalanır, ama bir sayı tablosunun
+  içindeyse (ayraçla devam eden başka rakam varsa) yakalanmaz. Bağlamsız bölünmüş TCKN'nin skoru
+  0.8'dir; "TC", "T.C.", "TCKN", "kimlik no" yakındaysa 1.0.
+- Varsayılan (`STREAM_MODE=buffer`): maskeleme veya çıktı kuralı olan streaming istekleri
+  tamponlanıp tek parça döner; hiçbiri yoksa gerçek streaming yapılır, cevap taranmaz ve token /
+  maliyet bilgisi gelmez. `STREAM_MODE=incremental` ile cevap akarken taranır (aşağıda); uygulanan bir
+  `block` çıktı kuralı varsa yine tamponlanır (akmaya başlamış cevap geri alınamaz). Artımlı modda
+  araç argümanları (tool_calls / tool_use) blok bitince tek parça gelir.
 - Injection kuralları sezgisel bir başlangıç setidir; Türkçe saldırı veri setiyle eğitilmiş
   bir sınıflandırıcı hedefleniyor (LLM Guard İngilizce ağırlıklıdır).
 - ContextForge araç izin listesinde **ekip** kuralları, ContextForge'un kimlik bilgisinde ekip
@@ -1164,15 +1188,16 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 - Ek taramada OCR'ın okuyamadığı veri (el yazısı, çok düşük çözünürlük, eğik fotoğraf) yakalanmaz.
   Kimlik / dekont fotoğrafı yüklenen ekipler için `unscannable: block` ile birlikte görsel
   eklerini tamamen engelleyen bir ekip kuralı düşünün. OCR görsel başına ~0,5-2 sn ekler.
-- Kota, maskesiz gerçek streaming isteklerinde yalnızca istek sayısını sayar (token bilgisi gelmez).
-- Kurumsal sözlük şimdilik yalnızca gateway'de çalışır; tarayıcı eklentisi ve ContextForge
-  eklentisi sözlüğü kullanmaz.
+- Kota, `STREAM_MODE=buffer` iken maskesiz gerçek streaming isteklerinde yalnızca istek sayısını sayar
+  (token bilgisi gelmez); artımlı modda token da sayılır.
+- Kurumsal sözlük gateway'de, tarayıcı eklentisinde ve ContextForge eklentisinde çalışır; `telve`
+  gateway'e ulaşamadığında yaptığı yerel taramada sözlük yoktur.
 - ICAP yalnızca proxy'nin TLS denetimiyle çözebildiği trafiği görür. Sertifika sabitleme (pinning)
   yapan uygulamalar, websocket üzerinden gönderilen mesajlar (ör. Copilot'un sohbeti) ve
   büyük dosya yüklemelerinin ayrı depolama adreslerine (ör. bulut blob) giden içeriği taranmaz.
   Maskeleme yapılmaz; yalnızca geçir / durdur.
-- ContextForge'da yer tutucu numaraları (`[TCKN_1]`) tek araç çağrısı içinde tutarlıdır,
-  çağrılar arasında değil.
+- ContextForge'da yer tutucular (`[TCKN_1]`) araç çağrıları arasında yalnızca Redis vault'u
+  tanımlıysa ve çağıran kimliği biliniyorsa tutarlıdır; yoksa tek araç çağrısı içinde.
 
 ## Sürümler
 
