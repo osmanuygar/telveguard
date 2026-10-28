@@ -45,6 +45,9 @@
 - Maskeleme parçaları yeniden taramaz (analizdeki bulgular kullanılır; önbelleksiz de ~%36 daha hızlı).
 - `SCAN_THREAD_MIN_BYTES` (64 KB) üstündeki istekler thread'de taranır: büyük istek o worker'daki diğer
   istekleri ve akan stream'leri dondurmaz (GIL nedeniyle throughput artmaz; ölçek worker / pod sayısıyla).
+- Artımlı streaming yeni metin 32 karakter birikince tarar (`STREAM_SCAN_EVERY_CHARS`): her delta'da
+  pencereyi yeniden taramak tamponlu yolun ~40 katı CPU harcıyordu (10 KB cevap 148 -> 23 ms). Sonuç
+  aynı; içeriği boş kalan delta olayları istemciye gönderilmez.
 - `telveguard_scan_duration_seconds` kovaları 5 sn'ye kadar (önceden 0,25 sn üstü `+Inf`'e düşüyordu).
 
 ## 0.5.0 — 2026-10-27

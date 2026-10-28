@@ -692,6 +692,7 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `SCAN_THREAD_MIN_BYTES` | Bu boyutun (bayt, 64 KB) üstündeki istekler thread'de taranır: tarama ~1 ms/KB CPU'dur, event loop'u bloklamasın (diğer istekler ve stream'ler donmaz). Throughput için worker / pod sayısını artırın |
 | `TELVEGUARD_SCAN_CACHE_SIZE` | Worker başına tarama önbelleği (parça sayısı, 4096; 0 kapatır). Metnin özeti -> bulgular; ham metin saklanmaz. Claude Code gibi her turda tüm konuşmayı gönderen istemcilerde değişmeyen parçalar yeniden taranmaz |
 | `STREAM_MODE` | `buffer` (varsayılan): streaming cevap taranıp tek parça; `incremental`: akarken taranır, ilk token hemen gelir. Sonuç iki modda aynıdır |
+| `STREAM_SCAN_EVERY_CHARS` | Artımlı modda yeni metin bu kadar birikince taranır (32): her token'da taramak CPU'yu ~6 kat artırır; ilk token en fazla bu kadar karakter geç gelir |
 | `STREAM_HOLDBACK_CHARS` | Artımlı modda cevabın sonunda bekletilen karakter (64; sözlükteki en uzun terimden kısa olmaz). Son kelime ve yarım yer tutucu da bekletilir |
 | `UPSTREAM_INTERNAL_URL` / `UPSTREAM_EXTERNAL_URL` | Kurum içi ve yurt dışı LLM adresleri (OpenAI uyumlu); `providers` ile eşleşmeyen modeller için |
 | `UPSTREAM_INTERNAL_KEY` / `UPSTREAM_EXTERNAL_KEY` | Upstream API anahtarları |

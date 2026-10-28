@@ -31,6 +31,10 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Set, Tupl
 from .formats import Part, _json_string, _leaves
 
 HOLDBACK = int(os.getenv("STREAM_HOLDBACK_CHARS", "64"))
+# Yeni metin bu kadar birikmeden tarama yapılmaz: her delta'da (~1 token) pencereyi yeniden taramak
+# tamponlu yolun ~40 katı CPU harcıyordu. Sonuç değişmez (daha kaba bir parçalama gibi); ilk token
+# en fazla bu kadar karakter geç gelir.
+SCAN_EVERY = int(os.getenv("STREAM_SCAN_EVERY_CHARS", "32"))
 CONTEXT = 64            # geriye bakış: "vergi no:", "TC" bağlamı ve regex lookbehind'ları
 _PLACEHOLDER = re.compile(r"\[[A-Z][A-Z0-9_]*_\d+\]")
 _REDACTED = "[GİZLENDİ:{}]"
@@ -104,6 +108,7 @@ class TextBlock:
         self.text = ""          # upstream'den gelen ham metin
         self.pos = 0            # bu konuma kadar gönderildi
         self.out = ""           # istemciye giden (işlenmiş) metnin tamamı
+        self._scanned = 0       # son taramada metnin uzunluğu
 
     def _findings(self) -> Tuple[int, list]:
         start = max(0, self.pos - CONTEXT)
@@ -145,6 +150,9 @@ class TextBlock:
 
     def feed(self, delta: str) -> str:
         self.text += delta
+        if len(self.text) - self._scanned < SCAN_EVERY:
+            return ""
+        self._scanned = len(self.text)
         _, findings = self._findings()
         return self._emit(self._safe_end(findings), findings)
 
@@ -201,6 +209,13 @@ class Stream:
             self._first = None
 
 
+def _empty_choice(choice: Dict[str, Any]) -> bool:
+    """Tutma penceresi yüzünden içeriği boş kalan parça: rol, araç çağrısı, bitiş yok."""
+    delta = choice.get("delta") or {}
+    return (not choice.get("finish_reason") and not choice.get("logprobs")
+            and set(delta) <= {"content"} and not delta.get("content"))
+
+
 async def openai_chat(stream: Stream, events, strip_usage: bool) -> AsyncIterator[bytes]:
     texts: Dict[int, TextBlock] = {}
     tools: Dict[int, Dict[int, Dict[str, Any]]] = {}
@@ -243,6 +258,8 @@ async def openai_chat(stream: Stream, events, strip_usage: bool) -> AsyncIterato
                     delta["tool_calls"] = calls
                 stream.first("x")
             choice["delta"] = delta
+        if chunk.get("choices") and all(_empty_choice(c) for c in chunk["choices"]) and not chunk.get("usage"):
+            continue
         yield _sse(None, chunk)
 
 
@@ -269,6 +286,8 @@ async def anthropic_messages(stream: Stream, events) -> AsyncIterator[bytes]:
             if delta.get("type") == "text_delta" and i in texts:
                 delta["text"] = texts[i].feed(delta.get("text", ""))
                 stream.first(delta["text"])
+                if not delta["text"]:
+                    continue
             elif delta.get("type") == "input_json_delta" and i in tools:
                 tools[i] += delta.get("partial_json", "")
                 continue
