@@ -1,5 +1,58 @@
 # Değişiklik günlüğü
 
+## 0.7.0 — 2026-10-30
+
+### Güvenlik
+
+- Eklentide yapılandırma açığı: servis çalışanı uyanana kadar (ölçümde ilk `storage.managed` okuması ~2 sn)
+  eklenti varsayılan `warn` ile çalışıyordu; `block` kurumunda o arada "Yine de" seçilebiliyordu. Son
+  yapılandırma yerelde saklanır ve açılışta okunur (token ve adres saklanmaz); kayıt yoksa en sıkı mod geçerlidir.
+  Politika okunamaz ya da boş dönerse son bilinen mod korunur.
+- Hassas değerler sitenin belgesinde durmaz: önizleme ve ipucu eklenti kökenli çerçevede (`preview.html`).
+  Bu sürümün geliştirmesinde closed Shadow DOM'daki değerin site betiğinden `window.find` ile okunabildiği
+  görüldü; önceki sürümler pencerede değer göstermediği için etkilenmez.
+- İpucu yalnızca gerçek fare hareketiyle açılır. "Aslıyla kopyala" varsayılan kapalı (`revealCopy`).
+- Yapıştırma dinleyicisi `window` yakalama aşamasında: önceden sitenin `window` dinleyicisi metni eklentiden
+  önce okuyabiliyordu (önceki sürümlerde de vardı; engelle modu dahil).
+- Depoya yazılan yapılandırma doğrudan uygulanmaz, servis çalışanına sorulur. Engelle modunda önceki
+  "yine de" seçimleri geçerli değildir.
+
+### Performans
+
+- Çakışma çözümü doğrusal (`telveguard-core` ve eklenti; `analyze_parts` sınır kontrolü dahil): bulgu yoğun
+  1 MB metin Python'da ~50 sn -> ~0,4 sn, eklentide ~9 sn -> ~40 ms; 5 MB Python'da ~1,9 sn, eklentide ~0,2 sn.
+  Önceden eklentide sayfa donuyor, gateway'de worker meşgul kalıyordu.
+
+### Tarayıcı eklentisi
+
+- Maskeli önizleme: uyarı penceresi yalnızca veri türünü değil, yakalanan değerleri ve metnin maskeli
+  halini gösterir (sırların yalnızca ilk karakterleri). Uyar modunda yapıştırma ve gönderimde hassas
+  olmayan değerin işareti kaldırılabilir; seçim `golge-ai:gerekce:false_positive` olarak kayda yazılır
+  (değer yazılmaz). Dosyalarda ve engelle modunda önizleme salt okunur.
+- Yerel geri açma: sayfadaki `[TCKN_1]` üzerine gelince değer ipucunda görünür. Eşleme yalnızca eklentinin
+  belleğinde; `revealPlaceholders: false` ile kapatılır.
+- Yer tutucu numaraları sayfa boyunca ortak: önceden iki ayrı mesajdaki farklı değerler ikisi de
+  `[TCKN_1]` olabiliyordu, model ikisini aynı kişi sanabiliyordu.
+- Popup: sayfanın kapsam durumu, önizleme çerçevesinin durumu, haftalık yerel sayılar, gateway'e son
+  bağlantı, sürüm; simgede sekme rozeti. Çerçevenin açılamadığı sitelerde olaylar
+  `golge-ai:onizleme-acilamadi` kuralıyla kayda düşer (eski gateway bu alanı yok sayar).
+- Firefox paketi (deneysel): `scripts/package_extension_firefox.sh`. MDM yapılandırması kurumsal
+  kurulumda henüz doğrulanmadı.
+- CI: pencereler Chromium ve Firefox'ta gerçek tarayıcıyla test edilir (`extension/tests/browser.test.js`).
+- Düzeltme: gönderimde "Maskele" önceden "yine de" denen değerleri de maskeliyordu.
+- Düzeltme: düğmesinde işlev olmayan pencerede (engellenen yapıştırma "Tamam") Esc konsola hata yazıyordu.
+
+### Yükseltme notları
+
+- Eklenti paketleri yeni dosya içerir (`preview.html`, `src/preview.js`); paketleri betiklerle yeniden üretin.
+  Manifest'te AI siteleri için `web_accessible_resources` var: bu siteler eklentinin kurulu olduğunu anlayabilir.
+- Önizleme ve ipucu gerçek AI sitelerinde elle doğrulanmadan yayınlandı (otomatik testler taklit sayfada).
+  Bir sitenin CSP'si çerçeveyi engellerse pencere yalnızca tür ve adet gösterir; popup'taki "Önizleme" satırına
+  ve `golge-ai:onizleme-acilamadi` kuralına bakın. Önce bir ekipte deneyin.
+- Yeni MDM ayarları (opsiyonel): `revealPlaceholders` (varsayılan açık), `revealCopy` (varsayılan kapalı).
+- Eklentiye ilk kurulumda, yapılandırma gelene kadar en sıkı mod geçerlidir (taranamayan dosyalar da engellenir).
+- Firefox paketi deneysel: kurulu eklentide ve MDM ile doğrulanmadı.
+
 ## 0.6.0 — 2026-10-28
 
 ### Koruma

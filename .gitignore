@@ -29,3 +29,6 @@ deploy/helm/**/*.tgz
 extension/*.crx
 extension/*.zip
 extension/*.pem
+
+# Eklenti tarayıcı testleri
+node_modules/

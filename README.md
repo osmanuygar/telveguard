@@ -633,7 +633,7 @@ Helm chart gateway'i kurar; Kafka ve ClickHouse kurumdaki mevcut kümelerdir
 (ClickHouse şeması: `clickhouse/init.sql`, bir kez; sürüm yükseltirken `clickhouse/migrations/`).
 
 ```bash
-docker build -f gateway/Dockerfile -t harbor.sirket.local/telveguard/gateway:0.6.0 .
+docker build -f gateway/Dockerfile -t harbor.sirket.local/telveguard/gateway:0.7.0 .
 
 oc create secret generic telveguard-sirlar -n ai-guvenlik \
   --from-literal=admin-token=... --from-literal=upstream-external-key=...
@@ -909,6 +909,21 @@ için Chrome / Edge eklentisi: `extension/` (Manifest V3).
   "Maskele ve gönder" / "Düzenle" / "Yine de gönder". Değerler `[TCKN_1]` gibi yer tutucu olur;
   kutuda önceden maskelenmiş `[TCKN_1]` varsa yeni değer `[TCKN_2]` olur. "Yine de" denen değer aynı
   sayfada ikinci kez sorulmaz.
+- **Maskeli önizleme:** pencere yakalanan değerleri ve metnin maskeli halini gösterir; sırların yalnızca
+  ilk karakterleri görünür. Uyar modunda yapıştırma ve gönderimde hassas olmayan değerin işareti
+  kaldırılabilir: o değer maskelenmez, aynı sayfada yeniden sorulmaz ve "yanlış alarm" gerekçesiyle
+  kayda yazılır (tür ve adet; değer yazılmaz). Dosyalarda ve engelle modunda önizleme salt okunurdur.
+- **Yerel geri açma:** sayfadaki `[TCKN_1]` üzerine gelince değer ipucunda görünür (sırların yalnızca
+  başı). Eşleme yalnızca eklentinin belleğinde durur: sitenin DOM'una yazılmaz, sayfa yenilenince silinir,
+  gönderilmez. Yer tutucu numaraları sayfa boyunca ortaktır. `revealPlaceholders: false` ile kapatılır.
+  "Aslıyla kopyala" varsayılan kapalıdır (`revealCopy: true` ile açılır): pano AI sitesine açık olabilir.
+- **Değerlerin gösterimi:** önizleme ve ipucu eklenti kökenli bir çerçevededir (`preview.html`); closed
+  Shadow DOM sitenin betiklerine karşı yeterli değildir (`window.find` içine ulaşır). Çerçeve sitede
+  açılamazsa pencere yalnızca tür ve adet gösterir, tüm değerler maskelenir. Çerçeve dosyası AI sitelerine
+  açık olduğu için bu siteler eklentinin kurulu olduğunu anlayabilir. Çerçevenin açılamadığı site popup'ta
+  görünür; o andan sonraki olaylar kayda `golge-ai:onizleme-acilamadi` kuralıyla yazılır.
+- **Simge ve popup:** simgedeki rozet bu sekmede yakalanan değer sayısını, popup sayfanın kapsamda olup
+  olmadığını, haftalık sayıları (yalnızca cihazda) ve gateway'e son bağlantıyı gösterir.
 - **Engelle modu:** kişisel veri ya da sır içeren yapıştırma ve gönderim engellenir; gönderimde
   "Metni maskele" ile metin düzeltilip tekrar gönderilebilir.
 - **Dosya ekleme:** sürükle-bırak, dosya seçme düğmesi ve dosya yapıştırma. Metin dosyaları
@@ -931,7 +946,12 @@ için Chrome / Edge eklentisi: `extension/` (Manifest V3).
   verisi, yanlış alarm, diğer); seçim kayda `golge-ai:gerekce:*` olarak yazılır, serbest metin alınmaz.
   POC raporu "yanlış alarm" oranı yüksek tespitleri öneri olarak çıkarır. `requireJustification: false`
   ile kapatılır.
-- Yakalanmayanlar: sitelerin masaüstü uygulamaları, Safari ve Firefox.
+- Yakalanmayanlar: sitelerin masaüstü uygulamaları ve Safari (Safari için ağ tarafı: ICAP).
+- **Firefox (deneysel):** `scripts/package_extension_firefox.sh <gateway>` paketi üretir; paket AMO'da
+  "unlisted" imzalanır, `policies.json` `ExtensionSettings` ile zorunlu kurulur. Pencereler CI'da Firefox'ta
+  test edilir; MDM yapılandırmasının (`3rdparty`) eklentiye ulaşması henüz kurumsal kurulumda doğrulanmadı.
+  Kişi yalnızca MDM'deki `user` ile gelir (profil e-postası yok). Dosya yapıştırmada maskeli kopya sayfanın
+  dosya girdisinden verilir.
 - Telveguard'a yalnızca site, veri **türü** adetleri ve kullanıcının kararı gider; **metin asla
   gönderilmez.** Olaylar denetim hattına `api_format=browser` olarak yazılır, Röntgen'de ve
   envanterde ("beyan edilmemiş kullanım") kendiliğinden görünür. Olay ayrıntısında yapıştırma
@@ -1196,6 +1216,9 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
   yapan uygulamalar, websocket üzerinden gönderilen mesajlar (ör. Copilot'un sohbeti) ve
   büyük dosya yüklemelerinin ayrı depolama adreslerine (ör. bulut blob) giden içeriği taranmaz.
   Maskeleme yapılmaz; yalnızca geçir / durdur.
+- Tarayıcı eklentisinde onaylı araca yönlendirme metni panoya kopyalar: pano okuma izni olan bir AI sitesi
+  metni okuyabilir. Eklentinin önizleme çerçevesi sitenin CSP'si yüzünden açılamazsa pencere yalnızca tür ve
+  adet gösterir (popup'ta ve `golge-ai:onizleme-acilamadi` kuralında görünür).
 - ContextForge'da yer tutucular (`[TCKN_1]`) araç çağrıları arasında yalnızca Redis vault'u
   tanımlıysa ve çağıran kimliği biliniyorsa tutarlıdır; yoksa tek araç çağrısı içinde.
 

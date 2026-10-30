@@ -1,0 +1,8 @@
+{
+  "name": "telveguard-extension-tests",
+  "private": true,
+  "description": "Eklenti tarayıcı testleri (browser.test.js); eklenti paketine girmez.",
+  "dependencies": {
+    "playwright": "1.48.2"
+  }
+}

@@ -184,3 +184,13 @@ def test_rate_limit_total_and_window_reset():
     assert limiter.allow(batch) and not limiter.allow(batch)
     now[0] = 61.0                                    # yeni dakika
     assert limiter.allow(batch)
+
+
+def test_preview_unavailable_flag_recorded(client, events):  # noqa: F811
+    r = post(client, [
+        {"site": "chatgpt.com", "action": "masked", "entities": {"TCKN": 1}, "preview_unavailable": True},
+        {"site": "claude.ai", "action": "masked", "entities": {"TCKN": 1}},
+    ])
+    assert r.status_code == 200
+    assert "golge-ai:onizleme-acilamadi" in events[0]["rules"]
+    assert "golge-ai:onizleme-acilamadi" not in events[1]["rules"]

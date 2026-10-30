@@ -146,7 +146,7 @@ günlük trend (hafta sonu düşüşü, artan kullanım).
 | "Ayşe Yılmaz" neden maskelenmedi? | Kişi adı tespiti opsiyonel Türkçe NER modeliyle açılır (`ENABLE_TR_NER=1`, lokal BERT). Demo ortamında kapalı; TCKN, IBAN, kart gibi kimlik doğrulamalı tespitler her zaman açık. |
 | Gecikme? | Tarama milisaniyeler mertebesinde; modelin cevap süresi yanında hissedilmez. Maskeleme olan streaming isteklerde ilk parça biraz gecikir (cevap tamponlanıp taranır). |
 | Yanlış alarm? | Rastgele 11 haneli sayı TCKN sayılmaz (sağlama toplamı). Kurallar önce gözlemde açılır; kullanıcıların "yanlış alarm" seçimleri raporda tür bazında görünür. |
-| Hangi tarayıcılar? | Chrome ve Edge (MDM ile zorunlu kurulum). Safari ve Firefox, sitelerin masaüstü uygulamaları kapsam dışı. |
+| Hangi tarayıcılar? | Chrome ve Edge (MDM ile zorunlu kurulum); Firefox deneysel. Safari (ağ tarafında ICAP) ve sitelerin masaüstü uygulamaları eklenti kapsamı dışında. |
 | ChatGPT Enterprise kullanıyoruz. | Gateway kurumsal API kullanımını korur; eklenti kişisel hesapla yapılan kullanımı yakalar. Onaylı araç olarak kurumsal çalışma alanınızı tanımlayabilirsiniz. |
 | Claude Code / geliştiriciler? | `ANTHROPIC_BASE_URL` Telveguard'a çevrilir; okunan dosyalardaki sırlar ve kişisel veri maskelenir, model dosyaya yazarken gerçek değer geri konur. |
 | PDF / görsel? | Gateway'de OCR ile taranır (kimlik fotoğrafı, dekont). Tarayıcı eklentisinde yalnızca metin dosyaları; PDF / görsel için `unscannableFiles: block` seçeneği. |

@@ -38,6 +38,16 @@
       "description": "sanctionedAiUrl tanımlıyken AI sitesine girişte (oturum başına bir kez) onaylı aracı hatırlatan bant. Varsayılan: açık.",
       "type": "boolean"
     },
+    "revealPlaceholders": {
+      "title": "Yer tutucuları yerelde geri aç",
+      "description": "Sayfadaki [TCKN_1] üzerine gelince değer ipucunda görünür. Eşleme yalnızca sayfanın belleğinde durur; sayfa yenilenince silinir. Varsayılan: açık.",
+      "type": "boolean"
+    },
+    "revealCopy": {
+      "title": "'Aslıyla kopyala' düğmesi",
+      "description": "Yer tutucu içeren seçili metin gerçek değerleriyle panoya alınır. Pano AI sitesinin erişimine açık olabilir ve seçimi site belirleyebilir; bu yüzden varsayılan: kapalı.",
+      "type": "boolean"
+    },
     "requireJustification": {
       "title": "'Yine de' için gerekçe iste",
       "description": "Kullanıcı uyarıya rağmen devam ederse gerekçe seçer (müşteri onayı, test verisi, yanlış alarm, diğer). Seçim denetim kaydına yazılır, metin yazılmaz. Varsayılan: açık.",

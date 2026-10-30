@@ -26,7 +26,7 @@ BUILD="$(mktemp -d)"
 trap 'rm -rf "$BUILD"' EXIT
 
 mkdir -p "$OUT"
-cp -R "$ROOT/extension/manifest.json" "$ROOT/extension/managed_schema.json" "$ROOT/extension/popup.html" \
+cp -R "$ROOT/extension/manifest.json" "$ROOT/extension/managed_schema.json" "$ROOT/extension/popup.html" "$ROOT/extension/preview.html" \
       "$ROOT/extension/src" "$BUILD/"
 
 python3 - "$BUILD/manifest.json" "$GATEWAY" "$UPDATE_BASE" <<'EOF'

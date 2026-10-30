@@ -8,6 +8,7 @@ Tarama performansı değişiklikleri davranışı değiştirmemeli:
 - büyük istek thread'de taranır, sonuç aynı
 """
 import random
+import time
 from collections import Counter
 
 import pytest
@@ -15,6 +16,7 @@ import pytest
 from app import main
 from app.dictionary import Dictionary
 from telveguard_core import InjectionDetector, TrPiiEngine
+from telveguard_core.pii.engine import Finding
 from tests.test_gateway import captured, client  # noqa: F401  (fixture)
 from tests.test_tr_pii import make_iban, make_tckn
 
@@ -158,3 +160,39 @@ def test_large_request_scanned_in_thread_same_result(client, monkeypatch):  # no
     assert "_analyze" in calls
     assert r1.status_code == r2.status_code == 200 and r1.json()["choices"] == r2.json()["choices"]
     assert captured["body"]["messages"][-1]["content"] == sent1 and tckn not in sent1
+
+
+def test_drop_overlaps_same_as_pairwise_check():
+    """İkili aramalı çakışma çözümü, her bulguyu her bulguyla karşılaştırmakla aynı sonucu verir."""
+    def pairwise(results):
+        ranked = sorted(results, key=lambda r: (-r.score, -(r.end - r.start)))
+        kept = []
+        for r in ranked:
+            if all(r.end <= k.start or r.start >= k.end for k in kept):
+                kept.append(r)
+        return sorted(kept, key=lambda r: r.start)
+
+    rng = random.Random(7)
+    for _ in range(300):
+        results = []
+        for _ in range(rng.randint(0, 40)):
+            start = rng.randint(0, 120)
+            results.append(Finding("X", start, start + rng.randint(1, 15), rng.choice((0.5, 0.8, 1.0))))
+        assert TrPiiEngine._drop_overlaps(results) == pairwise(results)
+
+
+def test_finding_dense_text_is_not_quadratic():
+    # Önceki karesel döngü bu metinde saniyeler sürüyordu (1 MB: ~50 sn); sınır bilerek gevşek
+    text = "\n".join(f"{i},kisi{i}@ornek.com,0532 123 45 67" for i in range(8000))
+    started = time.perf_counter()
+    assert len(TrPiiEngine().analyze(text)) == 16000
+    assert time.perf_counter() - started < 3
+
+
+def test_finding_dense_parts_are_not_quadratic():
+    # Çok mesajlı istek: her sınır penceresindeki bulgu tüm bulgularla karşılaştırılıyordu
+    parts = [f"{i},kisi{i}@ornek.com,0532 123 45 67" for i in range(8000)]
+    started = time.perf_counter()
+    _, combined = TrPiiEngine().analyze_parts(parts, cache=False)
+    assert len(combined) == 16000
+    assert time.perf_counter() - started < 5

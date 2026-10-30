@@ -41,3 +41,11 @@ jobs:
         run: pytest -q -rs
       - name: Tarayıcı eklentisi tespit motoru (JS == Python)
         run: node extension/tests/detectors.test.js
+      - name: Tarayıcı eklentisi pencereleri (Chromium, Firefox)
+        if: matrix.python-version == '3.13'   # tarayıcı Python'dan bağımsız: bir kez yeter
+        working-directory: extension/tests
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium firefox
+          BROWSER=chromium node browser.test.js
+          BROWSER=firefox node browser.test.js
