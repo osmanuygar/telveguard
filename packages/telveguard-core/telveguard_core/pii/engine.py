@@ -173,6 +173,7 @@ class TrPiiEngine:
             starts.append(offset)
             combined.extend(Finding(f.entity, f.start + offset, f.end + offset, f.score) for f in found)
             offset += len(t) + 1
+        occupied: Optional[bytearray] = None   # sınır bulgusu çıkınca bir kez kurulur (çoğu istekte hiç)
         for i in range(1, len(texts)):
             prev, nxt = texts[i - 1], texts[i]
             if not prev or not nxt:
@@ -187,7 +188,12 @@ class TrPiiEngine:
                 if not (f.start <= cut < f.end) and (f.start < lo or f.end > hi):
                     continue
                 g = Finding(f.entity, f.start + base, f.end + base, f.score)
-                if all(g.end <= k.start or g.start >= k.end for k in combined):
+                if occupied is None:
+                    occupied = bytearray(offset)
+                    for k in combined:
+                        occupied[k.start:k.end] = b"\x01" * (k.end - k.start)
+                if occupied.find(1, g.start, g.end) == -1:
+                    occupied[g.start:g.end] = b"\x01" * (g.end - g.start)
                     combined.append(g)
         combined.sort(key=lambda f: f.start)
         return per, combined
@@ -217,9 +223,12 @@ class TrPiiEngine:
         # Çakışmada yüksek skor, eşitse uzun olan kazanır
         # (ör. IBAN içindeki rakamlar ayrıca TCKN/telefon sanılmasın)
         results = sorted(results, key=lambda r: (-r.score, -(r.end - r.start)))
+        # Dolu karakterler bayt dizisinde: bulgu yoğun metinde (5 MB'ta 260 bin bulgu) karesel olmasın
+        occupied = bytearray(max((r.end for r in results), default=0))
         kept: List[Finding] = []
         for r in results:
-            if all(r.end <= k.start or r.start >= k.end for k in kept):
+            if occupied.find(1, r.start, r.end) == -1:
+                occupied[r.start:r.end] = b"\x01" * (r.end - r.start)
                 kept.append(r)
         return sorted(kept, key=lambda r: r.start)
 
