@@ -300,9 +300,15 @@
     const ranked = results.filter((r) => r.score >= MIN_SCORE)
       .map((r, i) => ({ ...r, i }))
       .sort((a, b) => (b.score - a.score) || ((b.end - b.start) - (a.end - a.start)) || (a.i - b.i));
+    // Dolu karakterler bayt dizisinde: bulgu yoğun metinde karesel olmasın (Python ile aynı)
+    const occupied = new Uint8Array(text.length);
     const kept = [];
     for (const r of ranked) {
-      if (kept.every((k) => r.end <= k.start || r.start >= k.end)) kept.push(r);
+      let free = true;
+      for (let i = r.start; i < r.end && free; i++) free = !occupied[i];
+      if (!free) continue;
+      occupied.fill(1, r.start, r.end);
+      kept.push(r);
     }
     // İstisna: çakışma çözüldükten SONRA (Python ile aynı; istisna IBAN'ın içindeki rakamlar TCKN sayılmasın)
     return kept.filter((r) => !isExempt(r.entity, text.slice(r.start, r.end)))
@@ -311,7 +317,10 @@
 
   /** Geri çevrilemez yerel maskeleme: yapıştırılan metin [TCKN_1] gibi yer tutucularla gider.
    *  continueNumbering: metinde zaten [TCKN_1] varsa (önceden maskeli yapıştırılmış) yeni değer
-   *  [TCKN_2] olur; aynı yer tutucu iki farklı değeri göstermesin. */
+   *  [TCKN_2] olur; aynı yer tutucu iki farklı değeri göstermesin.
+   *  findings: yalnızca bu bulgular maskelenir (başlangıca göre sıralı; önizlemede seçilenler).
+   *  state: önceki maskelemenin dönen state'i; aynı değer aynı, farklı değer yeni yer tutucuyu alır.
+   *  Verilen state değişmez; yeni state döner (kullanıcı onaylayınca saklansın diye). */
   /** Python canonical_value ile aynı: aynı numaranın farklı yazımları aynı yer tutucuyu alır. */
   function canonicalValue(entity, value) {
     if (entity === "TCKN" || entity === "VKN" || entity === "CREDIT_CARD") return value.replace(/\D/g, "");
@@ -320,29 +329,33 @@
     return value;
   }
 
-  function mask(text, { continueNumbering = false } = {}) {
-    const findings = analyze(text);
-    const counters = {};
+  function mask(text, { continueNumbering = false, findings = analyze(text), state = null } = {}) {
+    const counters = { ...(state && state.counters) };
     if (continueNumbering) {
       for (const m of text.matchAll(/\[([A-Z][A-Z0-9_]*)_(\d+)\]/g)) {
         counters[m[1]] = Math.max(counters[m[1]] || 0, Number(m[2]));
       }
     }
-    const seen = new Map();
+    const seen = new Map(state ? state.seen : []);
+    const values = new Map(state ? state.values : []);
     let out = "";
     let cursor = 0;
+    const placed = [];
     for (const f of findings) {
-      const key = `${f.entity}\n${canonicalValue(f.entity, text.slice(f.start, f.end))}`;
+      const value = text.slice(f.start, f.end);
+      const key = `${f.entity}\n${canonicalValue(f.entity, value)}`;
       let ph = seen.get(key);
       if (!ph) {
         counters[f.entity] = (counters[f.entity] || 0) + 1;
         ph = `[${f.entity}_${counters[f.entity]}]`;
         seen.set(key, ph);
+        values.set(ph, value);
       }
       out += text.slice(cursor, f.start) + ph;
       cursor = f.end;
+      placed.push({ ...f, placeholder: ph });
     }
-    return { text: out + text.slice(cursor), findings };
+    return { text: out + text.slice(cursor), findings: placed, state: { counters, seen, values } };
   }
 
   const LABELS = {

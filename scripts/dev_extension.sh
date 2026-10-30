@@ -21,7 +21,7 @@ OUT="$ROOT/dist/extension-dev"
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
-cp -R "$ROOT/extension/manifest.json" "$ROOT/extension/managed_schema.json" "$ROOT/extension/popup.html" \
+cp -R "$ROOT/extension/manifest.json" "$ROOT/extension/managed_schema.json" "$ROOT/extension/popup.html" "$ROOT/extension/preview.html" \
       "$ROOT/extension/src" "$OUT/"
 
 python3 - "$OUT" "${GATEWAY%/}" "$TOKEN" "$MODE" "$SANCTIONED" "$USER_NAME" <<'EOF'

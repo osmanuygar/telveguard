@@ -56,6 +56,7 @@ class ShadowEvent(BaseModel):
     # (sürükle-bırak / dosya seçme). Eski eklentiler göndermez.
     trigger: Optional[Literal["paste", "send", "file", "banner"]] = None
     justification: Optional[Literal["consent", "test_data", "false_positive", "other"]] = None
+    preview_unavailable: bool = False   # eklentinin önizleme çerçevesi bu sitede açılamadı (sitenin CSP'si)
     entities: Dict[str, int] = Field(default_factory=dict)   # tür -> adet (değer YOK)
     chars: int = Field(0, ge=0, le=10_000_000)
     user: str = "unknown"
@@ -108,6 +109,8 @@ def to_audit_event(e: ShadowEvent) -> Dict[str, Any]:
     if e.justification and e.action == "allowed_override":
         rules.append(f"golge-ai:gerekce:{e.justification}")
         reason = " · ".join(x for x in (reason, "Gerekçe: " + JUSTIFICATIONS[e.justification]) if x)
+    if e.preview_unavailable:
+        rules.append("golge-ai:onizleme-acilamadi")
     return {
         "event_id": str(uuid.uuid4()), "ts": int(time.time() * 1000),
         "user": e.user, "team": e.team, "model": e.site, "destination": "external",

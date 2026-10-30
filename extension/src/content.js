@@ -16,7 +16,15 @@
  * kopyalayıp kurumun onaylı AI aracını açar; sitede bir kez bilgilendirme bandı gösterilir.
  * "Yine de" seçilince gerekçe sorulur (MDM: requireJustification); seçim olaya yazılır, metin yazılmaz.
  * Telveguard'a yalnızca site, veri türü adetleri ve karar gider; metin asla gönderilmez.
- * Pencere Shadow DOM'da: sitenin CSS'i bozamaz, sitenin betikleri içeriğini okuyamaz.
+ * Pencere closed Shadow DOM'da: sitenin CSS'i bozamaz. Bu bir gizlilik sınırı DEĞİLDİR (window.find ve
+ * seçim içine ulaşır): pencerede yalnızca tür ve adet durur, değerler eklenti kökenli çerçevede (preview.js).
+ * Maskeli önizleme: çerçeve yakalanan değerleri ve metnin maskeli halini gösterir (sırların yalnızca başı).
+ * Çerçeve sitede yüklenemezse pencere yalnızca tür ve adetle çalışır; hepsi maskelenir.
+ * Uyar modunda yapıştırma ve gönderimde kullanıcı hassas olmayan değerin işaretini kaldırabilir; bu seçim
+ * "yanlış alarm" gerekçesiyle kayda yazılır (adet ve tür; değer yazılmaz).
+ * Yerel geri açma (MDM: revealPlaceholders): sayfadaki [TCKN_1] üzerine gelince değer çerçevedeki ipucunda
+ * görünür. "Aslıyla kopyala" varsayılan kapalı (MDM: revealCopy): pano siteye açık olabilir. Eşleme yalnızca
+ * bu betiğin belleğinde durur; sitenin DOM'una yazılmaz, saklanmaz, gönderilmez. Numaralar sayfa boyunca ortaktır.
  */
 (function () {
   "use strict";
@@ -25,19 +33,26 @@
   window.__telveguardLoaded = true;
 
   const site = location.hostname.replace(/^www\./, "");
-  let config = { mode: "warn", reportVisits: false, unscannableFiles: "allow", requireJustification: true,
-                 sanctionedAiUrl: "", sanctionedAiName: "", showBanner: true };
+  // Yapılandırma gelene kadar en sıkı hali: servis çalışanı saniyeler içinde uyanabilir, block kurumunda
+  // o arada "Yine de" çıkmasın. Normalde saklanan yapılandırma ilk milisaniyelerde bunun yerine geçer.
+  let config = { mode: "block", reportVisits: false, unscannableFiles: "block", requireJustification: true,
+                 sanctionedAiUrl: "", sanctionedAiName: "", showBanner: true, revealPlaceholders: true, revealCopy: false };
   const hasRuntime = typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage;
+
+  let liveConfig = false;   // servis çalışanının cevabı geldiyse saklanan kayıt onu ezmesin
+  let frameFailed = false;  // önizleme çerçevesi bu sayfada açılamadı (sitenin CSP'si)
 
   function send(event) {
     if (!hasRuntime) return;
-    try { chrome.runtime.sendMessage({ type: "event", event: { site, ...event } }); } catch { /* eklenti yenilendi */ }
+    // Çerçeve bu sitede açılamadıysa olaylarda işaretlenir (yalnızca bayrak): konsoldan görülebilsin
+    const flag = frameFailed ? { preview_unavailable: true } : {};
+    try { chrome.runtime.sendMessage({ type: "event", event: { site, ...event, ...flag } }); } catch { /* eklenti yenilendi */ }
   }
 
   if (hasRuntime) {
     try {
       chrome.runtime.sendMessage({ type: "getConfig" }, (c) => {
-        if (c) config = c;
+        if (c) { config = c; liveConfig = true; }
         setTimeout(showBanner, 0);   // yapılandırma eşzamanlı gelse de betiğin tamamı yüklendikten sonra
         if (config.reportVisits && !sessionStorage.getItem("telveguard-visit")) {
           try { sessionStorage.setItem("telveguard-visit", "1"); } catch { /* yok say */ }
@@ -47,12 +62,22 @@
     } catch { /* varsayılan yapılandırma */ }
   }
 
-  const DICT_KEY = "telveguardDictionary";
+  const DICT_KEY = "telveguardDictionary", CONFIG_KEY = "telveguardConfig";
   if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
     try {
-      chrome.storage.local.get(DICT_KEY, (v) => D.setDictionary(v && v[DICT_KEY]));
+      chrome.storage.local.get([DICT_KEY, CONFIG_KEY], (v) => {
+        D.setDictionary(v && v[DICT_KEY]);
+        if (v && v[CONFIG_KEY] && !liveConfig) config = v[CONFIG_KEY];
+      });
       chrome.storage.onChanged.addListener((changes, area) => {
-        if (area === "local" && changes[DICT_KEY]) D.setDictionary(changes[DICT_KEY].newValue);
+        if (area !== "local") return;
+        if (changes[DICT_KEY]) D.setDictionary(changes[DICT_KEY].newValue);
+        // Kayıt içerik betiği bağlamından yazılabilir (DevTools): değeri değil, servis çalışanının cevabını al
+        if (changes[CONFIG_KEY] && hasRuntime) chrome.runtime.sendMessage({ type: "getConfig" }, (c) => {
+          if (!c) return;
+          config = c;
+          if (pageVault) remember(pageVault);   // geri açma sonradan açıldıysa başlasın
+        });
       });
     } catch { /* sözlüksüz devam */ }
   }
@@ -153,6 +178,11 @@
     button.primary { background: #0b0b0b; color: #fff; border-color: transparent; }
     button:focus-visible { outline: 2px solid #2a78d6; outline-offset: 2px; }
     .muted { font-size: 12px; color: #898781; margin-top: 10px; }
+    button:disabled { opacity: .45; cursor: default; }
+    .box { max-height: calc(100vh - 32px); overflow-y: auto; box-sizing: border-box; }
+    .preview { display: block; width: 100%; height: 0; border: 0; margin: 0 0 14px; }
+    .preview[hidden] { display: block !important; visibility: hidden; height: 0 !important; margin: 0; }   /* ölçülebilsin */
+    ul[hidden] { display: none; }
     @media (prefers-color-scheme: dark) {
       .box { background: #1a1a19; color: #fff; } p { color: #c3c2b7; }
       button { background: #1a1a19; color: #fff; border-color: rgba(255,255,255,.15); }
@@ -175,7 +205,232 @@
       button.primary { background: #fff; color: #0b0b0b; }
     }`;
 
-  function dialog({ title, message, items, buttons }) {
+  // ---------- yerel geri açma ----------
+  let pageVault = null;   // { counters, seen, values }: yalnızca bu sayfanın belleğinde
+  let revealStarted = false;
+  function remember(state) {
+    pageVault = state;
+    if (config.revealPlaceholders !== false && !revealStarted) { revealStarted = true; startReveal(); }
+  }
+  const PLACEHOLDER_RX = /\[[A-Z][A-Z0-9_]*_\d+\]/g;
+  const restorePlaceholders = (t) => t.replace(PLACEHOLDER_RX, (ph) => (pageVault && pageVault.values.get(ph)) ?? ph);
+
+  /** İmlecin altındaki bilinen yer tutucu. Sitenin DOM'u değiştirilmez: metin konumu tarayıcıdan sorulur. */
+  function placeholderAt(x, y) {
+    let node, offset;
+    if (document.caretPositionFromPoint) {
+      const p = document.caretPositionFromPoint(x, y);
+      if (p) { node = p.offsetNode; offset = p.offset; }
+    } else if (document.caretRangeFromPoint) {
+      const r = document.caretRangeFromPoint(x, y);
+      if (r) { node = r.startContainer; offset = r.startOffset; }
+    }
+    if (!node || node.nodeType !== 3) return null;
+    for (const m of node.data.matchAll(PLACEHOLDER_RX)) {
+      const end = m.index + m[0].length;
+      if (offset < m.index || offset > end || !pageVault.values.has(m[0])) continue;
+      const range = document.createRange();
+      range.setStart(node, m.index);
+      range.setEnd(node, end);
+      // Satır sonundaki boşluğa gelince de imleç son karakterde görünür: gerçekten üzerinde mi?
+      if ([...range.getClientRects()].some((b) => x >= b.left && x <= b.right && y >= b.top && y <= b.bottom)) return m[0];
+    }
+    return null;
+  }
+
+  const FRAME_URL = hasRuntime && chrome.runtime.getURL ? chrome.runtime.getURL("preview.html") : "";
+
+  /** Hassas değerlerin çerçevesi: başlangıçta gizli. Yüklenemezse (sitenin CSP'si) ready gelmez, gizli kalır. */
+  const FRAME_TIMEOUT_MS = 3000;
+  function reportFrame(ok) {
+    frameFailed = !ok;
+    if (hasRuntime) { try { chrome.runtime.sendMessage({ type: "previewStatus", site, ok }); } catch { /* eklenti yenilendi */ } }
+  }
+
+  function secureFrame(onMessage) {
+    const frame = document.createElement("iframe");
+    frame.hidden = true;
+    frame.title = "Telveguard önizleme";
+    if (!FRAME_URL) return { frame, post: () => {} };
+    frame.src = FRAME_URL;
+    const channel = new MessageChannel();
+    let answered = false;
+    const timer = setTimeout(() => { if (!answered) reportFrame(false); }, FRAME_TIMEOUT_MS);
+    channel.port1.onmessage = (m) => {
+      if (m.data.type === "ready" && !answered) { answered = true; clearTimeout(timer); reportFrame(true); }
+      onMessage(m.data);
+    };
+    frame.addEventListener("load", () => {
+      // Hedef köken eklenti: site çerçeveyi değiştirse de mesaj ve kanal ona gitmez
+      try { frame.contentWindow.postMessage("telveguard-init", new URL(FRAME_URL).origin, [channel.port2]); }
+      catch { /* çerçeve yüklenemedi: gizli kalır */ }
+    }, { once: true });
+    return { frame, post: (m) => channel.port1.postMessage(m) };
+  }
+
+  function startReveal() {
+    const host = document.createElement("div");
+    host.setAttribute("data-telveguard", "");
+    const root = host.attachShadow({ mode: "closed" });
+    const style = document.createElement("style");
+    style.textContent = REVEAL_STYLE;
+    let at = { x: 0, y: 0 }, shown = "", size = null;
+    const place = (el, x, y, width, height) => {
+      el.style.left = `${Math.max(8, Math.min(x, innerWidth - width - 8))}px`;
+      el.style.top = `${y + height + 12 > innerHeight ? y - height - 8 : y + 12}px`;
+    };
+    const { frame: tip, post } = secureFrame((m) => {
+      if (m.type !== "size" || !shown) return;
+      size = m;
+      tip.style.width = `${m.width}px`;
+      tip.style.height = `${m.height}px`;
+      place(tip, at.x, at.y, m.width, m.height);
+      tip.hidden = false;
+    });
+    tip.className = "tip";
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.hidden = true;
+    root.append(style, tip, copy);
+    (document.body || document.documentElement).append(host);
+    window.__telveguardReveal = { host, tip, copy };   // testler için
+
+    let frameId = 0;
+    window.addEventListener("mousemove", (ev) => {
+      if (!ev.isTrusted || frameId) return;     // sitenin sahte olayı ipucunu tetiklemesin
+      if (config.revealPlaceholders === false) { shown = ""; tip.hidden = true; return; }   // MDM anında geçerli
+      frameId = requestAnimationFrame(() => {
+        frameId = 0;
+        const ph = placeholderAt(ev.clientX, ev.clientY);
+        at = { x: ev.clientX, y: ev.clientY };
+        if (ph === shown && !tip.hidden && size) { place(tip, at.x, at.y, size.width, size.height); return; }
+        shown = ph || "";
+        tip.hidden = true;
+        if (!ph) return;
+        tip.style.width = "360px";   // geniş ölç, sonra içeriğe göre daralt
+        const entity = ph.slice(1, -1).replace(/_\d+$/, "");
+        post({ kind: "tip", text: `${D.label(entity)}: ${showValue(entity, pageVault.values.get(ph))}` });
+      });
+    }, { passive: true, capture: true });
+    window.addEventListener("scroll", () => { shown = ""; tip.hidden = true; copy.hidden = true; }, { passive: true, capture: true });
+
+    let restored = "";
+    const checkSelection = (ev) => {
+      if (!ev.isTrusted || ev.target === host) return;
+      if (config.revealCopy !== true || config.revealPlaceholders === false) { copy.hidden = true; return; }
+      setTimeout(() => {
+        const sel = getSelection();
+        const text = sel && sel.rangeCount ? sel.toString() : "";
+        restored = text ? restorePlaceholders(text) : "";
+        copy.hidden = !restored || restored === text;
+        if (copy.hidden) return;
+        copy.textContent = "Aslıyla kopyala";
+        const rects = sel.getRangeAt(0).getClientRects();
+        const last = rects[rects.length - 1];
+        if (last) { const b = copy.getBoundingClientRect(); place(copy, last.right, last.bottom, b.width, b.height); }
+      }, 0);
+    };
+    window.addEventListener("mouseup", checkSelection, true);
+    window.addEventListener("keyup", checkSelection, true);
+    copy.addEventListener("mousedown", (ev) => ev.preventDefault());   // seçim kaybolmasın
+    copy.addEventListener("click", (ev) => {
+      if (!ev.isTrusted) return;
+      // Sitenin copy olayı kullanılmaz: değer sitenin betiğine görünürdü
+      navigator.clipboard.writeText(restored).then(() => { copy.textContent = "Kopyalandı"; }, () => { copy.textContent = "Kopyalanamadı"; });
+      setTimeout(() => { copy.hidden = true; }, 1200);
+    });
+  }
+
+  // ---------- maskeli önizleme ----------
+  const PREVIEW_CONTEXT = 60, PREVIEW_MAX_VALUES = 30, PREVIEW_MAX_EXCERPTS = 30;
+  // Sırlar pencerede tam görünmesin (ekran paylaşımı); hangisi olduğu ilk karakterlerden anlaşılır
+  const showValue = (entity, value) => entity.startsWith("SECRET_") ? value.slice(0, 4) + "…"
+    : value.length > 48 ? value.slice(0, 47) + "…" : value;
+
+  /** Yakalanan değerler ve metnin maskeli hali (çerçevede). selectable: değerin işareti kaldırılabilir.
+   *  Seçim durumu burada tutulur; çerçeve yalnızca gösterir ve tıklamayı bildirir. */
+  function previewPanel(text, findings, { selectable = false, caption = "", state = pageVault } = {}) {
+    const maskWith = (chosen) => D.mask(text, { continueNumbering: true, findings: chosen, state });
+    const groups = new Map();   // yer tutucu -> aynı değerin tüm geçişleri (farklı yazımlar dahil)
+    for (const f of maskWith(findings).findings) {
+      if (!groups.has(f.placeholder)) groups.set(f.placeholder, { members: [], on: true });
+      groups.get(f.placeholder).members.push(f);
+    }
+    const list = [...groups.values()];
+    const pick = (on) => list.filter((g) => g.on === on).flatMap((g) => g.members).sort((a, b) => a.start - b.start);
+    const maskChosen = () => maskWith(pick(true));
+
+    function model() {
+      const placeholders = new Map(maskChosen().findings.map((f) => [f.start, f.placeholder]));
+      const rows = list.slice(0, PREVIEW_MAX_VALUES).map((g) => {
+        const first = g.members[0];
+        return { label: D.label(first.entity), value: showValue(first.entity, text.slice(first.start, first.end)), on: g.on,
+                 ph: g.on ? `→ ${placeholders.get(first.start)}` : "maskelenmez" };
+      });
+      const all = list.flatMap((g) => g.members).sort((a, b) => a.start - b.start);
+      const windows = [];
+      for (const f of all) {
+        const from = Math.max(0, f.start - PREVIEW_CONTEXT), to = Math.min(text.length, f.end + PREVIEW_CONTEXT);
+        const last = windows[windows.length - 1];
+        if (last && from <= last.to) last.to = to; else windows.push({ from, to });
+      }
+      const segments = [];
+      for (const w of windows.slice(0, PREVIEW_MAX_EXCERPTS)) {
+        if (w.from > 0) segments.push("…");
+        let cursor = w.from;
+        for (const f of all.filter((x) => x.start >= w.from && x.end <= w.to)) {
+          segments.push(text.slice(cursor, f.start));
+          const ph = placeholders.get(f.start);
+          segments.push(ph ? { mark: ph } : { kept: showValue(f.entity, text.slice(f.start, f.end)) });
+          cursor = f.end;
+        }
+        segments.push(text.slice(cursor, w.to));
+        if (w.to < text.length) segments.push("…\n");
+      }
+      if (windows.length > PREVIEW_MAX_EXCERPTS) segments.push(`ve ${windows.length - PREVIEW_MAX_EXCERPTS} yer daha`);
+      return { kind: "preview", selectable, caption, rows, segments,
+               more: list.length > PREVIEW_MAX_VALUES ? `ve ${list.length - PREVIEW_MAX_VALUES} değer daha (hepsi maskelenir)` : "" };
+    }
+
+    const panel = { selected: () => pick(true), kept: () => pick(false), selectable, ready: false,
+                    onChange: () => {}, onReady: () => {}, onEscape: () => {}, onLeave: () => {},
+                    masked: () => { const m = maskChosen(); remember(m.state); return m.text; } };
+    const { frame, post } = secureFrame((m) => {
+      if (m.type === "ready") post(model());
+      if (m.type === "size") {
+        frame.style.height = `${m.height}px`;
+        if (!panel.ready) { panel.ready = true; frame.hidden = false; panel.onReady(); }
+      }
+      if (m.type === "toggle" && list[m.i]) { list[m.i].on = !list[m.i].on; post(model()); panel.onChange(); }
+      if (m.type === "escape") panel.onEscape();
+      if (m.type === "leave") panel.onLeave(m.back);
+    });
+    frame.className = "preview";
+    panel.el = frame;
+    panel.focus = (last) => { frame.focus(); post({ kind: "focus", last }); };
+    return panel;
+  }
+
+  /** "Maskele" seçimi: maskelenenler "masked", işareti kaldırılanlar yanlış alarm beyanı olarak kayda gider. */
+  function recordMasking(text, base, panel) {
+    send({ ...base, entities: counts(panel.selected()), action: "masked" });
+    const kept = panel.kept();
+    if (!kept.length) return;
+    allow(text, kept);
+    send({ ...base, entities: counts(kept), action: "allowed_override", justification: "false_positive" });
+  }
+
+  const REVEAL_STYLE = `
+    :host { all: initial; }
+    .tip, button { position: fixed; z-index: 2147483646; border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.3); }
+    .tip { pointer-events: none; border: 0; width: 360px; height: 0; }
+    .tip[hidden] { display: block !important; visibility: hidden; }   /* ölçülebilsin */
+    button[hidden] { display: none; }
+    button { font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; background: #0b0b0b; color: #fff; padding: 5px 8px; border: 0; cursor: pointer; }
+    button:focus-visible { outline: 2px solid #2a78d6; outline-offset: 2px; }
+    @media (prefers-color-scheme: dark) { button { background: #fff; color: #0b0b0b; } }`;
+
+  function dialog({ title, message, items, summary, previews = [], buttons }) {
     const host = document.createElement("div");
     host.setAttribute("data-telveguard", "");
     const root = host.attachShadow({ mode: "closed" });
@@ -192,11 +447,16 @@
     const p = document.createElement("p");
     p.textContent = message;
     box.append(h, p);
-    if (items && items.length) {
+    const list = (lines) => {
       const ul = document.createElement("ul");
-      for (const it of items) { const li = document.createElement("li"); li.textContent = it; ul.append(li); }
+      for (const it of lines) { const li = document.createElement("li"); li.textContent = it; ul.append(li); }
       box.append(ul);
-    }
+      return ul;
+    };
+    if (items && items.length) list(items);
+    // summary: tür ve adet. Çerçeve açılınca gereksiz; açılmazsa (sitenin CSP'si) kullanıcı bunu görür
+    const summaryEl = summary && summary.length ? list(summary) : null;
+    previews.forEach((pv) => { pv.onReady = () => { if (summaryEl) summaryEl.hidden = true; }; box.append(pv.el); });
     const row = document.createElement("div");
     row.className = "row";
     const close = () => host.remove();
@@ -209,6 +469,14 @@
       row.append(el);
       return el;
     });
+    // Tüm işaretler kaldırılınca "maskele" düğmesi kapanır: hiçbir şey maskelenmeyecekse yol "Yine de"dir (gerekçeli)
+    const refresh = () => buttons.forEach((b, i) => { if (b.enabled) els[i].disabled = !b.enabled(); });
+    const cancel = () => { close(); const c = buttons.find((b) => b.cancel); c && c.onClick && c.onClick(); };
+    previews.forEach((pv) => {
+      pv.onChange = refresh;
+      pv.onEscape = cancel;
+      pv.onLeave = (back) => { const on = els.filter((b) => !b.disabled); (back ? on[on.length - 1] : on[0]).focus(); };
+    });
     const note = document.createElement("div");
     note.className = "muted";
     note.textContent = "Telveguard · metin bilgisayarınızdan çıkmadan tarandı.";
@@ -216,16 +484,20 @@
     back.append(box);
     root.append(style, back);
     back.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") { e.preventDefault(); close(); const c = buttons.find((b) => b.cancel); c && c.onClick(); }
-      if (e.key === "Tab") {           // odak pencerede kalsın
-        const i = els.indexOf(root.activeElement);
-        const next = e.shiftKey ? (i <= 0 ? els.length - 1 : i - 1) : (i + 1) % els.length;
-        e.preventDefault(); els[next].focus();
+      if (e.key === "Escape") { e.preventDefault(); cancel(); }
+      if (e.key === "Tab") {           // odak pencerede kalsın (çerçevedeki işaretler dahil)
+        const frames = previews.filter((pv) => pv.selectable && pv.ready);
+        const focusable = [...frames.map((pv) => pv.el), ...els.filter((b) => !b.disabled)];
+        const i = focusable.indexOf(root.activeElement);
+        const next = focusable[e.shiftKey ? (i <= 0 ? focusable.length - 1 : i - 1) : (i + 1) % focusable.length];
+        e.preventDefault();
+        const frame = frames.find((pv) => pv.el === next);
+        if (frame) frame.focus(e.shiftKey); else next.focus();
       }
     });
     (document.body || document.documentElement).append(host);
     (els.find((_, i) => buttons[i].primary) || els[0]).focus();
-    window.__telveguardDialog = { host, root, buttons: els };   // testler için
+    window.__telveguardDialog = { host, root, buttons: els, previews };   // testler için
     return host;
   }
 
@@ -234,11 +506,7 @@
     if (redispatching) return;
     const files = ev.clipboardData ? [...ev.clipboardData.files] : [];
     if (files.length && needsReview(files)) {
-      holdFiles(ev, files, (out) => {
-        const dt = new DataTransfer();
-        out.forEach((f) => dt.items.add(f));
-        redispatch(ev.target, new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true, composed: true }));
-      });
+      holdFiles(ev, files, (out) => deliverPastedFiles(ev.target, out));
       return;
     }
     const text = ev.clipboardData && ev.clipboardData.getData("text/plain");
@@ -249,31 +517,33 @@
     ev.stopImmediatePropagation();
     const target = ev.target;
     const c = counts(findings);
-    const items = describe(c);
     const base = { entities: c, chars: text.length, trigger: "paste" };
 
     if (config.mode === "block") {
       send({ ...base, action: "blocked" });
-      dialog({ title: "Yapıştırma engellendi", items,
+      dialog({ title: "Yapıştırma engellendi", summary: describe(c), previews: [previewPanel(text, findings)],
                buttons: [{ label: "Tamam", primary: !config.sanctionedAiUrl, cancel: true },
                  ...redirectButton(base, text).map((b) => ({ ...b, primary: true }))],
                message: "Kurum politikası gereği kişisel veri, sır ya da kurum bilgisi içeren metin AI sitelerine yapıştırılamaz." +
                  (config.sanctionedAiUrl ? ` ${sanctionedName()} ile devam ederseniz metin panoya kopyalanır.` : "") });
       return;
     }
+    const preview = previewPanel(text, findings, { selectable: true });
     dialog({
       title: "Hassas veri tespit edildi",
-      message: "Yapıştırdığınız metin şunları içeriyor. Maskeleyerek yapıştırırsanız değerlerin yerine [TCKN_1] gibi yer tutucular gider." +
+      message: "Yapıştırdığınız metin şunları içeriyor. Maskeleyerek yapıştırırsanız değerlerin yerine [TCKN_1] gibi yer tutucular gider; " +
+        "hassas olmayan değerin işaretini kaldırabilirsiniz." +
         (config.sanctionedAiUrl ? ` Metnin aslıyla çalışmanız gerekiyorsa ${sanctionedName()} kullanın.` : ""),
-      items,
+      summary: describe(c),
+      previews: [preview],
       buttons: [
         { label: "Vazgeç", cancel: true, onClick: () => send({ ...base, action: "cancelled" }) },
         { label: "Yine de yapıştır", onClick: () => withJustification((justification) => {
           allow(text, findings); insert(target, text); send({ ...base, action: "allowed_override", justification }); },
           () => send({ ...base, action: "cancelled" })) },
         ...redirectButton(base, text),
-        { label: "Maskeleyerek yapıştır", primary: true,
-          onClick: () => { insert(target, D.mask(text).text); send({ ...base, action: "masked" }); } },
+        { label: "Maskeleyerek yapıştır", primary: true, enabled: () => preview.selected().length > 0,
+          onClick: () => { insert(target, preview.masked()); recordMasking(text, base, preview); } },
       ],
     });
   }
@@ -293,6 +563,23 @@
     try { (target || document.body).dispatchEvent(event); } finally { redispatching = false; }
   }
 
+  // Firefox ClipboardEvent'e verilen clipboardData'yı yok sayar: dosya sessizce kaybolmasın diye
+  // sayfanın dosya girdisinden, o da yoksa sürükle-bırak olayıyla verilir
+  function deliverPastedFiles(target, files) {
+    const dt = new DataTransfer();
+    files.forEach((f) => dt.items.add(f));
+    const paste = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true, composed: true });
+    if (paste.clipboardData && paste.clipboardData.files.length === files.length) { redispatch(target, paste); return; }
+    const input = document.querySelector("input[type=file]");
+    if (input) {
+      input.files = dt.files;
+      redispatch(input, new Event("input", { bubbles: true, composed: true }));
+      redispatch(input, new Event("change", { bubbles: true }));
+      return;
+    }
+    redispatch(target, new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true, composed: true }));
+  }
+
   /** Dosyaları tarar; kullanıcı kararına göre onDone(eklenecek dosyalar) çağrılır (vazgeçince çağrılmaz). */
   async function reviewFiles(files, onDone, onCancel = () => {}) {
     const hits = [], unscannable = [];
@@ -304,10 +591,17 @@
       const findings = D.analyze(text);
       if (!findings.length) return f;
       chars += text.length;
-      const masked = new File([D.mask(text).text], f.name, { type: f.type || "text/plain", lastModified: f.lastModified });
-      hits.push({ file: f, findings, masked });
+      hits.push({ file: f, findings, text });
       return f;
     }));
+    // Dosyalar sırayla numaralanır (aynı değer her dosyada aynı yer tutucu); state "Maskeleyerek ekle" ile saklanır
+    let state = pageVault;
+    for (const h of hits) {
+      h.state = state;
+      const m = D.mask(h.text, { continueNumbering: true, findings: h.findings, state });
+      h.masked = new File([m.text], h.file.name, { type: h.file.type || "text/plain", lastModified: h.file.lastModified });
+      state = m.state;
+    }
     const blockedUnscannable = config.unscannableFiles === "block" ? unscannable : [];
     if (!hits.length && !blockedUnscannable.length) { onDone(files); return; }
 
@@ -316,10 +610,12 @@
     const base = { entities: c, chars, trigger: "file" };
     const items = hits.map((h) => `${h.file.name}: ${describe(counts(h.findings)).join(", ")}`)
       .concat(blockedUnscannable.map((f) => `${f.name}: taranamayan dosya türü`));
+    // Dosyada önizleme salt okunur ve ilk 5 dosya için; kalanı yukarıdaki listede tür ve adetle görünür
+    const previews = hits.slice(0, 5).map((h) => previewPanel(h.text, h.findings, { caption: h.file.name, state: h.state }));
 
     if (config.mode === "block" || blockedUnscannable.length) {
       send({ ...base, action: "blocked" });
-      dialog({ title: "Dosya eklenmedi", items, buttons: [{ label: "Tamam", primary: true, cancel: true, onClick: onCancel }],
+      dialog({ title: "Dosya eklenmedi", items, previews, buttons: [{ label: "Tamam", primary: true, cancel: true, onClick: onCancel }],
                message: hits.length && config.mode === "block"
                  ? "Kurum politikası gereği kişisel veri, sır ya da kurum bilgisi içeren dosyalar AI sitelerine eklenemez."
                  : "Kurum politikası gereği taranamayan dosyalar (PDF, görsel, Office belgeleri) AI sitelerine eklenemez." });
@@ -331,12 +627,13 @@
       message: "Eklediğiniz dosyalar şunları içeriyor. Maskeleyerek eklerseniz siteye değerlerin yerine [TCKN_1] gibi " +
                "yer tutucuların olduğu bir kopya gider; bilgisayarınızdaki dosya değişmez.",
       items,
+      previews,
       buttons: [
         { label: "Vazgeç", cancel: true, onClick: () => { send({ ...base, action: "cancelled" }); onCancel(); } },
         { label: "Yine de ekle", onClick: () => withJustification((justification) => {
           send({ ...base, action: "allowed_override", justification }); onDone(files); },
           () => { send({ ...base, action: "cancelled" }); onCancel(); }) },
-        { label: "Maskeleyerek ekle", primary: true, onClick: () => { send({ ...base, action: "masked" }); onDone(maskedOut); } },
+        { label: "Maskeleyerek ekle", primary: true, onClick: () => { remember(state); send({ ...base, action: "masked" }); onDone(maskedOut); } },
       ],
     });
   }
@@ -386,7 +683,8 @@
     }, () => { input.value = ""; });
   }, true);
 
-  document.addEventListener("paste", onPaste, true);
+  // window: sitenin window yakalama dinleyicisi metni bizden önce görmesin (document_start: önce biz kaydoluruz)
+  window.addEventListener("paste", onPaste, true);
 
   // ---------- gönderim ----------
   // Sohbet kutusu: textarea ya da contenteditable (ChatGPT / Claude / Gemini: ProseMirror, Quill)
@@ -457,41 +755,44 @@
     if (!composer) return false;
     const text = composerText(composer);
     if (!text || !text.trim()) return false;
-    const findings = D.analyze(text).filter((f) => !allowedValues.has(text.slice(f.start, f.end)));
+    // Engelle modunda istisna yok: "yine de" denmiş değer (ör. mod değişmeden önce) geçmez
+    const findings = D.analyze(text).filter((f) => config.mode === "block" || !allowedValues.has(text.slice(f.start, f.end)));
     if (!findings.length) return false;
     ev.preventDefault();
     ev.stopImmediatePropagation();
     const c = counts(findings);
-    const items = describe(c);
     const base = { entities: c, chars: text.length, trigger: "send" };
-    const masked = () => D.mask(text, { continueNumbering: true }).text;
     const done = () => { dialogOpen = false; };
     dialogOpen = true;
 
     if (config.mode === "block") {
+      const preview = previewPanel(text, findings);
       send({ ...base, action: "blocked" });
-      dialog({ title: "Gönderim engellendi", items, message: "Kurum politikası gereği kişisel veri, sır ya da kurum bilgisi içeren mesaj " +
+      dialog({ title: "Gönderim engellendi", summary: describe(c), previews: [preview], message: "Kurum politikası gereği kişisel veri, sır ya da kurum bilgisi içeren mesaj " +
                  "AI sitelerine gönderilemez. Metni maskeleyip kontrol ettikten sonra tekrar gönderebilirsiniz.",
                buttons: [
                  { label: "Düzenle", cancel: true, onClick: () => { done(); composer.focus(); } },
                  ...redirectButton(base, text, done),
-                 { label: "Metni maskele", primary: true, onClick: () => { done(); replaceComposer(composer, masked()); } },
+                 { label: "Metni maskele", primary: true, onClick: () => { done(); replaceComposer(composer, preview.masked()); } },
                ] });
       return true;
     }
+    const preview = previewPanel(text, findings, { selectable: true });
     dialog({
       title: "Göndermeden önce",
-      message: "Mesajınız şunları içeriyor. Maskeleyerek gönderirseniz değerlerin yerine [TCKN_1] gibi yer tutucular gider." +
+      message: "Mesajınız şunları içeriyor. Maskeleyerek gönderirseniz değerlerin yerine [TCKN_1] gibi yer tutucular gider; " +
+        "hassas olmayan değerin işaretini kaldırabilirsiniz." +
         (config.sanctionedAiUrl ? ` Metnin aslıyla çalışmanız gerekiyorsa ${sanctionedName()} kullanın (metin panoya kopyalanır).` : ""),
-      items,
+      summary: describe(c),
+      previews: [preview],
       buttons: [
         { label: "Düzenle", cancel: true, onClick: () => { done(); send({ ...base, action: "cancelled" }); composer.focus(); } },
         { label: "Yine de gönder", onClick: () => withJustification((justification) => {
           done(); allow(text, findings); send({ ...base, action: "allowed_override", justification }); resend(composer, button); },
           () => { done(); send({ ...base, action: "cancelled" }); composer.focus(); }) },
         ...redirectButton(base, text, done),
-        { label: "Maskele ve gönder", primary: true, onClick: () => {
-          done(); replaceComposer(composer, masked()); send({ ...base, action: "masked" });
+        { label: "Maskele ve gönder", primary: true, enabled: () => preview.selected().length > 0, onClick: () => {
+          done(); replaceComposer(composer, preview.masked()); recordMasking(text, base, preview);
           // Editör (React / ProseMirror) yeni metni işlesin, sonra gönder
           setTimeout(() => resend(composer, button), 50); } },
       ],

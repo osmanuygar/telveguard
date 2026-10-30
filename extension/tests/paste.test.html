@@ -18,12 +18,18 @@
   window.open = (url) => { window.__opened.push(url); return null; };
   const params = new URLSearchParams(location.search);
   const mode = params.get("mode") || "warn";
-  window.chrome = { runtime: { sendMessage(msg, cb) {
+  // ?late=1: servis çalışanı cevap vermez (uyanıyor); ?cached=warn: saklanan yapılandırma
+  const cached = params.get("cached");
+  window.chrome = { storage: { local: { get(_keys, cb) { cb(cached ? { telveguardConfig: { mode: cached, unscannableFiles: "allow" } } : {}); } },
+                               onChanged: { addListener(f) { window.__storageChanged = f; } } },
+                    runtime: { getURL: (x) => params.get("noframe") ? "about:blank" : new URL("../" + x, location.href).href, sendMessage(msg, cb) {
     window.__sent.push(msg);
-    if (msg.type === "getConfig" && cb) {
+    if (msg.type === "getConfig" && cb && !params.get("late")) {
       cb({ mode, reportVisits: true, reporting: true, unscannableFiles: params.get("unscannable") || "allow",
            requireJustification: params.get("justify") !== "0", sanctionedAiUrl: params.get("sanctioned") || "",
-           sanctionedAiName: params.get("sanctioned") ? "Kurum Asistanı" : "", showBanner: true });
+           sanctionedAiName: params.get("sanctioned") ? "Kurum Asistanı" : "", showBanner: true,
+           revealPlaceholders: params.get("reveal") !== "0", revealCopy: params.get("copy") === "1",
+           ...window.__configOverride });
     }
   } } };
 </script>
@@ -38,6 +44,9 @@
 <div class="chat"><div id="chat-ce" contenteditable="true"></div>
   <button id="chat-send" type="button" aria-label="Send message">Gönder</button></div>
 <form id="chat-form"><textarea id="chat-ta"></textarea><button id="chat-submit" type="submit">➤</button></form>
+
+<h2>Cevap: sohbet sitesi taklidi</h2>
+<p id="reply"></p>
 
 <h2>Dosya ekleme: sohbet sitesi taklidi</h2>
 <!-- Site gibi davranır: bırakılan / seçilen / yapıştırılan dosyaları window.__uploads'a ekler -->
@@ -55,6 +64,14 @@
   drop.addEventListener("drop", (e) => { e.preventDefault(); record(e.dataTransfer.files, "drop"); });
   document.getElementById("file").addEventListener("change", (e) => record(e.target.files, "input"));
   document.getElementById("chat-ta").addEventListener("paste", (e) => { if (e.clipboardData.files.length) record(e.clipboardData.files, "paste"); });
+
+  // Kullanıcının yapıştırması taklidi. Firefox kurucudaki clipboardData'yı yok sayar: olayın üstüne yazılır
+  // (yalnızca test; gerçek yapıştırmada tarayıcı doldurur)
+  function pasteEvent(dt) {
+    const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+    if (ev.clipboardData !== dt) Object.defineProperty(ev, "clipboardData", { value: dt });
+    return ev;
+  }
 
   // Test yardımcıları: gerçek DragEvent / input.files ile dosya ekle
   window.makeFile = (name, text, type = "") => new File([text], name, { type });
@@ -76,7 +93,7 @@
     el.focus();
     const dt = new DataTransfer();
     files.forEach((f) => dt.items.add(f));
-    const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+    const ev = pasteEvent(dt);
     el.dispatchEvent(ev);
     return ev.defaultPrevented;
   };
@@ -110,7 +127,7 @@
     el.focus();
     const dt = new DataTransfer();
     dt.setData("text/plain", text);
-    const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+    const ev = pasteEvent(dt);
     el.dispatchEvent(ev);
     return ev.defaultPrevented;
   };
