@@ -342,13 +342,13 @@
   }
 
   // ---------- maskeli önizleme ----------
-  const PREVIEW_CONTEXT = 60, PREVIEW_MAX_VALUES = 30, PREVIEW_MAX_EXCERPTS = 30;
+  const PREVIEW_MAX_VALUES = 30;
   // Sırlar pencerede tam görünmesin (ekran paylaşımı); hangisi olduğu ilk karakterlerden anlaşılır
   const showValue = (entity, value) => entity.startsWith("SECRET_") ? value.slice(0, 4) + "…"
     : value.length > 48 ? value.slice(0, 47) + "…" : value;
 
-  /** Yakalanan değerler ve metnin maskeli hali (çerçevede). selectable: değerin işareti kaldırılabilir.
-   *  Seçim durumu burada tutulur; çerçeve yalnızca gösterir ve tıklamayı bildirir. */
+  /** Yakalanan değerler (çerçevede; varsayılan kapalı, "Değerleri göster" ile açılır). selectable: değerin
+   *  işareti kaldırılabilir. Seçim durumu burada tutulur; çerçeve yalnızca gösterir ve tıklamayı bildirir. */
   function previewPanel(text, findings, { selectable = false, caption = "", state = pageVault } = {}) {
     const maskWith = (chosen) => D.mask(text, { continueNumbering: true, findings: chosen, state });
     const groups = new Map();   // yer tutucu -> aynı değerin tüm geçişleri (farklı yazımlar dahil)
@@ -367,39 +367,18 @@
         return { label: D.label(first.entity), value: showValue(first.entity, text.slice(first.start, first.end)), on: g.on,
                  ph: g.on ? `→ ${placeholders.get(first.start)}` : "maskelenmez" };
       });
-      const all = list.flatMap((g) => g.members).sort((a, b) => a.start - b.start);
-      const windows = [];
-      for (const f of all) {
-        const from = Math.max(0, f.start - PREVIEW_CONTEXT), to = Math.min(text.length, f.end + PREVIEW_CONTEXT);
-        const last = windows[windows.length - 1];
-        if (last && from <= last.to) last.to = to; else windows.push({ from, to });
-      }
-      const segments = [];
-      for (const w of windows.slice(0, PREVIEW_MAX_EXCERPTS)) {
-        if (w.from > 0) segments.push("…");
-        let cursor = w.from;
-        for (const f of all.filter((x) => x.start >= w.from && x.end <= w.to)) {
-          segments.push(text.slice(cursor, f.start));
-          const ph = placeholders.get(f.start);
-          segments.push(ph ? { mark: ph } : { kept: showValue(f.entity, text.slice(f.start, f.end)) });
-          cursor = f.end;
-        }
-        segments.push(text.slice(cursor, w.to));
-        if (w.to < text.length) segments.push("…\n");
-      }
-      if (windows.length > PREVIEW_MAX_EXCERPTS) segments.push(`ve ${windows.length - PREVIEW_MAX_EXCERPTS} yer daha`);
-      return { kind: "preview", selectable, caption, rows, segments,
+      return { kind: "preview", selectable, caption, rows, count: list.length,
                more: list.length > PREVIEW_MAX_VALUES ? `ve ${list.length - PREVIEW_MAX_VALUES} değer daha (hepsi maskelenir)` : "" };
     }
 
     const panel = { selected: () => pick(true), kept: () => pick(false), selectable, ready: false,
-                    onChange: () => {}, onReady: () => {}, onEscape: () => {}, onLeave: () => {},
+                    onChange: () => {}, onEscape: () => {}, onLeave: () => {},
                     masked: () => { const m = maskChosen(); remember(m.state); return m.text; } };
     const { frame, post } = secureFrame((m) => {
       if (m.type === "ready") post(model());
       if (m.type === "size") {
         frame.style.height = `${m.height}px`;
-        if (!panel.ready) { panel.ready = true; frame.hidden = false; panel.onReady(); }
+        if (!panel.ready) { panel.ready = true; frame.hidden = false; }
       }
       if (m.type === "toggle" && list[m.i]) { list[m.i].on = !list[m.i].on; post(model()); panel.onChange(); }
       if (m.type === "escape") panel.onEscape();
@@ -454,9 +433,9 @@
       return ul;
     };
     if (items && items.length) list(items);
-    // summary: tür ve adet. Çerçeve açılınca gereksiz; açılmazsa (sitenin CSP'si) kullanıcı bunu görür
-    const summaryEl = summary && summary.length ? list(summary) : null;
-    previews.forEach((pv) => { pv.onReady = () => { if (summaryEl) summaryEl.hidden = true; }; box.append(pv.el); });
+    // summary: tür ve adet, her zaman görünür; değerler çerçevede istenirse açılır (çerçeve açılmazsa yalnızca özet)
+    if (summary && summary.length) list(summary);
+    previews.forEach((pv) => box.append(pv.el));
     const row = document.createElement("div");
     row.className = "row";
     const close = () => host.remove();
@@ -485,8 +464,8 @@
     root.append(style, back);
     back.addEventListener("keydown", (e) => {
       if (e.key === "Escape") { e.preventDefault(); cancel(); }
-      if (e.key === "Tab") {           // odak pencerede kalsın (çerçevedeki işaretler dahil)
-        const frames = previews.filter((pv) => pv.selectable && pv.ready);
+      if (e.key === "Tab") {           // odak pencerede kalsın (çerçevedeki düğme ve işaretler dahil)
+        const frames = previews.filter((pv) => pv.ready);
         const focusable = [...frames.map((pv) => pv.el), ...els.filter((b) => !b.disabled)];
         const i = focusable.indexOf(root.activeElement);
         const next = focusable[e.shiftKey ? (i <= 0 ? focusable.length - 1 : i - 1) : (i + 1) % focusable.length];

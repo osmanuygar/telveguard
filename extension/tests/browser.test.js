@@ -22,16 +22,24 @@ const server = http.createServer((req, res) => {
   res.end(fs.readFileSync(file));
 });
 
-// Değerler çerçevede: test sayfasında aynı köken, içine bakılabilir (gerçek sitede bakılamaz)
-const state = async (p) => {
+// Değerler çerçevede: test sayfasında aynı köken, içine bakılabilir (gerçek sitede bakılamaz).
+// Değerler varsayılan kapalı; open: "Değerleri göster" tıklanmış gibi okunur
+const state = async (p, { open = true } = {}) => {
   await p.waitForFunction(() => { const d = window.__telveguardDialog; return d && d.previews.every((x) => x.ready); });
+  if (open) {
+    await p.evaluate(() => window.__telveguardDialog.previews.forEach((x) => {
+      const t = x.el.contentDocument.querySelector(".toggle");
+      if (t && t.getAttribute("aria-expanded") === "false") t.click();
+    }));
+  }
   return p.evaluate(() => {
     const d = window.__telveguardDialog;
     const docs = d.previews.map((x) => x.el.contentDocument);
     const all = (q) => docs.flatMap((x) => [...x.querySelectorAll(q)]);
     return { text: d.root.textContent + docs.map((x) => x.body.textContent).join(" "), dialogText: d.root.textContent,
-             boxes: all("input[type=checkbox]").length, marks: all("mark").map((m) => m.textContent), imgs: all("img").length,
-             ph: all(".ph").map((x) => x.textContent), disabled: d.buttons.filter((b) => b.disabled).map((b) => b.textContent) };
+             boxes: all("input[type=checkbox]").length, imgs: all("img").length, toggles: all(".toggle").map((x) => x.textContent),
+             ph: all(".ph").map((x) => x.textContent), disabled: d.buttons.filter((b) => b.disabled).map((b) => b.textContent),
+             heights: d.previews.map((x) => x.el.getBoundingClientRect().height) };
   });
 };
 const uncheck = async (p, i) => {
@@ -67,11 +75,23 @@ const maskAndSend = async (p, text) => {
 };
 
 const TESTS = {
-  "yapıştırma: değerler, maskeli metin, sır kısaltılır": async (p) => {
+  "yapıştırma: değerler varsayılan kapalı, özet görünür": async (p) => {
+    await paste(p, `Mail a@ornek.com ve b@ornek.com, anahtar ${SECRET} son`);
+    const s = await state(p, { open: false });
+    assert.deepEqual(s.toggles, ["▸ Değerleri göster (3)"]);
+    assert.equal(s.boxes, 0);
+    assert.ok(!s.text.includes("a@ornek.com"), "kapalıyken değer görünüyor");
+    assert.ok(s.dialogText.includes("E-posta"), "özet yok");
+    assert.ok(s.heights[0] > 10 && s.heights[0] < 40, "kapalı çerçeve yüksekliği: " + s.heights[0]);
+    const o = await state(p);
+    assert.deepEqual(o.toggles, ["▾ Değerleri gizle"]);
+    assert.ok(o.heights[0] > s.heights[0]);
+  },
+  "yapıştırma: değerler ve yer tutucular, sır kısaltılır": async (p) => {
     await paste(p, `Mail a@ornek.com ve b@ornek.com, anahtar ${SECRET} son`);
     const s = await state(p);
     assert.equal(s.boxes, 3);
-    assert.deepEqual(s.marks.slice(0, 2), ["[EMAIL_ADDRESS_1]", "[EMAIL_ADDRESS_2]"]);
+    assert.deepEqual(s.ph.slice(0, 2), ["→ [EMAIL_ADDRESS_1]", "→ [EMAIL_ADDRESS_2]"]);
     assert.ok(!s.text.includes(SECRET), "sırrın tamamı pencerede");
     assert.ok(s.text.includes("ghp_…") && s.text.includes("a@ornek.com"));
   },
@@ -119,7 +139,7 @@ const TESTS = {
     await paste(p, "Mail a@ornek.com");
     const s = await state(p);
     assert.equal(s.boxes, 0);
-    assert.deepEqual(s.marks, ["[EMAIL_ADDRESS_1]"]);
+    assert.deepEqual(s.ph, ["→ [EMAIL_ADDRESS_1]"]);
     await p.keyboard.press("Escape");
     assert.equal(await p.evaluate(() => window.dialogOpen()), false);
     assert.equal(await p.inputValue("#ta"), "");
@@ -153,14 +173,22 @@ const TESTS = {
     assert.equal((await state(p)).imgs, 0);
     assert.equal(await p.evaluate(() => window.__xss), undefined);
   },
-  "klavye: Tab işarete ulaşır, Boşluk kaldırır": async (p) => {
+  "klavye: Tab düğmeye ulaşır, değerler açılır, Boşluk işareti kaldırır": async (p) => {
     await paste(p, "Mail a@ornek.com");
-    let hit = false;
-    for (let i = 0; i < 6 && !hit; i++) {
-      await p.keyboard.press("Tab");
-      hit = await p.evaluate(() => window.__telveguardDialog.previews[0].el.contentDocument.activeElement?.type === "checkbox");
-    }
-    assert.ok(hit, "Tab işarete ulaşmadı");
+    await state(p, { open: false });
+    const active = () => p.evaluate(() => {
+      const a = window.__telveguardDialog.previews[0].el.contentDocument.activeElement;
+      return a?.type === "checkbox" ? "checkbox" : a?.className;
+    });
+    const tabTo = async (want) => {
+      for (let i = 0; i < 6; i++) { await p.keyboard.press("Tab"); if (await active() === want) return; }
+      assert.fail(`Tab ${want} öğesine ulaşmadı`);
+    };
+    await tabTo("toggle");
+    await p.keyboard.press("Enter");
+    await p.waitForTimeout(50);
+    assert.equal(await active(), "toggle", "açınca odak düğmede kalmalı");
+    await tabTo("checkbox");
     await p.keyboard.press("Space");
     await p.waitForTimeout(50);
     assert.deepEqual((await state(p)).ph, ["maskelenmez"]);
@@ -234,7 +262,7 @@ const TESTS = {
     assert.ok(s.text.includes("a@ornek.com"), "çerçevede olmalı");
     const seen = await p.evaluate(() => { const d = window.__telveguardDialog, f = d.previews[0].el; return { h: f.getBoundingClientRect().height, v: getComputedStyle(f).visibility, ul: d.root.querySelector("ul")?.hidden }; });
     assert.ok(seen.h > 30 && seen.v === "visible", "çerçeve görünmüyor: " + JSON.stringify(seen));
-    assert.equal(seen.ul, true, "çerçeve açıkken özet gizli");
+    assert.equal(seen.ul, false, "özet her zaman görünür");
     assert.ok(!s.dialogText.includes("a@ornek.com"), "pencerede değer var");
     assert.ok(!(await p.evaluate(() => window.__telveguardDialog.root.querySelector(".box").textContent)).includes("ornek"));
   },

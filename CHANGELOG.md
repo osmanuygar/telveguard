@@ -2,6 +2,12 @@
 
 ## Yayınlanmamış
 
+### Tarayıcı eklentisi
+
+- Uyarı penceresi kısaldı: varsayılan olarak yalnızca veri türleri görünür (0.6.0'daki gibi); değerler ve
+  yer tutucular "Değerleri göster (N)" ile açılır. Metnin maskeli parçaları (her bulgunun çevresi) artık
+  gösterilmiyor. Yanlış alarm işaretleme değişmedi; değerler kapalıyken her şey maskelenir.
+
 ### Kurulum
 
 - OKD üretim kurulum belgesi (bastion'dan, adım adım): `docs/okd-kurulum.md`; örnek değerler

@@ -8,6 +8,8 @@
 (function () {
   const root = document.getElementById("root");
   let port = null;
+  let open = false;   // değerler varsayılan kapalı: pencere kısa kalsın, ekran paylaşımında değer görünmesin
+  let last = null;
 
   const el = (tag, className, text) => {
     const e = document.createElement(tag);
@@ -20,13 +22,21 @@
     const b = (root.querySelector("#tip") || root).getBoundingClientRect();
     port.postMessage({ type: "size", width: Math.ceil(b.width), height: Math.ceil(b.height) });
   };
-  const boxes = () => [...root.querySelectorAll("input[type=checkbox]")];
+  const focusables = () => [...root.querySelectorAll("button, input[type=checkbox]")];
 
   function renderPreview(m) {
-    const focused = boxes().indexOf(document.activeElement);
-    const scroll = root.querySelector(".excerpts")?.scrollTop || 0;
+    last = m;
+    const focused = focusables().indexOf(document.activeElement);
+    const scroll = root.querySelector(".values")?.scrollTop || 0;
     root.textContent = "";
     if (m.caption) root.append(el("div", "caption", m.caption));
+    const toggle = el("button", "toggle", open ? "▾ Değerleri gizle" : `▸ Değerleri göster (${m.count})`);
+    toggle.type = "button";
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.addEventListener("click", () => { open = !open; renderPreview(last); });
+    root.append(toggle);
+    if (!open) { restoreFocus(focused); report(); return; }
+    const values = el("div", "values");
     m.rows.forEach((r, i) => {
       const row = el(m.selectable ? "label" : "div", "value");
       if (m.selectable) {
@@ -38,20 +48,18 @@
         row.append(box);
       }
       row.append(el("span", "type", r.label), el("code", "", r.value), el("span", "ph", r.ph));
-      root.append(row);
+      values.append(row);
     });
+    root.append(values);
+    values.scrollTop = scroll;
     if (m.more) root.append(el("div", "muted", m.more));
-    const excerpts = el("div", "excerpts");
-    excerpts.setAttribute("aria-label", "Maskeli metin önizlemesi");
-    for (const s of m.segments) {
-      if (typeof s === "string") excerpts.append(s);
-      else if (s.mark) excerpts.append(el("mark", "", s.mark));
-      else excerpts.append(el("span", "kept", s.kept));
-    }
-    root.append(excerpts);
-    excerpts.scrollTop = scroll;
-    if (focused >= 0 && boxes()[focused]) boxes()[focused].focus();
+    restoreFocus(focused);
     report();
+  }
+
+  function restoreFocus(i) {
+    const f = focusables();
+    if (i >= 0) (f[i] || f[0]).focus();
   }
 
   function renderTip(m) {
@@ -65,7 +73,7 @@
     if (!port) return;
     if (e.key === "Escape") { e.preventDefault(); port.postMessage({ type: "escape" }); }
     if (e.key === "Tab") {
-      const b = boxes();
+      const b = focusables();
       const i = b.indexOf(document.activeElement);
       const next = i + (e.shiftKey ? -1 : 1);
       if (next >= 0 && next < b.length) { e.preventDefault(); b[next].focus(); return; }
@@ -80,7 +88,7 @@
     port.onmessage = ({ data: m }) => {
       if (m.kind === "preview") renderPreview(m);
       if (m.kind === "tip") renderTip(m);
-      if (m.kind === "focus") { const b = boxes(); (m.last ? b[b.length - 1] : b[0])?.focus(); }
+      if (m.kind === "focus") { const b = focusables(); (m.last ? b[b.length - 1] : b[0])?.focus(); }
     };
     port.postMessage({ type: "ready" });
   });

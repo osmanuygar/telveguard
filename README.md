@@ -912,9 +912,9 @@ için Chrome / Edge eklentisi: `extension/` (Manifest V3).
   "Maskele ve gönder" / "Düzenle" / "Yine de gönder". Değerler `[TCKN_1]` gibi yer tutucu olur;
   kutuda önceden maskelenmiş `[TCKN_1]` varsa yeni değer `[TCKN_2]` olur. "Yine de" denen değer aynı
   sayfada ikinci kez sorulmaz.
-- **Maskeli önizleme:** pencere yakalanan değerleri ve metnin maskeli halini gösterir; sırların yalnızca
-  ilk karakterleri görünür. Uyar modunda yapıştırma ve gönderimde hassas olmayan değerin işareti
-  kaldırılabilir: o değer maskelenmez, aynı sayfada yeniden sorulmaz ve "yanlış alarm" gerekçesiyle
+- **Maskeli önizleme:** pencere veri türlerini gösterir; "Değerleri göster" ile yakalanan değerler ve
+  yerlerine gidecek yer tutucular açılır (sırların yalnızca ilk karakterleri). Uyar modunda yapıştırma ve
+  gönderimde hassas olmayan değerin işareti kaldırılabilir: o değer maskelenmez, aynı sayfada yeniden sorulmaz ve "yanlış alarm" gerekçesiyle
   kayda yazılır (tür ve adet; değer yazılmaz). Dosyalarda ve engelle modunda önizleme salt okunurdur.
 - **Yerel geri açma:** sayfadaki `[TCKN_1]` üzerine gelince değer ipucunda görünür (sırların yalnızca
   başı). Eşleme yalnızca eklentinin belleğinde durur: sitenin DOM'una yazılmaz, sayfa yenilenince silinir,
