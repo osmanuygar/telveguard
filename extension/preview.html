@@ -8,21 +8,20 @@
   body { font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
   .caption { font-weight: 600; margin-bottom: 4px; overflow-wrap: anywhere; }
   .value { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; }
-  .value code, .excerpts { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .value code { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .value code { overflow-wrap: anywhere; }
   .type { color: #52514e; white-space: nowrap; }
   .ph { color: #8a4b1f; white-space: nowrap; margin-left: auto; }
   .muted { font-size: 12px; color: #898781; margin-top: 4px; }
-  .excerpts { margin: 8px 0 0; padding: 8px 10px; max-height: 160px; overflow-y: auto; white-space: pre-wrap;
-              overflow-wrap: anywhere; background: rgba(11,11,11,.05); border-radius: 8px; }
-  mark { background: rgba(138,75,31,.18); color: inherit; border-radius: 3px; }
-  .kept { text-decoration: underline dotted; }
+  .toggle { font: inherit; color: #52514e; background: none; border: 0; padding: 2px 0; cursor: pointer; }
+  .toggle:hover { color: inherit; text-decoration: underline; }
+  .toggle:focus-visible { outline: 2px solid #2a78d6; outline-offset: 2px; border-radius: 4px; }
+  .values { margin-top: 4px; max-height: 200px; overflow-y: auto; }
   body.tip { background: #0b0b0b; color: #fff; font-size: 12px; line-height: 1.4; }
   #tip { display: inline-block; padding: 5px 8px; max-width: 344px; overflow-wrap: anywhere; }
   @media (prefers-color-scheme: dark) {
     html, body { background: #1a1a19; color: #fff; }
-    .type { color: #c3c2b7; } .ph { color: #e0a871; }
-    .excerpts { background: rgba(255,255,255,.07); } mark { background: rgba(224,168,113,.28); }
+    .type, .toggle { color: #c3c2b7; } .ph { color: #e0a871; }
     body.tip { background: #fff; color: #0b0b0b; }
   }
 </style>
