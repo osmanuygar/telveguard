@@ -14,7 +14,11 @@ kullanıcı, ekip ve ilgili kişi özetleri vardır: düz metin bağlantı ve ye
 (sahte denetim kaydı) üretimde kabul edilemez.
 Kafka çalışırken erişilemez olursa istek BOZULMAZ (politika zaten uygulanmıştır):
 olay stdout'a düşer (log toplayıcı alır) ve "audit_kafka_failed" hatası loglanır.
+Açılışta erişilemezse de gateway açılır (Kafka bakımı yapay zekâ trafiğini kesmesin): olaylar
+stdout'a yazılır, arka planda artan aralıklarla yeniden bağlanılır ("audit_kafka_unavailable").
+Yapılandırma hatası (ör. eksik SASL şifresi) ise açılışı durdurur: yanlış kurulum sessiz kalmasın.
 """
+import asyncio
 import hashlib
 import json
 import logging
@@ -24,6 +28,8 @@ import uuid
 from typing import Optional
 
 from .metrics import AUDIT_FAILURES
+
+RECONNECT_MIN_SECONDS, RECONNECT_MAX_SECONDS = 2.0, 60.0
 
 log = logging.getLogger("telveguard.audit")
 
@@ -65,19 +71,49 @@ class AuditSink:
         self.topic = os.getenv("KAFKA_AUDIT_TOPIC", "telveguard.audit.v1")
         self.store_masked = os.getenv("AUDIT_STORE_MASKED") == "1"
         self._producer = None
+        self._security = None
+        self._reconnect_task = None
 
     async def start(self):
-        if self.bootstrap:
-            from aiokafka import AIOKafkaProducer
+        if not self.bootstrap:
+            return
+        self._security = kafka_security()   # yapılandırma hatası açılışı durdurur
+        if not await self._connect():
+            self._reconnect_task = asyncio.create_task(self._reconnect())
 
-            self._producer = AIOKafkaProducer(
-                bootstrap_servers=self.bootstrap,
-                value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode(),
-                acks="all", enable_idempotence=True, linger_ms=20, **kafka_security(),
-            )
-            await self._producer.start()
+    async def _connect(self) -> bool:
+        from aiokafka import AIOKafkaProducer
+
+        producer = AIOKafkaProducer(
+            bootstrap_servers=self.bootstrap,
+            value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode(),
+            acks="all", enable_idempotence=True, linger_ms=20, **self._security,
+        )
+        try:
+            await producer.start()
+        except Exception as e:
+            log.error("audit_kafka_unavailable bootstrap=%s error=%s: olaylar bağlanana kadar stdout'a yazılıyor",
+                      self.bootstrap, type(e).__name__)
+            try:
+                await producer.stop()
+            except Exception:
+                pass
+            return False
+        self._producer = producer
+        log.info("audit_kafka_connected bootstrap=%s", self.bootstrap)
+        return True
+
+    async def _reconnect(self):
+        delay = RECONNECT_MIN_SECONDS
+        while True:
+            await asyncio.sleep(delay)
+            if await self._connect():
+                return
+            delay = min(delay * 2, RECONNECT_MAX_SECONDS)
 
     async def stop(self):
+        if self._reconnect_task:
+            self._reconnect_task.cancel()
         if self._producer:
             await self._producer.stop()
 
@@ -117,5 +153,8 @@ class AuditSink:
             except Exception as e:  # Kafka hatası kullanıcı isteğini 500'e çevirmesin
                 AUDIT_FAILURES.inc()
                 log.error("audit_kafka_failed event_id=%s error=%s", event["event_id"], type(e).__name__)
-        # Yedek yol: olay kaybolmasın (ham prompt zaten olayda yok)
-        log.info(json.dumps(event, ensure_ascii=False))
+        elif self.bootstrap:   # Kafka tanımlı ama henüz bağlanılamadı: alarm için sayılır
+            AUDIT_FAILURES.inc()
+        # Yedek yol: olay kaybolmasın (ham prompt zaten olayda yok). Log değil veri: log seviyesinden
+        # bağımsız, düz JSON satırı (log toplayıcı ayrıştırır)
+        print(json.dumps(event, ensure_ascii=False), flush=True)

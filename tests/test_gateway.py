@@ -175,7 +175,7 @@ def test_blocked_request_costs_zero(client):
     assert events[-1]["action"] == "block" and events[-1]["est_cost_usd"] == 0.0
 
 
-def test_kafka_failure_does_not_break_request_and_event_is_not_lost(client, caplog):
+def test_kafka_failure_does_not_break_request_and_event_is_not_lost(client, caplog, capsys):
     """Kafka düşerse kullanıcının (politikası uygulanmış) isteği 500'e dönmemeli;
     olay kaybolmasın diye pod loguna (stdout) yazılmalı."""
     import logging
@@ -193,9 +193,18 @@ def test_kafka_failure_does_not_break_request_and_event_is_not_lost(client, capl
             "model": "gpt-4o", "messages": [{"role": "user", "content": f"TC {make_tckn()}"}]})
     assert r.status_code == 200
     assert any("audit_kafka_failed" in m for m in caplog.messages)
-    fallback = [m for m in caplog.messages if m.startswith("{")]
-    assert fallback and '"action": "mask"' in fallback[-1] and make_tckn() not in fallback[-1]
+    # Yedek log seviyesinden bağımsız, düz JSON satırı (önceden INFO log'du: container'da kayboluyordu)
+    fallback = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("{")]
+    assert fallback and json.loads(fallback[-1])["action"] == "mask" and make_tckn() not in fallback[-1]
     client.app.state.audit._producer = None
+
+
+def test_app_info_logs_reach_stdout():
+    """uvicorn kök logger'a handler koymaz: telveguard.* INFO logları (yönetici erişimi, KVKK araması)
+    kendi handler'ıyla stdout'a gitmeli."""
+    import logging
+    root = logging.getLogger("telveguard")
+    assert root.handlers and logging.getLogger("telveguard.admin").isEnabledFor(logging.INFO)
 
 
 # ---------------- istek gövdesi sınırı ----------------

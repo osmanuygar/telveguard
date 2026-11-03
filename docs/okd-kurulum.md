@@ -235,7 +235,7 @@ Kontrol listesi:
       Kafka → ClickHouse hattı çalışıyor.
 - [ ] Token'sız istek `401` dönüyor.
 - [ ] Prometheus'ta (OKD user workload monitoring) `telveguard_` metrikleri geliyor.
-- [ ] Pod logunda `audit_kafka_failed` yok: `oc logs deploy/telveguard-telveguard-gateway | grep -c audit_kafka_failed`.
+- [ ] Pod logunda Kafka hatası yok: `oc logs deploy/telveguard-telveguard-gateway | grep -c -E 'audit_kafka_(failed|unavailable)'`.
 
 İstemcilerin (SDK, Claude Code, `telve`) adresi: `https://$HOST/v1` (Anthropic biçimi için
 `https://$HOST`).
@@ -282,7 +282,8 @@ helm rollback telveguard <revizyon>
 | Pod `CrashLoopBackOff`, logda `TELVEGUARD_SUBJECT_HASH_KEY en az 32 karakter` | `subject-hash-key` kısa |
 | Route `503` / bağlantı yok | NetworkPolicy router namespace'ine izin vermiyor (`openshift-ingress`) |
 | Tüm istekler `401` | Token'ın `aud` değeri `auth.oidc.audience` ile aynı değil ya da pod JWKS adresine çıkamıyor |
-| Logda `audit_kafka_failed` | Kafka adresi, SASL kullanıcısı / şifresi ya da CA; olaylar kaybolmaz, pod loguna yazılır |
+| Logda `audit_kafka_failed` / `audit_kafka_unavailable` | Kafka adresi, SASL kullanıcısı / şifresi ya da CA. Gateway çalışmaya devam eder; olaylar pod loguna JSON satırı olarak yazılır, Kafka dönünce `audit_kafka_connected` |
+| `/metrics` 503 "metrics token tanımlı değil" | `metrics.requireToken` açık ama Secret'ta `metrics-token` yok |
 | Röntgen boş, Kafka'da olay var | ClickHouse `audit_queue` yanlış broker'a bakıyor ya da Kafka SASL ayarı ClickHouse'ta yok (6. adım) |
 | Röntgen `503` | `clickhouse.url` boş ya da `clickhouse-password` yanlış |
 | İstek `413 request_too_large` | Gövde `maxRequestBytes` sınırını aşıyor (32 MB) |

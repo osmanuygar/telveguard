@@ -17,6 +17,7 @@ import hmac
 import logging
 import os
 import re
+import sys
 import time
 import uuid
 from collections import Counter
@@ -112,6 +113,19 @@ async def lifespan(app: FastAPI):
     await app.state.http.aclose()
 
 
+def _setup_logging():
+    """telveguard.* logları stdout'a (varsayılan INFO, LOG_LEVEL ile). uvicorn kök logger'a handler koymaz;
+    olmasa INFO logları (yönetici erişimi, KVKK başvuru araması, politika sürümleri) hiçbir yere yazılmazdı."""
+    root = logging.getLogger("telveguard")
+    if root.handlers:
+        return
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+    root.addHandler(handler)
+    root.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
+
+
+_setup_logging()
 admin_log = logging.getLogger("telveguard.admin")
 log = logging.getLogger("telveguard.gateway")
 app = FastAPI(title="Telveguard Gateway", version="0.7.0", lifespan=lifespan)
@@ -475,6 +489,9 @@ async def metrics_endpoint(request: Request):
     """METRICS_TOKEN tanımlıysa yalnızca o token'la (Prometheus / ServiceMonitor). Metriklerde kişisel
     veri yoktur ama kural adları, ekip dışı trafik hacmi ve hata oranları kuruma özgüdür."""
     expected = os.getenv("METRICS_TOKEN", "")
+    # Token zorunlu (Helm metrics.requireToken) ama Secret'ta yoksa uç açık kalmasın, kapansın
+    if not expected and os.getenv("METRICS_REQUIRE_TOKEN") == "1":
+        return Response("metrics token tanımlı değil\n", status_code=503, media_type="text/plain")
     if expected:
         header = request.headers.get("authorization", "")
         given = header[7:].strip() if header.lower().startswith("bearer ") else ""

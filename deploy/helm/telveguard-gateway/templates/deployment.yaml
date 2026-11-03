@@ -228,6 +228,9 @@ spec:
             {{- include "tg.secretEnv" (dict "env" "CONTEXTFORGE_TOKEN" "secret" $secret "key" "contextforge-token") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "TELVEGUARD_SUBJECT_HASH_KEY" "secret" $secret "key" "subject-hash-key") | nindent 12 }}
             {{- if .Values.metrics.requireToken }}
+            # Secret'ta metrics-token yoksa /metrics açık kalmaz, 503 döner
+            - name: METRICS_REQUIRE_TOKEN
+              value: "1"
             {{- include "tg.secretEnv" (dict "env" "METRICS_TOKEN" "secret" $secret "key" "metrics-token") | nindent 12 }}
             {{- end }}
             {{- if hasPrefix "SASL_" .Values.audit.kafka.securityProtocol }}

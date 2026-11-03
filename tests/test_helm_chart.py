@@ -257,6 +257,8 @@ def test_metrics_token_wires_env_and_service_monitor():
     docs = render("--set", "metrics.requireToken=true", "--set", "secrets.metricsToken=prom",
                   "--set", "metrics.serviceMonitor.enabled=true")
     assert env(docs)["METRICS_TOKEN"]["valueFrom"]["secretKeyRef"]["key"] == "metrics-token"
+    assert env(docs)["METRICS_REQUIRE_TOKEN"]["value"] == "1"     # anahtar Secret'ta yoksa /metrics kapanır
+    assert "METRICS_REQUIRE_TOKEN" not in env(render())
     auth = docs[("ServiceMonitor", "tg-telveguard-gateway")]["spec"]["endpoints"][0]["authorization"]
     assert auth == {"type": "Bearer", "credentials": {"name": "tg-telveguard-gateway", "key": "metrics-token"}}
     assert docs[("Secret", "tg-telveguard-gateway")]["stringData"]["metrics-token"] == "prom"

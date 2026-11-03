@@ -702,13 +702,15 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `UPSTREAM_ANTHROPIC_URL`, `UPSTREAM_ANTHROPIC_KEY` | Anthropic biçimi için upstream (varsayılan `https://api.anthropic.com`) |
 | `UPSTREAM_ANTHROPIC_INTERNAL_URL`, `UPSTREAM_ANTHROPIC_INTERNAL_KEY` | Anthropic biçimini kabul eden kurum içi sunucu (opsiyonel) |
 | `POLICY_PATH`, `INVENTORY_PATH` | Politika dosyası ve AI sistem beyanları (envanter) |
-| `KAFKA_BOOTSTRAP`, `KAFKA_AUDIT_TOPIC` | Denetim kaydı; boşsa olaylar stdout'a yazılır |
+| `KAFKA_BOOTSTRAP`, `KAFKA_AUDIT_TOPIC` | Denetim kaydı; boşsa olaylar stdout'a JSON satırı olarak yazılır. Kafka'ya ulaşılamazsa (açılışta da) gateway çalışır: olaylar stdout'a, arka planda yeniden bağlanılır (`audit_kafka_unavailable` / `audit_kafka_connected`; `telveguard_audit_failures` sayar) |
 | `KAFKA_SECURITY_PROTOCOL`, `KAFKA_SASL_MECHANISM`, `KAFKA_SASL_USERNAME` / `_PASSWORD`, `KAFKA_SSL_CA_FILE`, `KAFKA_SSL_CERT_FILE` / `_KEY_FILE` | Kafka bağlantı güvenliği: `SSL`, `SASL_SSL` (SCRAM-SHA-512 varsayılan), `SASL_PLAINTEXT`; varsayılan `PLAINTEXT` |
 | `AUDIT_STORE_MASKED=1` | Maskelenmiş prompt da saklansın (ham prompt hiçbir zaman saklanmaz) |
 | `CLICKHOUSE_URL`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB` | Röntgen ve KVKK raporu için (yalnızca okuma yetkili kullanıcı önerilir) |
 | `SHADOW_AI_TOKEN` | Tarayıcı eklentisi olay token'ı; boşsa `/v1/shadow-ai/events` kapalı |
 | `SHADOW_AI_USER_PER_MIN`, `SHADOW_AI_GLOBAL_PER_MIN` | Eklenti olay sınırı: beyan edilen kullanıcı başına (300) ve worker genelinde (20000) dakikalık; aşan parti 429 (eklenti sonra yeniden dener) |
 | `METRICS_TOKEN` | Doluysa `/metrics` yalnızca `Authorization: Bearer <token>` ile (Helm: `metrics.requireToken`) |
+| `METRICS_REQUIRE_TOKEN=1` | Token zorunlu: `METRICS_TOKEN` boşsa `/metrics` açık kalmaz, 503 döner (Helm `metrics.requireToken` verir) |
+| `LOG_LEVEL` | Uygulama logları (`telveguard.*`, stdout); varsayılan `INFO` (yönetici erişimi, KVKK başvuru araması, politika sürümleri bu seviyede) |
 | `SLACK_SECURITY_WEBHOOK_URL`, `TEAMS_SECURITY_WEBHOOK_URL`, `*_WEBHOOK_URL` | Bildirim kanallarının adresleri (politikadaki `notify.channels[].url_env`) |
 | `TELVEGUARD_SUBJECT_HASH_KEY`, `TELVEGUARD_SUBJECT_HASH_KEY_OLD` | İlgili kişi araması için özet anahtarı (en az 32 karakter); boşsa kapalı |
 | `TELVEGUARD_PUBLIC_URL` | Bildirimlerdeki "Konsolda aç" bağlantısının tabanı (politikada `notify.console_url` yoksa) |
