@@ -47,7 +47,10 @@ def test_versions_are_consistent():
     # Aynı sürümle dağıtılan diğer bileşenler de unutulmasın
     v = core["version"]
     chart = yaml.safe_load((ROOT / "deploy/helm/telveguard-gateway/Chart.yaml").read_text(encoding="utf-8"))
-    assert chart["version"] == chart["appVersion"] == v, "Helm Chart.yaml version / appVersion"
+    assert chart["appVersion"] == v, "Helm Chart.yaml appVersion"
+    # Chart yalnızca chart'ı ilgilendiren değişiklikle patch alabilir (imaj aynı): 0.7.0 imajı, chart 0.7.1
+    chart_v, app_v = (tuple(map(int, x.split("."))) for x in (chart["version"], v))
+    assert chart_v[:2] == app_v[:2] and chart_v >= app_v, "Helm Chart.yaml version"
     import json
     assert json.loads((ROOT / "extension/manifest.json").read_text(encoding="utf-8"))["version"] == v
     cf_cfg = yaml.safe_load((ROOT / "contextforge/plugins-telveguard.yaml").read_text(encoding="utf-8"))

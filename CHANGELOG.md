@@ -8,6 +8,11 @@
   yer tutucular "Değerleri göster (N)" ile açılır. Metnin maskeli parçaları (her bulgunun çevresi) artık
   gösterilmiyor. Yanlış alarm işaretleme değişmedi; değerler kapalıyken her şey maskelenir.
 
+## Helm chart 0.7.1 — 2026-11-03
+
+Yalnızca chart; imaj ve paketler 0.7.0 (`appVersion: 0.7.0`). Chart Harbor'da OCI paketi olarak da
+dağıtılabilir (`docs/okd-kurulum.md`, 1. adım).
+
 ### Kurulum
 
 - OKD üretim kurulum belgesi (bastion'dan, adım adım): `docs/okd-kurulum.md`; örnek değerler
