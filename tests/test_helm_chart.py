@@ -260,3 +260,15 @@ def test_metrics_token_wires_env_and_service_monitor():
     auth = docs[("ServiceMonitor", "tg-telveguard-gateway")]["spec"]["endpoints"][0]["authorization"]
     assert auth == {"type": "Bearer", "credentials": {"name": "tg-telveguard-gateway", "key": "metrics-token"}}
     assert docs[("Secret", "tg-telveguard-gateway")]["stringData"]["metrics-token"] == "prom"
+
+
+def test_okd_example_values_render():
+    """docs/okd-kurulum.md'deki örnek değerler kurulabilir olmalı; kurum CA'sı pod'a bağlanır."""
+    docs = render("-f", "deploy/helm/values-okd.example.yaml", oidc=False)
+    c, e = container(docs), env(docs)
+    assert {"Route", "NetworkPolicy", "ServiceMonitor"} <= {k for k, _ in docs}
+    assert ("Secret", "tg-telveguard-gateway") not in docs           # sırlar existingSecret'ta
+    assert e["KAFKA_SSL_CA_FILE"]["value"] == "/etc/kurum-ca/ca.pem"
+    assert {"name": "kurum-ca", "mountPath": "/etc/kurum-ca", "readOnly": True} in c["volumeMounts"]
+    pod = docs[("Deployment", "tg-telveguard-gateway")]["spec"]["template"]["spec"]
+    assert {"name": "kurum-ca", "configMap": {"name": "kurum-ca"}} in pod["volumes"]

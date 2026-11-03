@@ -142,6 +142,16 @@ models:
 #     valueFrom: { secretKeyRef: { name: tg-sirlar, key: azure-openai-key } }
 extraEnv: []              # [{name: X, value: Y}] ya da valueFrom
 
+# Kurum içi CA (Kafka / ClickHouse / Bitbucket TLS) gibi ek dosyalar, ör.:
+#   extraVolumes:
+#     - name: kurum-ca
+#       configMap: { name: kurum-ca }
+#   extraVolumeMounts:
+#     - { name: kurum-ca, mountPath: /etc/kurum-ca, readOnly: true }
+# sonra audit.kafka.caFile: /etc/kurum-ca/ca.pem
+extraVolumes: []
+extraVolumeMounts: []
+
 # ---------------- ağ ----------------
 service:
   type: ClusterIP
