@@ -1,6 +1,6 @@
 # Değişiklik günlüğü
 
-## Yayınlanmamış
+## 0.7.1 — 2026-11-03
 
 ### Gateway
 
@@ -15,14 +15,21 @@
 - `/metrics`: Helm `metrics.requireToken` açık ama Secret'ta `metrics-token` yoksa uç açık kalmıyor, 503
   (`METRICS_REQUIRE_TOKEN`).
 
-Helm chart 0.7.2 (`METRICS_REQUIRE_TOKEN`); eski imajla da kurulabilir (değişken yok sayılır), düzeltmeler
-yeni gateway imajıyla gelir.
+Helm chart 0.7.2 (`appVersion: 0.7.1`, `METRICS_REQUIRE_TOKEN`).
 
 ### Tarayıcı eklentisi
 
 - Uyarı penceresi kısaldı: varsayılan olarak yalnızca veri türleri görünür (0.6.0'daki gibi); değerler ve
   yer tutucular "Değerleri göster (N)" ile açılır. Metnin maskeli parçaları (her bulgunun çevresi) artık
   gösterilmiyor. Yanlış alarm işaretleme değişmedi; değerler kapalıyken her şey maskelenir.
+
+### Yükseltme notları
+
+- Log hacmi artar: `telveguard.*` INFO logları (yönetici erişimi, politika sürümleri, Kafka bağlantısı) artık
+  stdout'ta. Azaltmak için `LOG_LEVEL=WARNING` (`extraEnv`); denetim olayının Kafka yedeği log seviyesinden bağımsızdır.
+- Kafka kesintisinde olaylar pod loguna JSON satırı olarak düşer: log toplayıcıda (`"event_id"` içeren satırlar)
+  yeniden işlenebilir. Alarm için `telveguard_audit_failures` artışı.
+- Eklenti paketlerini betiklerle yeniden üretin (`preview.html` / `preview.js` değişti).
 
 ## Helm chart 0.7.1 — 2026-11-03
 
