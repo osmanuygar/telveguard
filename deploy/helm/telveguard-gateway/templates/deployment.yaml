@@ -266,6 +266,9 @@ spec:
               mountPath: /models
               readOnly: true
             {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: policy
           configMap:
@@ -277,6 +280,9 @@ spec:
           persistentVolumeClaim:
             claimName: {{ .Values.models.existingClaim }}
             readOnly: true
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}

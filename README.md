@@ -657,6 +657,9 @@ olarak **açıktır** (`auth.mode=jwt`); issuer ve audience verilmeden kurulum y
 Prometheus için `metrics.serviceMonitor.enabled=true`. Tüm seçenekler:
 `deploy/helm/telveguard-gateway/values.yaml`.
 
+Bastion'dan adım adım üretim kurulumu (sırlar, CA, ClickHouse şeması, doğrulama, geri alma):
+[docs/okd-kurulum.md](docs/okd-kurulum.md); örnek değerler: `deploy/helm/values-okd.example.yaml`.
+
 Air-gapped ortamda Türkçe NER ve LLM Guard modelleri için `scripts/mirror_models.sh`
 ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 

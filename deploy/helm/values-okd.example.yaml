@@ -1,0 +1,74 @@
+# Telveguard Gateway - OKD üretim kurulumu için örnek değerler.
+# Kopyalayıp <...> alanlarını doldurun; adımlar: docs/okd-kurulum.md
+#   helm upgrade --install telveguard telveguard-gateway-<sürüm>.tgz -n <namespace> -f values-okd.yaml
+# Sırlar bu dosyada YOK: hepsi existingSecret'ta (oc create secret ile).
+
+image:
+  repository: harbor.sirket.local/<proje>/telveguard/gateway
+  tag: "0.7.0"
+imagePullSecrets:
+  - name: harbor-pull
+
+replicaCount: 2
+workers: 2
+# buffer: streaming cevap taranıp tek parça. incremental (0.6.0+): akarken taranır; önce bir ekipte deneyin
+streamMode: buffer
+
+auth:
+  mode: jwt
+  oidc:
+    issuer: https://sso.sirket.local/realms/<realm>
+    audience: telveguard
+    teamPrefix: telveguard-
+    adminGroup: telveguard-admin
+    agentClientId: telve
+
+upstream:
+  internalUrl: http://<vllm-servisi>:8000/v1
+  externalUrl: https://api.openai.com/v1
+  anthropicUrl: https://api.anthropic.com
+
+audit:
+  kafkaBootstrap: <kafka-bootstrap>:9093
+  storeMasked: false
+  kafka:
+    securityProtocol: SASL_SSL
+    saslMechanism: SCRAM-SHA-512
+    saslUsername: telveguard
+    caFile: /etc/kurum-ca/ca.pem
+
+clickhouse:
+  url: http://<clickhouse>:8123
+  user: telveguard_reader
+  database: telveguard
+
+quota:
+  redisUrl: redis://<redis>:6379/0
+
+# İlk kurulumda kapalı; Röntgen ve denetim kaydı doğrulandıktan sonra açın (docs/bitbucket.md)
+policy:
+  store:
+    enabled: false
+
+existingSecret: telveguard-sirlar
+
+# Kurum içi CA: oc create configmap kurum-ca --from-file=ca.pem=<kurum-ca.pem>
+extraVolumes:
+  - name: kurum-ca
+    configMap: { name: kurum-ca }
+extraVolumeMounts:
+  - { name: kurum-ca, mountPath: /etc/kurum-ca, readOnly: true }
+
+route:
+  enabled: true
+  host: telveguard.apps.<küme-alan-adı>
+
+networkPolicy:
+  enabled: true
+  allowFromNamespaces:
+    - kubernetes.io/metadata.name: openshift-ingress
+
+metrics:
+  requireToken: true
+  serviceMonitor:
+    enabled: true

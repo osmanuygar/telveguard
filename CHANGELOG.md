@@ -1,5 +1,14 @@
 # Değişiklik günlüğü
 
+## Yayınlanmamış
+
+### Kurulum
+
+- OKD üretim kurulum belgesi (bastion'dan, adım adım): `docs/okd-kurulum.md`; örnek değerler
+  `deploy/helm/values-okd.example.yaml`.
+- Helm `extraVolumes` / `extraVolumeMounts`: kurum içi CA gibi dosyalar pod'a bağlanabilir
+  (`audit.kafka.caFile`, `SSL_CERT_FILE`). Önceden chart bu dosyaları bağlamanın yolunu sunmuyordu.
+
 ## 0.7.0 — 2026-10-30
 
 ### Güvenlik
