@@ -2,6 +2,22 @@
 
 ## Yayınlanmamış
 
+### Gateway
+
+- Kafka açılışta erişilemezse gateway artık çökmüyor: olaylar stdout'a yazılır, arka planda artan
+  aralıklarla (2-60 sn) yeniden bağlanılır (`audit_kafka_unavailable` / `audit_kafka_connected`); bu sürede
+  `telveguard_audit_failures` sayar. Önceden Kafka bakımı sırasında yeniden başlayan pod CrashLoop'a giriyor,
+  yapay zekâ trafiği kesiliyordu. Yapılandırma hatası (ör. eksik SASL şifresi) açılışı durdurmaya devam eder.
+- Kafka'ya yazılamayan denetim olaylarının yedeği gerçekten stdout'a yazılıyor (düz JSON satırı). Önceden INFO
+  log'du ve container'da hiçbir yere yazılmıyordu: Kafka kesintisindeki olaylar kayboluyordu.
+- Uygulama logları (`telveguard.*`) stdout'a, varsayılan INFO (`LOG_LEVEL`). Önceden yönetici erişimi
+  (`admin_access`), KVKK başvuru araması ve politika sürüm kayıtları container'da görünmüyordu.
+- `/metrics`: Helm `metrics.requireToken` açık ama Secret'ta `metrics-token` yoksa uç açık kalmıyor, 503
+  (`METRICS_REQUIRE_TOKEN`).
+
+Helm chart 0.7.2 (`METRICS_REQUIRE_TOKEN`); eski imajla da kurulabilir (değişken yok sayılır), düzeltmeler
+yeni gateway imajıyla gelir.
+
 ### Tarayıcı eklentisi
 
 - Uyarı penceresi kısaldı: varsayılan olarak yalnızca veri türleri görünür (0.6.0'daki gibi); değerler ve

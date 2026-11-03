@@ -67,3 +67,12 @@ def test_metrics_token_optional(client, monkeypatch):  # noqa: F811
     assert client.get("/metrics").status_code == 401
     assert client.get("/metrics", headers={"Authorization": "Bearer yanlis"}).status_code == 401
     assert client.get("/metrics", headers={"Authorization": "Bearer prom-token"}).status_code == 200
+
+
+def test_metrics_closed_when_token_required_but_missing(client, monkeypatch):  # noqa: F811
+    """Helm requireToken açık ama Secret'ta metrics-token yok: uç açık kalmamalı."""
+    monkeypatch.delenv("METRICS_TOKEN", raising=False)
+    monkeypatch.setenv("METRICS_REQUIRE_TOKEN", "1")
+    assert client.get("/metrics").status_code == 503
+    monkeypatch.setenv("METRICS_TOKEN", "prom-token")
+    assert client.get("/metrics", headers={"Authorization": "Bearer prom-token"}).status_code == 200
