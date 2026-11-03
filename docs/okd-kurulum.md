@@ -34,6 +34,22 @@ scp -r dist/okd <kullanici>@<bastion>:~/telveguard-okd
 Bastion depoya erişebiliyorsa paketlemek yerine `git clone` edip chart dizinini
 (`deploy/helm/telveguard-gateway`) doğrudan kullanabilirsiniz.
 
+**Harbor'dan (OCI):** chart Harbor'a konduysa bastion'a yalnızca değer dosyası ve `init.sql` taşınır;
+chart ve imajlar Harbor'dan gelir. Kurulum komutlarında `.tgz` yerine OCI adresi verilir:
+
+```bash
+# bir kez, chart'ı yayınlayan makinede
+helm package deploy/helm/telveguard-gateway
+helm push telveguard-gateway-0.7.1.tgz oci://harbor.sirket.local/<proje>/telveguard
+
+# bastion'da (9. adımda .tgz yerine)
+helm registry login harbor.sirket.local
+helm upgrade --install telveguard oci://harbor.sirket.local/<proje>/telveguard/telveguard-gateway \
+  --version 0.7.1 -f values-okd.yaml
+```
+
+Chart sürümü imajdan bağımsız patch alabilir (ör. chart 0.7.1, imaj 0.7.0: `appVersion`).
+
 Bundan sonraki adımlar bastion'da, `~/telveguard-okd` dizininde yapılır.
 
 ## 2. Kümeye giriş ve namespace
@@ -178,13 +194,13 @@ kullanıcı ya da ekip gibi davranabilir. Üretimde kullanmayın.
 Önce oluşacak nesneleri gözden geçirin (chart tutarsız değerleri burada reddeder):
 
 ```bash
-helm upgrade --install telveguard telveguard-gateway-0.7.0.tgz -f values-okd.yaml --dry-run | less
+helm upgrade --install telveguard telveguard-gateway-0.7.1.tgz -f values-okd.yaml --dry-run | less
 ```
 
 Sonra kurun:
 
 ```bash
-helm upgrade --install telveguard telveguard-gateway-0.7.0.tgz -f values-okd.yaml
+helm upgrade --install telveguard telveguard-gateway-0.7.1.tgz -f values-okd.yaml
 oc rollout status deploy/telveguard-telveguard-gateway --timeout=5m
 ```
 
