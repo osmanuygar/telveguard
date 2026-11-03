@@ -25,6 +25,9 @@ models/
 # Helm paketleri
 deploy/helm/**/*.tgz
 
+# Ortama özel kurulum (values, betikler; ör. deploy/env/okdprod01/): commit edilmez
+deploy/env/
+
 # Eklenti paketleri
 extension/*.crx
 extension/*.zip
