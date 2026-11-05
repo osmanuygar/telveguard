@@ -1,5 +1,14 @@
 # Değişiklik günlüğü
 
+## Yayınlanmamış
+
+### Tarayıcı eklentisi
+
+- Firefox test paketi: `BROWSER=firefox scripts/dev_extension.sh <gateway> <token> [mod] [onaylı araç] [kullanıcı]`
+  -> `dist/extension-dev-firefox/`, `about:debugging` > "Geçici Eklenti Yükle" ile kurulur (imza gerekmez,
+  Firefox kapanınca kalkar). Manifest `package_extension_firefox.sh` ile aynı uyarlanır. Firefox profil
+  e-postası vermez: kullanıcıyı 5. argümanla verin.
+
 ## 0.7.1 — 2026-11-03
 
 ### Gateway
