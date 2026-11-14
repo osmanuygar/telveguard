@@ -68,6 +68,13 @@ dictionary:
 #     to: vllm/qwen3-72b
 #     mode: monitor
 
+# Maskeleme biçimi: placeholder (varsayılan, "[TCKN_1]") ya da synthetic (geçerli görünen sahte değer:
+# TCKN / VKN / IBAN / kart sağlama toplamından geçer, yazım korunur; cevapta gerçeğine çevrilir).
+# Model yer tutucuyu anlamadığında cevap kalitesi düşer; sahte değerle model gerçek veri gibi çalışır.
+# Sırlar, sözlük terimleri ve NER bulguları her iki biçimde de yer tutucuyla maskelenir.
+# masking:
+#   style: synthetic
+
 rules:
   - name: prompt-injection-block
     when: { injection_score_gte: 0.85 }

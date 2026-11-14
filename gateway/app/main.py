@@ -52,7 +52,7 @@ from .auth import AuthError, Authenticator, Identity
 from .quota import QuotaBackendError, QuotaManager
 from .formats import CHAT, EMBEDDINGS, FORMATS, MESSAGES, RESPONSES, UPSTREAM_KEYS, UPSTREAMS, ApiFormat, Part  # noqa: F401
 from telveguard_core.detectors.injection import InjectionDetector, InjectionResult
-from telveguard_core.pii.engine import TrPiiEngine
+from telveguard_core.pii.engine import KnownValues, TrPiiEngine, is_placeholder
 from telveguard_core.policy import Context, Decision, PolicyEngine
 
 
@@ -429,7 +429,7 @@ def _find_output_leaks(st, text: str, known: str, vault: Dict[str, str]):
     """Cevaptaki PII / sırlardan GİRDİDE OLMAYANLAR. Kullanıcının kendi verisinin cevapta
     geri gelmesi (iç model, maskesiz) sızıntı değildir; modelin ürettiği yeni değer sızıntıdır."""
     findings = st.pii.analyze(text)
-    known_values = set(vault.values())
+    known_values = KnownValues(vault)   # gerçek değerler ve sahte değerler (masking.style: synthetic)
     leaks = [f for f in findings
              if text[f.start:f.end] not in known and text[f.start:f.end] not in known_values]
     return findings, leaks
@@ -460,8 +460,9 @@ def _mask_parts(st, parts: List[Part], decision: Decision, vault: Dict[str, str]
     if part_findings is None or len(part_findings) != len(parts):
         part_findings = [None] * len(parts)
     for p, found in zip(parts, part_findings):
-        p.set(st.pii.mask(p.text, list(decision.mask_entities), vault, findings=found).text)
-    notes = st.attachments.mask(st.pii, list(scans), decision.mask_entities, vault)
+        p.set(st.pii.mask(p.text, list(decision.mask_entities), vault, findings=found,
+                          style=st.policy.mask_style).text)
+    notes = st.attachments.mask(st.pii, list(scans), decision.mask_entities, vault, st.policy.mask_style)
     return "\n".join([p.text for p in parts] + notes)
 
 
@@ -1716,12 +1717,13 @@ async def guardrail_output(st, call: guardrail_mod.Call) -> guardrail_mod.Verdic
     teams = list(c.get("teams") or []) or ["default"]
     ctx = Context(teams[0], c.get("model") or "", c.get("destination") or "external", set(), 0.0,
                   frozenset(teams), c.get("declared"))
-    known = set(session.known) | set(session.vault.values())
+    known, known_values = set(session.known), KnownValues(session.vault)
     scanned, output_entities = [], set()
     for text in call.texts:
         findings = st.pii.analyze(text)
         output_entities |= {f.entity for f in findings}
-        scanned.append((text, [f for f in findings if text[f.start:f.end] not in known]))
+        scanned.append((text, [f for f in findings
+                               if text[f.start:f.end] not in known and text[f.start:f.end] not in known_values]))
     leaked = {f.entity for _, leaks in scanned for f in leaks}
     out = st.policy.evaluate_output(ctx, leaked)
 
@@ -1750,8 +1752,11 @@ async def guardrail_output(st, call: guardrail_mod.Call) -> guardrail_mod.Verdic
     texts = [st.pii.unmask(_redact(text, leaks, out.mask_entities) if out.action == "mask" else text,
                            session.vault) for text, leaks in scanned]
     changed = texts != call.texts
-    # Stream: yarım yer tutucu ve (çıktı kuralı varsa) yarım değer sonraki tura beklesin
-    hold = [guardrail_mod.holdback(t, placeholders=bool(session.vault), tokens=bool(st.policy.output_rules))
+    # Stream: yarım yer tutucu ve (çıktı kuralı ya da sahte değer varsa) yarım değer sonraki tura beklesin:
+    # yarısı gönderilmiş sahte numara geri açılamaz
+    synthetic = any(not is_placeholder(k) for k in session.vault)
+    hold = [guardrail_mod.holdback(t, placeholders=bool(session.vault),
+                                   tokens=bool(st.policy.output_rules) or synthetic)
             for t in texts]
     action = "mask" if changed else "pass"
     metrics.GUARDRAIL_CHECKS.labels(call.source, "response", action).inc()

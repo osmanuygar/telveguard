@@ -2,6 +2,20 @@
 
 ## Yayınlanmamış
 
+### Yükseltme notları
+
+- Yeni politika bölümü `masking` opsiyonel; yoksa davranış değişmez. Konsoldan düzenlenmez, ConfigMap'teki
+  politika dosyasındadır.
+
+### Koruma
+
+- Sahte değerle maskeleme (`masking: {style: synthetic}`): `[TCKN_1]` yerine sağlama toplamından geçen sahte
+  TCKN, VKN, IBAN, kart; telefon, e-posta ve plaka için sahte değer. Yazım korunur, cevapta gerçek değer geri
+  konur (model biçimi değiştirse de). Model yer tutucuyu anlamadığı için bozulan cevaplar (eksik veri sanma,
+  tablo düzeni) düzelir. Anahtarlı HMAC: aynı değer aynı sahteyi alır, anahtarsız gerçeğe gidilemez
+  (`TELVEGUARD_SYNTHETIC_KEY`, Helm Secret `synthetic-key`). Tamponlu yol, artımlı akış, guardrail ve politika
+  deneme; sırlar, sözlük terimleri ve NER bulguları yer tutucuda kalır. Varsayılan değişmedi (`placeholder`).
+
 ### Tarayıcı eklentisi
 
 - Firefox test paketi: `BROWSER=firefox scripts/dev_extension.sh <gateway> <token> [mod] [onaylı araç] [kullanıcı]`

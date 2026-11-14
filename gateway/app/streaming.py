@@ -28,6 +28,8 @@ import os
 import re
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Set, Tuple
 
+from telveguard_core.pii.engine import KnownValues
+
 from .formats import Part, _json_string, _leaves
 
 HOLDBACK = int(os.getenv("STREAM_HOLDBACK_CHARS", "64"))
@@ -57,7 +59,7 @@ class OutputGuard:
     def __init__(self, pii, policy, ctx, known: str, vault: Dict[str, str], extra_holdback: int = 0):
         self.pii, self.policy, self.ctx = pii, policy, ctx
         self.known, self.vault = known, vault
-        self.known_values = set(vault.values())
+        self.known_values = KnownValues(vault)
         self.holdback = max(HOLDBACK, extra_holdback)
         self.entities: Set[str] = set()
         self.leaked: Set[str] = set()

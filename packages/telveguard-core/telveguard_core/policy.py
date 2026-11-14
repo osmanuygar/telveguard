@@ -22,6 +22,9 @@ Yönlendirme (`routing`): eşleşen istek maskelenmek / engellenmek yerine `to` 
 modeli değiştirip kuralları yeni hedefe göre yeniden değerlendirir. Gözlemdeki yönlendirme
 yalnızca kayda geçer.
 
+Maskeleme biçimi (`masking: {style: synthetic}`): yer tutucu ([TCKN_1]) yerine geçerli görünen
+sahte değer (pii/synthetic.py). Varsayılan `placeholder`.
+
 İleride OPA/Rego'ya geçilebilir; YAML formatı güvenlik ekiplerinin
 kod yazmadan kural eklemesi için tercih edildi.
 """
@@ -37,6 +40,7 @@ SEVERITY = {"allow": 0, "alert": 1, "mask": 2, "block": 3}
 MODES = {"enforce", "monitor"}
 # Yazım hatası sessizce geçmesin: bilinmeyen koşul yok sayılsa kural beklenenden geniş eşleşir
 DESTINATIONS = {"internal", "external"}
+MASK_STYLES = ("placeholder", "synthetic")
 WHEN_KEYS = {"teams", "destination", "entity_in", "injection_score_gte", "model_in", "model_not_in", "declared"}
 
 
@@ -97,6 +101,12 @@ class PolicyEngine:
         self.destinations = cfg.get("destinations", {})
         self.pricing = cfg.get("pricing", {})
         self.quotas = cfg.get("quotas") or {}   # gateway'de doğrulanır ve uygulanır (quota.py)
+        masking = cfg.get("masking") or {}
+        if not isinstance(masking, dict) or set(masking) - {"style"}:
+            raise ValueError("masking yalnızca style içerebilir (ör. masking: {style: synthetic})")
+        self.mask_style = masking.get("style", "placeholder")
+        if self.mask_style not in MASK_STYLES:
+            raise ValueError(f"Geçersiz masking.style '{self.mask_style}' ({', '.join(MASK_STYLES)})")
         for rule in self.rules + self.output_rules:
             mode = rule.get("mode", self.mode)
             if mode not in MODES:

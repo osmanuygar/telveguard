@@ -28,6 +28,8 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 **Koruma**
 - **Türkçe kişisel veri:** TCKN, VKN, IBAN, kart (sağlama toplamıyla; rastgele 11 haneli sayı TCKN
   sayılmaz), telefon, e-posta, plaka; opsiyonel Türkçe NER ile kişi / kurum / yer adları.
+- **Sahte değerle maskeleme (opsiyonel):** `[TCKN_1]` yerine sağlama toplamından geçen sahte bir TCKN,
+  IBAN, kart, telefon; model gerçek veriyle çalışır gibi cevap verir, cevapta gerçek değer geri konur.
 - **İstisnalar:** kurumun kamuya açık IBAN'ı, destek e-postası gibi değerler kişisel veri sayılmaz;
   gereksiz maskeleme ve yanlış alarm olmaz (sırlar istisna olamaz).
 - **Kurumsal sözlük:** proje kod adları, müşteri unvanları, iç sunucu adları gibi kişisel veri
@@ -522,6 +524,31 @@ Kota kullanıcının birincil ekibine uygulanır; politika tarafından engellene
 düşmez. Aylık bütçe istekten önce kontrol edilir, kullanım cevaptan sonra eklenir (bütçeyi aşan
 istek tamamlanır, sonrakiler 429 alır).
 
+**Maskeleme biçimi.** Varsayılan yer tutucudur (`[TCKN_1]`). Model yer tutucuyu çoğu zaman anlamaz
+("TC numarası eksik görünüyor", tabloyu bozma, IBAN'ı doğrulamaya çalışma); `synthetic` ile yer tutucu
+yerine geçerli görünen sahte bir değer gider:
+
+```yaml
+masking:
+  style: synthetic     # placeholder (varsayılan) | synthetic
+```
+
+```
+kullanıcı : TC 10000000146, IBAN TR33 0006 1005 1978 6457 8413 26, tel 0532 123 45 67
+modele    : TC 78414136622, IBAN TR23 9586 4019 2932 1918 1590 91, tel 0530 246 16 60
+```
+
+- TCKN, VKN, IBAN ve kart sağlama toplamından geçer; yazım (boşluk, tire) korunur. Kartın ilk rakamı
+  (ağ), telefonun öneki ve operatörün "5"i kalır; e-posta `kisi.xxxxxx@example.com` olur, plaka sahte il kodu alır.
+- Cevapta sahte değer gerçeğine çevrilir; model biçimini değiştirse de (`784 141 366 22`). Modelin
+  tekrarladığı sahte değer sızıntı sayılmaz; modelin ürettiği yeni bir değer yine sızıntıdır.
+- Sahte değer anahtarlı HMAC'ten türer: aynı değer her turda aynı sahteyi alır (sağlayıcının prompt
+  önbelleği bozulmaz), anahtar bilinmeden gerçeğe gidilemez. `TELVEGUARD_SYNTHETIC_KEY` (Helm Secret:
+  `synthetic-key`) tüm pod'larda aynı olmalı; boşsa süreç başına rastgele.
+- Sırlar, kurumsal sözlük terimleri ve NER bulguları (kişi / kurum adı) yer tutucuyla maskelenir.
+  Tamponlu yol, artımlı akış, guardrail ve politika deneme ekranı sahte değeri kullanır; `telve` hook'ları,
+  tarayıcı eklentisi ve ContextForge yer tutucuda kalır (cevabı geri açan bir adım yok: sahte değer gerçek sanılırdı).
+
 Bir isteğin politikadan nasıl geçeceğini görmek için (upstream'e gitmez):
 
 ```bash
@@ -713,6 +740,7 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `LOG_LEVEL` | Uygulama logları (`telveguard.*`, stdout); varsayılan `INFO` (yönetici erişimi, KVKK başvuru araması, politika sürümleri bu seviyede) |
 | `SLACK_SECURITY_WEBHOOK_URL`, `TEAMS_SECURITY_WEBHOOK_URL`, `*_WEBHOOK_URL` | Bildirim kanallarının adresleri (politikadaki `notify.channels[].url_env`) |
 | `TELVEGUARD_SUBJECT_HASH_KEY`, `TELVEGUARD_SUBJECT_HASH_KEY_OLD` | İlgili kişi araması için özet anahtarı (en az 32 karakter); boşsa kapalı |
+| `TELVEGUARD_SYNTHETIC_KEY` | Sahte değerle maskeleme anahtarı (`masking.style: synthetic`; en az 32 karakter, tüm pod'larda aynı); boşsa süreç başına rastgele |
 | `TELVEGUARD_PUBLIC_URL` | Bildirimlerdeki "Konsolda aç" bağlantısının tabanı (politikada `notify.console_url` yoksa) |
 | `TELVEGUARD_ADMIN_TOKEN` | Yönetim uçları (Röntgen, simülatör, rapor); **boşsa bu uçlar kapalıdır** |
 | `POLICY_STORE=clickhouse` | Konsoldan politika yönetimi; `POLICY_STORE_CLICKHOUSE_USER` / `_PASSWORD` (yazma), `POLICY_STORE_POLL_SECONDS` (5), `POLICY_FOUR_EYES` (1), `POLICY_EMERGENCY` (1; 0 ise yazan kendi sürümünü acil yayına da alamaz), `POLICY_STORE_INSERT_QUORUM`. `OIDC_ADMIN_GROUP` tanımlıyken politika değişikliği yalnızca kurum hesabıyla yapılır; statik token okuma içindir (`POLICY_STATIC_TOKEN_WRITES=1` ile bilinçli istisna) |
@@ -1224,6 +1252,11 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 - Tarayıcı eklentisinde onaylı araca yönlendirme metni panoya kopyalar: pano okuma izni olan bir AI sitesi
   metni okuyabilir. Eklentinin önizleme çerçevesi sitenin CSP'si yüzünden açılamazsa pencere yalnızca tür ve
   adet gösterir (popup'ta ve `golge-ai:onizleme-acilamadi` kuralında görünür).
+- Sahte değerle maskelemede (`masking.style: synthetic`) model sahte değeri parçalayarak yazarsa
+  ("son dört hanesi 6622") o parça geri çevrilmez: kullanıcı sahte rakamları görür. Yer tutucuda bu
+  durum gözle görülür (`[TCKN_1]`), sahte değerde görülmez. Hesaplama yapan (son haneler, tutar
+  karşılaştırması) iş akışlarında yer tutucuda kalın. Maskeli prompt saklanıyorsa (`AUDIT_STORE_MASKED`)
+  kayıtta sahte değerler görünür.
 - ContextForge'da yer tutucular (`[TCKN_1]`) araç çağrıları arasında yalnızca Redis vault'u
   tanımlıysa ve çağıran kimliği biliniyorsa tutarlıdır; yoksa tek araç çağrısı içinde.
 
