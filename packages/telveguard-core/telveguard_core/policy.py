@@ -25,6 +25,9 @@ yalnızca kayda geçer.
 Maskeleme biçimi (`masking: {style: synthetic}`): yer tutucu ([TCKN_1]) yerine geçerli görünen
 sahte değer (pii/synthetic.py). Varsayılan `placeholder`.
 
+Anlık anomali (`anomaly`): kullanıcı başına pencere ve sinyal eşikleri; gateway sayar ve bildirir
+(gateway/app/risk.py). Burada yalnızca biçim doğrulanır.
+
 İleride OPA/Rego'ya geçilebilir; YAML formatı güvenlik ekiplerinin
 kod yazmadan kural eklemesi için tercih edildi.
 """
@@ -41,6 +44,7 @@ MODES = {"enforce", "monitor"}
 # Yazım hatası sessizce geçmesin: bilinmeyen koşul yok sayılsa kural beklenenden geniş eşleşir
 DESTINATIONS = {"internal", "external"}
 MASK_STYLES = ("placeholder", "synthetic")
+ANOMALY_SIGNALS = ("subjects", "blocked", "overrides", "secrets", "injection")
 WHEN_KEYS = {"teams", "destination", "entity_in", "injection_score_gte", "model_in", "model_not_in", "declared"}
 
 
@@ -107,6 +111,7 @@ class PolicyEngine:
         self.mask_style = masking.get("style", "placeholder")
         if self.mask_style not in MASK_STYLES:
             raise ValueError(f"Geçersiz masking.style '{self.mask_style}' ({', '.join(MASK_STYLES)})")
+        self.anomaly = self._validate_anomaly(cfg.get("anomaly"))
         for rule in self.rules + self.output_rules:
             mode = rule.get("mode", self.mode)
             if mode not in MODES:
@@ -123,6 +128,27 @@ class PolicyEngine:
             if "action" in rule:
                 raise ValueError(f"Yönlendirme '{name}': action yazılmaz; hedef modeli to ile verin")
             self._validate_when(rule)
+
+    @staticmethod
+    def _validate_anomaly(cfg) -> dict:
+        """Boşsa kapalı ({}); değilse {window_minutes, thresholds}."""
+        if cfg in (None, {}):
+            return {}
+        if not isinstance(cfg, dict) or set(cfg) - {"window_minutes", "thresholds"}:
+            raise ValueError("anomaly yalnızca window_minutes ve thresholds içerebilir")
+        window = cfg.get("window_minutes", 60)
+        if not isinstance(window, int) or isinstance(window, bool) or not 1 <= window <= 1440:
+            raise ValueError("anomaly.window_minutes 1-1440 arası bir tamsayı olmalı")
+        thresholds = cfg.get("thresholds")
+        if not isinstance(thresholds, dict) or not thresholds:
+            raise ValueError(f"anomaly.thresholds en az bir sinyal içermeli ({', '.join(ANOMALY_SIGNALS)})")
+        if unknown := set(thresholds) - set(ANOMALY_SIGNALS):
+            raise ValueError(f"anomaly.thresholds: bilinmeyen sinyal {', '.join(sorted(unknown))} "
+                             f"(geçerli: {', '.join(ANOMALY_SIGNALS)})")
+        for k, v in thresholds.items():
+            if not isinstance(v, int) or isinstance(v, bool) or v < 1:
+                raise ValueError(f"anomaly.thresholds.{k} pozitif bir tamsayı olmalı")
+        return {"window_minutes": window, "thresholds": dict(thresholds)}
 
     @staticmethod
     def _validate_when(rule: dict) -> None:

@@ -57,6 +57,8 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
   korundu, ne kadarı gözlemdeki kurallarla korunacaktı, ne kadarı korumasız kaldı; KVKK md. 9
   maruziyeti, gölge AI ve politikaya eklenecek YAML ile öneriler. Yazdırılabilir / PDF.
 - **Olay gezgini ve politika deneme:** tek tek isteklerin kararı; yeni kuralı canlıya almadan denemek.
+- **Kullanıcı riski:** kullanıcı başına risk skoru (injection, sır, sızıntı, uyarıya rağmen gönderim,
+  farklı kişi sayısı) ve anlık anomali uyarısı: bir saatte 100 farklı kişinin TCKN'si dışarı giderse bildirim.
 - **Anlık bildirim:** engellenen istek, sızan sır, kota aşımı, gölge AI uyarısı Slack / Teams / SIEM'e.
 - **KVKK ve VERBİS:** aylık yurt dışı aktarım raporu, VERBİS taslağı.
 - **İlgili kişi başvurusu (KVKK md. 11):** "verim yapay zekâya gitti mi?" sorusuna kayıtlardan
@@ -99,7 +101,7 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
 ```
 
 **Yönetim konsolu:** http://localhost:8080/xray → sağ üstteki alana yönetici token'ı olarak
-`e2e-admin-token` (yalnızca bu yerel test ortamı içindir). Beş sekme:
+`e2e-admin-token` (yalnızca bu yerel test ortamı içindir). Sekmeler:
 
 - **Röntgen** (`#rontgen`): özet, trend, ekip / model / veri türü kırılımı, envanter.
   Kutucuklara, çubuklara ve satırlara tıklayınca ilgili olaylar açılır.
@@ -113,6 +115,8 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
   Aynı isteğin kurum içi modelde ne olacağı da gösterilir. Modele gitmez, kayda yazılmaz.
 - **Başvuru** (`#basvuru`): KVKK ilgili kişi başvurusu; TCKN / telefon / e-posta girin, kişinin
   verisinin hangi isteklerde geçtiği, yurt dışına aktarılıp aktarılmadığı ve cevap taslağı.
+- **Risk** (`#risk`): kullanıcı başına risk skoru, nedenleri ve son 24 saatte ani artış; satıra
+  tıklayınca kullanıcının olayları. Ayrıntı: [Kullanıcı riski](#kullanıcı-riski-skor-ve-anlık-anomali).
 
 Kapatmak için: `docker compose -f docker-compose.yml -f docker-compose.test.yml down`
 
@@ -772,6 +776,7 @@ model ve ekip adı istemci kontrolünde olduğu için etiket yapılmaz, bu kır�
 | `telveguard_quota_exceeded_total{kind}`, `telveguard_quota_backend_errors_total` | Kota aşımları ve sayaç (Redis) hataları |
 | `telveguard_shadow_ai_events_total{action}` | Tarayıcı eklentisi olayları |
 | `telveguard_attachments_total{kind,result}`, `telveguard_attachment_scan_seconds` | Ekler (`image`, `pdf`, `text`): taranan, önbellekten, taranamayan, karartılan; OCR / PDF süresi |
+| `telveguard_anomalies_total{signal}` | Eşiğe ulaşan kullanıcı anomalileri (kullanıcı + pencere başına bir kez) |
 | `telveguard_notifications_total{channel_type,result}` | Bildirimler: `sent`, `failed`, `suppressed` (tekrar bastırma), `dropped` (kuyruk dolu) |
 | `telveguard_upstream_errors_total`, `telveguard_audit_failures_total`, `telveguard_auth_failures_total{reason}` | Hatalar |
 
@@ -856,6 +861,59 @@ notify:
 
 Yerel test ortamında bildirimler sahte LLM'in kaydedicisine gider:
 `curl localhost:9000/webhook/received`.
+
+## Kullanıcı riski: skor ve anlık anomali
+
+**Risk skoru** (konsolda **Risk** sekmesi, `GET /v1/reports/risk`): denetim kayıtlarından kullanıcı başına
+sinyaller ağırlıklı toplanır ve 0-100 skora çevrilir. Her kullanıcı için hangi sinyalin kaç puan getirdiği
+ayrı döner; satıra tıklayınca kullanıcının olayları açılır.
+
+| Sinyal | Ağırlık |
+|---|---|
+| Injection denemesi (skor ≥ 0,5) | 5 |
+| Sır içeren istek | 4 |
+| Cevapta sızıntı, uyarıya rağmen gönderim (eklenti) | 3 |
+| Engellenen istek | 2 |
+| Yurt dışına maskesiz kişisel veri | 1 |
+| Mesai dışı (08-19 dışı, hafta sonu) riskli istek | 0,2 |
+| Yurt dışı modele giden farklı kişi (`TELVEGUARD_SUBJECT_HASH_KEY` gerekir) | 0,1 |
+
+Skor = 100 × (1 − e^(−toplam / 20)). Son 24 saatteki riskli istek en az 5 ve kullanıcının günlük
+ortalamasının en az 3 katıysa **ani artış** işaretlenir (+10). Kimliği bilinmeyen istekler (`anonymous`,
+`unknown`) listelenmez. Skor bir inceleme önceliğidir, kanıt değil.
+
+**Anlık anomali**: her istek kullanıcı başına sabit pencerede sayılır; bir sinyal eşiğe ulaşınca pencerede
+**bir kez** `anomali:<sinyal>` kurallı bildirim olayı üretilir. Olay denetim kaydına yazılmaz (Röntgen istek
+sayıları değişmez), bildirim kanallarına gider:
+
+```yaml
+anomaly:
+  window_minutes: 60
+  thresholds:             # kullanıcı başına, pencere içinde (yalnızca yazılanlar sayılır)
+    subjects: 100         # yurt dışı modele giden farklı kişi tanımlayıcısı
+    blocked: 10           # engellenen istek
+    overrides: 5          # tarayıcı eklentisinde uyarıya rağmen gönderim
+    secrets: 3            # sır içeren istek
+    injection: 3          # injection denemesi
+
+notify:
+  channels:
+    - name: anomali
+      type: slack
+      url_env: SLACK_SECURITY_WEBHOOK_URL
+      when: { rules: ["anomali:*"] }
+      cooldown_seconds: 0   # tekrar bastırma ekip + kural başınadır; anomali zaten pencerede bir kez
+```
+
+- `subjects` farklı **değer** sayar: Claude Code her turda tüm konuşmayı yeniden gönderir, aynı TCKN bir
+  kez sayılır. İlgili kişi özetlerini kullanır; `TELVEGUARD_SUBJECT_HASH_KEY` yoksa bu sinyal çalışmaz.
+- Sayaç kota ile aynı yerdedir: `REDIS_URL` varsa tüm pod'lar ortak sayar (farklı değer HyperLogLog ile,
+  ~%1 hata); yoksa worker başına bellek (eşik worker başına uygulanır, yalnızca geliştirme). Sayaç
+  hatası isteği bozmaz (`telveguard_quota_backend_errors_total`).
+- Bildirimdeki "Konsolda aç" bağlantısı Risk sekmesine gider.
+
+KVKK: bu bir çalışan izleme özelliğidir. Ham metin kullanılmaz (türler, kararlar, özetler), ama skor
+kullanıcı adıyla döner: aydınlatma metninde yer almalı; erişim yönetici loguna yazılır.
 
 ## İlgili kişi başvurusu (KVKK md. 11)
 
@@ -1122,6 +1180,7 @@ baktığı izlenebilir.
 | `GET /v1/reports/kvkk-transfer?month=2026-09` | KVKK yurt dışı aktarım raporu (CSV; `&format=json` da olur) |
 | `GET /v1/inventory?days=90` | AI envanteri: beyan edilen sistemler, risk sınıfı, yükümlülükler, beyan edilmemiş kullanımlar |
 | `GET /v1/reports/verbis?format=csv\|json` | VERBİS başlıklarına eşlenmiş taslak |
+| `GET /v1/reports/risk?days=30&team=&limit=50` | Kullanıcı başına risk skoru, sinyallerin katkısı, son 24 saatte ani artış ([Kullanıcı riski](#kullanıcı-riski-skor-ve-anlık-anomali)) |
 | `GET /v1/reports/poc?days=14` | POC raporu: riskli isteklerin akıbeti, KVKK md. 9, gölge AI, örnek olaylar, öneriler |
 | `POST /v1/policy/simulate?format=chat\|responses\|messages\|embeddings` | Bir isteğe verilecek karar, işaretli metin bölümleri ve modele gidecek maskeli gövde |
 

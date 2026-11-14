@@ -46,6 +46,7 @@ from . import policy_git as policy_git_mod
 from . import policy_store as policy_store_mod
 from . import poc_report as poc_report_mod
 from . import providers as providers_mod
+from . import risk as risk_mod
 from . import xray as xray_mod
 from .audit import AuditSink
 from .auth import AuthError, Authenticator, Identity
@@ -82,6 +83,8 @@ async def lifespan(app: FastAPI):
     app.state.subjects = subjects_mod.SubjectIndex.from_env()
     app.state.shadow_limiter = shadow_ai.RateLimiter.from_env()
     app.state.quota = QuotaManager.from_env(app.state.policy.quotas)
+    # Anlık anomali (politikadaki `anomaly`): sayaç kota ile aynı yerde (REDIS_URL; yoksa worker belleği)
+    app.state.anomaly = risk_mod.AnomalyDetector(app.state.quota.backend)
     # Guardrail servisi (LiteLLM, agentgateway): istek ile cevap arasında maske eşleşmesi
     app.state.guardrail_sessions = guardrail_mod.Sessions.from_env()
     # AI sistem beyanları (EU AI Act envanteri); yoksa tüm kullanımlar "beyan edilmemiş"
@@ -415,6 +418,9 @@ async def _emit(st, ev: dict):
     """Denetim kaydı + (eşleşen kanal varsa) arka planda Slack / Teams / webhook bildirimi."""
     await st.audit.emit(ev)
     st.notifier.submit(ev)
+    if st.policy.anomaly:
+        for alert in await st.anomaly.observe(st.policy.anomaly, ev):
+            st.notifier.submit(alert)      # denetim kaydına yazılmaz (istek sayıları şişmesin)
 
 
 def _auth_error(e: AuthError, fmt: ApiFormat = CHAT) -> JSONResponse:
@@ -1136,6 +1142,27 @@ async def poc_report(request: Request, days: int = 14):
             dictionary_labels={e["entity"]: e["label"] for e in st.dictionary.describe() if e["label"]})
     except xray_mod.ClickHouseError as e:
         return _openai_error(502, str(e), "clickhouse_error", "admin_error")
+
+
+@app.get("/v1/reports/risk")
+async def risk_report(request: Request, days: int = 30, team: str = "", limit: int = risk_mod.RISK_LIMIT):
+    """Kullanıcı başına risk skoru (0-100), sinyallerin katkısı ve son 24 saatteki ani artış.
+    Kullanıcı adı içerir: yönetici ucu, erişim loglanır."""
+    if err := await _require_admin(request):
+        return err
+    if not 2 <= days <= 366:
+        return _openai_error(400, "days 2 ile 366 arasında olmalı.", "invalid_request", "invalid_request_error")
+    if not 1 <= limit <= 500:
+        return _openai_error(400, "limit 1 ile 500 arasında olmalı.", "invalid_request", "invalid_request_error")
+    ch, err = _require_clickhouse(request)
+    if err:
+        return err
+    try:
+        result = await risk_mod.report(ch, days, team.strip(), limit)
+    except xray_mod.ClickHouseError as e:
+        return _openai_error(502, str(e), "clickhouse_error", "admin_error")
+    result["anomaly"] = request.app.state.policy.anomaly or None
+    return result
 
 
 # ---------------- AI envanteri (EU AI Act) + VERBİS taslağı ----------------

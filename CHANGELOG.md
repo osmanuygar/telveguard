@@ -4,8 +4,8 @@
 
 ### Yükseltme notları
 
-- Yeni politika bölümü `masking` opsiyonel; yoksa davranış değişmez. Konsoldan düzenlenmez, ConfigMap'teki
-  politika dosyasındadır.
+- Yeni politika bölümleri `masking` ve `anomaly` opsiyonel; yoksa davranış değişmez. Konsoldan düzenlenmez,
+  ConfigMap'teki politika dosyasındadır. Risk sorgusu mevcut `audit` tablosunu kullanır: migration gerekmez.
 
 ### Koruma
 
@@ -15,6 +15,16 @@
   tablo düzeni) düzelir. Anahtarlı HMAC: aynı değer aynı sahteyi alır, anahtarsız gerçeğe gidilemez
   (`TELVEGUARD_SYNTHETIC_KEY`, Helm Secret `synthetic-key`). Tamponlu yol, artımlı akış, guardrail ve politika
   deneme; sırlar, sözlük terimleri ve NER bulguları yer tutucuda kalır. Varsayılan değişmedi (`placeholder`).
+
+### Kullanıcı riski
+
+- Risk skoru: konsolda **Risk** sekmesi, `GET /v1/reports/risk`. Kullanıcı başına injection, sır, cevapta sızıntı,
+  uyarıya rağmen gönderim, engellenen istek, yurt dışına maskesiz kişisel veri, farklı kişi sayısı ve mesai dışı
+  riskli istek ağırlıklı toplanır (0-100); her sinyalin katkısı ve son 24 saatteki ani artış ayrı döner.
+- Anlık anomali (`anomaly` politika bölümü): kullanıcı başına pencerede eşiğe ulaşan sinyal (`subjects`, `blocked`,
+  `overrides`, `secrets`, `injection`) bir kez `anomali:<sinyal>` kurallı bildirim olayı üretir (Slack / Teams /
+  SIEM). Denetim kaydına yazılmaz. Sayaç kota ile aynı yerde (Redis; farklı kişi HyperLogLog ile).
+  Metrik: `telveguard_anomalies_total{signal}`.
 
 ### Tarayıcı eklentisi
 

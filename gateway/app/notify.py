@@ -198,6 +198,8 @@ def event_link(console_url: str, ev: Dict[str, Any]) -> str:
         return ""
     if ev.get("api_format") == "policy":   # politika olayı denetim kaydında değil, sürüm geçmişinde
         return f"{console_url.rstrip('/')}/xray#politika"
+    if ev.get("api_format") == "anomaly":  # anomali olayı denetim kaydında değil: kullanıcının olayları
+        return f"{console_url.rstrip('/')}/xray#risk"
     return f"{console_url.rstrip('/')}/xray#olaylar?event={ev['event_id']}"
 
 

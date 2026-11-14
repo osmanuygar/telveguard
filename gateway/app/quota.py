@@ -22,7 +22,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from zoneinfo import ZoneInfo
 
 from .metrics import QUOTA_BACKEND_ERRORS
@@ -31,6 +31,7 @@ log = logging.getLogger("telveguard.quota")
 TZ = ZoneInfo("Europe/Istanbul")
 LIMIT_KEYS = ("requests_per_minute", "monthly_tokens", "monthly_cost_usd")
 MONTH_TTL = 40 * 24 * 3600
+PRUNE_AT = 50_000       # bellek sayacında süresi dolan anahtarlar bu kadar anahtarda temizlenir
 
 
 class QuotaBackendError(Exception):
@@ -57,6 +58,14 @@ class MemoryBackend:
     def __init__(self):
         self._counters: Dict[str, Tuple[int, float]] = {}
         self._usage: Dict[str, Dict[str, int]] = {}
+        self._sets: Dict[str, Tuple[Set[str], float]] = {}     # anomali: farklı değer sayımı
+        self._flags: Dict[str, float] = {}                     # anomali: pencerede bir kez
+
+    def _prune(self, now: float) -> None:
+        if len(self._sets) + len(self._flags) + len(self._counters) > PRUNE_AT:
+            self._sets = {k: v for k, v in self._sets.items() if v[1] >= now}
+            self._flags = {k: v for k, v in self._flags.items() if v >= now}
+            self._counters = {k: v for k, v in self._counters.items() if v[1] >= now}
 
     async def incr_window(self, key: str, ttl: int) -> int:
         now = time.time()
@@ -64,7 +73,25 @@ class MemoryBackend:
         if expires < now:
             count, expires = 0, now + ttl
         self._counters[key] = (count + 1, expires)
+        self._prune(now)
         return count + 1
+
+    async def add_distinct(self, key: str, members: List[str], ttl: int) -> int:
+        now = time.time()
+        values, expires = self._sets.get(key, (set(), now + ttl))
+        if expires < now:
+            values, expires = set(), now + ttl
+        values.update(members)
+        self._sets[key] = (values, expires)
+        self._prune(now)
+        return len(values)
+
+    async def once(self, key: str, ttl: int) -> bool:
+        now = time.time()
+        if self._flags.get(key, 0) >= now:
+            return False
+        self._flags[key] = now + ttl
+        return True
 
     async def get_usage(self, key: str) -> Tuple[int, int]:
         u = self._usage.get(key, {})
@@ -97,6 +124,21 @@ class RedisBackend:
                 count, _ = await p.execute()
                 return int(count)
         return await self._run(go())
+
+    async def add_distinct(self, key: str, members: List[str], ttl: int) -> int:
+        """Farklı değer sayısı (HyperLogLog: ~%1 hata, anahtar başına en fazla 12 KB)."""
+        async def go():
+            async with self.r.pipeline(transaction=True) as p:
+                p.pfadd(key, *members)
+                p.expire(key, ttl)
+                p.pfcount(key)
+                _, _, count = await p.execute()
+                return int(count)
+        return await self._run(go())
+
+    async def once(self, key: str, ttl: int) -> bool:
+        """Pencerede ilk çağıran True alır (tüm pod'lar arasında)."""
+        return bool(await self._run(self.r.set(key, "1", nx=True, ex=ttl)))
 
     async def get_usage(self, key: str) -> Tuple[int, int]:
         async def go():

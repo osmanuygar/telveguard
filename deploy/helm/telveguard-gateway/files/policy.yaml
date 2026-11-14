@@ -202,12 +202,26 @@ notify:
       url_env: TEAMS_SECURITY_WEBHOOK_URL
       when: { sources: [browser], actions: [alert, block] }   # uyarıya rağmen yapıştırma / engelleme
 
+    # Kullanıcı anomalisi (aşağıdaki anomaly bölümü açılınca): pencerede kullanıcı başına bir kez gelir
+    # - name: anomali
+    #   type: slack
+    #   url_env: SLACK_SECURITY_WEBHOOK_URL
+    #   when: { rules: ["anomali:*"] }
+    #   cooldown_seconds: 0
+
     # - name: siem
     #   type: webhook
     #   url_env: SIEM_WEBHOOK_URL
     #   when: { actions: [block, alert] }
     #   cooldown_seconds: 0             # SIEM her olayı istesin
     #   include_user: true
+
+# Anlık anomali: kullanıcı başına pencerede eşiğe ulaşan sinyal bir kez "anomali:<sinyal>" bildirimi üretir
+# (denetim kaydına yazılmaz). subjects: yurt dışına giden FARKLI kişi tanımlayıcısı (TELVEGUARD_SUBJECT_HASH_KEY
+# gerekir). Sayaç kotayla aynı yerde (REDIS_URL; yoksa worker belleği).
+# anomaly:
+#   window_minutes: 60
+#   thresholds: { subjects: 100, blocked: 10, overrides: 5, secrets: 3, injection: 3 }
 
 # Ekip kota / hız sınırı (sayaç Redis'te: REDIS_URL). Kota BİRİNCİL ekibe uygulanır.
 # Limitler: requests_per_minute, monthly_tokens, monthly_cost_usd (ay İstanbul saatine göre).

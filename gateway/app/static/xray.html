@@ -377,6 +377,7 @@ button.danger { background: var(--status-critical); color: #fff; border-color: t
       <a href="#deneme" data-view="deneme">Politika deneme</a>
       <a href="#politika" data-view="politika">Politika</a>
       <a href="#basvuru" data-view="basvuru">Başvuru</a>
+      <a href="#risk" data-view="risk">Risk</a>
     </nav>
     <span class="spacer"></span>
     <label class="sr-only" for="token">Yönetici token'ı</label>
@@ -665,6 +666,25 @@ button.danger { background: var(--status-critical); color: #fff; border-color: t
       </div>
     </div>
   </section>
+
+  <!-- ==================== Kullanıcı riski ==================== -->
+  <section id="view-risk" data-view hidden>
+    <h1>Kullanıcı riski</h1>
+    <p class="sub">Kullanıcı başına risk skoru (0-100): injection denemesi, sır, cevapta sızıntı, uyarıya rağmen gönderim,
+      engellenen istek, yurt dışına maskesiz kişisel veri, farklı kişi sayısı ve mesai dışı riskli istek ağırlıklı toplanır.
+      Son 24 saatteki riskli istek kullanıcının kendi ortalamasının çok üstündeyse "ani artış" işaretlenir. Skor bir
+      inceleme önceliğidir, suçlama değil: satıra tıklayıp olaylara bakın. Çalışan izleme olduğu için aydınlatma
+      metninde yer almalıdır; erişiminiz loglanır.</p>
+    <form class="filters" id="rk-form">
+      <label>Dönem
+        <select name="days"><option value="7">Son 7 gün</option><option value="30" selected>Son 30 gün</option>
+          <option value="90">Son 90 gün</option></select></label>
+      <label>Ekip <input name="team" list="dl-teams" placeholder="Tüm ekipler"></label>
+      <button class="primary" type="submit">Göster</button>
+    </form>
+    <div class="card" id="rk-anomaly"></div>
+    <div class="card"><div class="table-wrap" id="rk-table"></div></div>
+  </section>
 </main>
 
 <aside id="drawer" aria-label="Olay ayrıntısı" aria-hidden="true">
@@ -886,6 +906,43 @@ function dailyChart(rows) {
      ...ACTIONS.map((a) => ({ key: a.key, label: a.label, num: true })),
      { key: "external", label: "Yurt dışı", num: true }, { label: "Tahmini maliyet", num: true, render: (r) => usd(r.est_cost_usd) }],
     rows);
+}
+
+// ==================== Kullanıcı riski ====================
+const ANOMALY_LABELS = { subjects: "farklı kişi (yurt dışı)", blocked: "engellenen istek",
+  overrides: "uyarıya rağmen gönderim", secrets: "sır içeren istek", injection: "injection denemesi" };
+const riskBand = (s) => s >= 70 ? ["bad", "Yüksek"] : s >= 40 ? ["dirty", "Orta"] : ["ok", "Düşük"];
+async function loadRisk() {
+  const f = $("rk-form");
+  const qs = new URLSearchParams({ days: f.days.value });
+  if (f.team.value.trim()) qs.set("team", f.team.value.trim());
+  setStatus("Yükleniyor…");
+  try {
+    renderRisk(await apiJson("/v1/reports/risk?" + qs));
+    setStatus("");
+  } catch (e) { setStatus("Risk raporu alınamadı: " + e.message, true); }
+}
+function renderRisk(d) {
+  const a = d.anomaly;
+  $("rk-anomaly").replaceChildren(a
+    ? el("div", {}, el("strong", {}, "Anlık anomali açık. "), `${a.window_minutes} dakikalık pencerede kullanıcı başına: `
+        + Object.entries(a.thresholds).map(([k, v]) => `${ANOMALY_LABELS[k] || k} ≥ ${n(v)}`).join(", ")
+        + ". Bildirim için kanalda when: { rules: [\"anomali:*\"] }.")
+    : el("div", { class: "meta" }, "Anlık anomali kapalı: politikaya anomaly bölümü eklenince eşiği aşan kullanıcı "
+        + "Slack / Teams / SIEM'e bildirilir (README: Kullanıcı riski)."));
+  table("rk-table", [
+    { label: "Kullanıcı", render: (u) => el("div", {}, el("div", {}, u.user), el("div", { class: "meta" }, u.team || "")) },
+    { label: "Skor", num: true, render: (u) => {
+      const [cls, txt] = riskBand(u.score);
+      return el("span", {}, el("strong", {}, String(u.score)), " ", el("span", { class: "pill " + cls }, txt));
+    } },
+    { label: "Neden", render: (u) => u.reasons.slice(0, 3).map((r) => `${r.label}: ${n(r.count)}`).join(" · ") || "–" },
+    { label: "Son 24 saat", render: (u) => u.spike.flag
+      ? el("span", { class: "pill bad" }, `Ani artış: ${n(u.spike.last_24h)} (ort. ${u.spike.daily_avg} / gün)`)
+      : n(u.spike.last_24h) },
+    { label: "İstek", num: true, render: (u) => n(u.requests) },
+  ], d.users, { empty: "Bu dönemde riskli isteği olan kullanıcı yok.",
+    onRow: (u) => { location.hash = "olaylar?" + new URLSearchParams({ days: d.days, user: u.user }); } });
 }
 
 // Röntgen'den olaylara: dönem ve ekip filtresi taşınır
@@ -2197,8 +2254,8 @@ function initPolicy() {
   const savedActor = store.get("tg-actor"); if (savedActor) $("pol-actor").value = savedActor;
 }
 
-const VIEWS = ["rontgen", "rapor", "olaylar", "deneme", "politika", "basvuru"];
-let xrayLoaded = false, reportLoaded = false;
+const VIEWS = ["rontgen", "rapor", "olaylar", "deneme", "politika", "basvuru", "risk"];
+let xrayLoaded = false, reportLoaded = false, riskLoaded = false;
 function route() {
   const [name, qs] = location.hash.slice(1).split("?");
   const view = VIEWS.includes(name) ? name : "rontgen";
@@ -2207,7 +2264,7 @@ function route() {
   document.querySelectorAll("section[data-view]").forEach((s) => { s.hidden = s.id !== "view-" + view; });
   document.querySelectorAll("nav.tabs a").forEach((a) => { if (a.dataset.view === view) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
   document.title = { rontgen: "AI Kullanım Röntgeni", rapor: "POC raporu", olaylar: "Olaylar", deneme: "Politika deneme",
-    politika: "Politika", basvuru: "İlgili kişi başvurusu" }[view] + " · Telveguard";
+    politika: "Politika", basvuru: "İlgili kişi başvurusu", risk: "Kullanıcı riski" }[view] + " · Telveguard";
   if (!token()) { setStatus("Yönetici token'ını sağ üstteki alana girin.", true); $("token").focus(); return; }
   loadPolicyInfo().catch(() => null);   // kurumsal sözlük etiketleri vb.
   if (view === "rontgen" && !xrayLoaded) { xrayLoaded = true; loadXray(); }
@@ -2220,6 +2277,7 @@ function route() {
   }
   if (view === "basvuru") setStatus("");
   if (view === "rapor" && !reportLoaded) { reportLoaded = true; loadReport(); }
+  if (view === "risk" && !riskLoaded) { riskLoaded = true; loadRisk(); }
   if (view === "politika") { setStatus(""); loadPolicyStore(true).catch((e) => setStatus("Politika alınamadı: " + e.message, true)); }
   if (view === "deneme") { setStatus(""); loadPolicyInfo().catch((e) => setStatus("Politika bilgisi alınamadı: " + e.message, true)); }
 }
@@ -2246,6 +2304,7 @@ addEventListener("keydown", (e) => { if (e.key === "Escape" && $("drawer").class
 $("sim-form").addEventListener("submit", (e) => { e.preventDefault(); runSimulation(); });
 $("sub-form").addEventListener("submit", (e) => { e.preventDefault(); runSubjectSearch(); });
 $("rp-form").addEventListener("submit", (e) => { e.preventDefault(); loadReport(); });
+$("rk-form").addEventListener("submit", (e) => { e.preventDefault(); loadRisk(); });
 $("rp-print").addEventListener("click", () => window.print());
 initPolicy();
 // Yazdırmada raporun açılır bölümleri de PDF'e girsin
@@ -2253,7 +2312,7 @@ addEventListener("beforeprint", () => document.querySelectorAll("details.print-o
 addEventListener("afterprint", () => document.querySelectorAll("details.print-open").forEach((d) => { d.open = d.dataset.wasOpen === "true"; }));
 $("sim-form").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runSimulation(); } });
 $("sim-form").model.addEventListener("input", updateDestHint);
-$("token").addEventListener("change", () => { xrayLoaded = false; reportLoaded = false; policyInfo = null; route(); });
+$("token").addEventListener("change", () => { xrayLoaded = false; reportLoaded = false; riskLoaded = false; policyInfo = null; route(); });
 $("theme").addEventListener("click", () => {
   const dark = document.documentElement.dataset.theme
     ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
