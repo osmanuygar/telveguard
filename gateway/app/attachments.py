@@ -334,7 +334,8 @@ class AttachmentScanner:
         if SEVERITY[action] > SEVERITY[decision.would_action]:
             decision.would_action = action
 
-    def mask(self, pii, scans: List[Scan], mask_entities, vault: Dict[str, str]) -> List[str]:
+    def mask(self, pii, scans: List[Scan], mask_entities, vault: Dict[str, str],
+             style: str = "placeholder") -> List[str]:
         """Maskelenecek veri içeren ekleri değiştirir; denetim için kısa açıklamalar döner."""
         notes: List[str] = []
         for s in scans:
@@ -343,7 +344,7 @@ class AttachmentScanner:
             findings = [f for f in pii.analyze(s.text) if entity_matches(f.entity, list(mask_entities))]
             if not findings:
                 continue
-            masked = pii.mask(s.text, list(mask_entities), vault).text
+            masked = pii.mask(s.text, list(mask_entities), vault, style=style).text
             if s.kind == "image":
                 try:
                     data, media_type = self._redact_image(s, findings, vault)

@@ -28,6 +28,8 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
 **Koruma**
 - **Türkçe kişisel veri:** TCKN, VKN, IBAN, kart (sağlama toplamıyla; rastgele 11 haneli sayı TCKN
   sayılmaz), telefon, e-posta, plaka; opsiyonel Türkçe NER ile kişi / kurum / yer adları.
+- **Sahte değerle maskeleme (opsiyonel):** `[TCKN_1]` yerine sağlama toplamından geçen sahte bir TCKN,
+  IBAN, kart, telefon; model gerçek veriyle çalışır gibi cevap verir, cevapta gerçek değer geri konur.
 - **İstisnalar:** kurumun kamuya açık IBAN'ı, destek e-postası gibi değerler kişisel veri sayılmaz;
   gereksiz maskeleme ve yanlış alarm olmaz (sırlar istisna olamaz).
 - **Kurumsal sözlük:** proje kod adları, müşteri unvanları, iç sunucu adları gibi kişisel veri
@@ -55,6 +57,8 @@ uyumlu olduğu için yalnızca taban adres Telveguard'a çevrilir (Claude Code d
   korundu, ne kadarı gözlemdeki kurallarla korunacaktı, ne kadarı korumasız kaldı; KVKK md. 9
   maruziyeti, gölge AI ve politikaya eklenecek YAML ile öneriler. Yazdırılabilir / PDF.
 - **Olay gezgini ve politika deneme:** tek tek isteklerin kararı; yeni kuralı canlıya almadan denemek.
+- **Kullanıcı riski:** kullanıcı başına risk skoru (injection, sır, sızıntı, uyarıya rağmen gönderim,
+  farklı kişi sayısı) ve anlık anomali uyarısı: bir saatte 100 farklı kişinin TCKN'si dışarı giderse bildirim.
 - **Anlık bildirim:** engellenen istek, sızan sır, kota aşımı, gölge AI uyarısı Slack / Teams / SIEM'e.
 - **KVKK ve VERBİS:** aylık yurt dışı aktarım raporu, VERBİS taslağı.
 - **İlgili kişi başvurusu (KVKK md. 11):** "verim yapay zekâya gitti mi?" sorusuna kayıtlardan
@@ -97,7 +101,7 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
 ```
 
 **Yönetim konsolu:** http://localhost:8080/xray → sağ üstteki alana yönetici token'ı olarak
-`e2e-admin-token` (yalnızca bu yerel test ortamı içindir). Beş sekme:
+`e2e-admin-token` (yalnızca bu yerel test ortamı içindir). Sekmeler:
 
 - **Röntgen** (`#rontgen`): özet, trend, ekip / model / veri türü kırılımı, envanter.
   Kutucuklara, çubuklara ve satırlara tıklayınca ilgili olaylar açılır.
@@ -111,6 +115,8 @@ curl -s localhost:8080/v1/chat/completions -H 'content-type: application/json' \
   Aynı isteğin kurum içi modelde ne olacağı da gösterilir. Modele gitmez, kayda yazılmaz.
 - **Başvuru** (`#basvuru`): KVKK ilgili kişi başvurusu; TCKN / telefon / e-posta girin, kişinin
   verisinin hangi isteklerde geçtiği, yurt dışına aktarılıp aktarılmadığı ve cevap taslağı.
+- **Risk** (`#risk`): kullanıcı başına risk skoru, nedenleri ve son 24 saatte ani artış; satıra
+  tıklayınca kullanıcının olayları. Ayrıntı: [Kullanıcı riski](#kullanıcı-riski-skor-ve-anlık-anomali).
 
 Kapatmak için: `docker compose -f docker-compose.yml -f docker-compose.test.yml down`
 
@@ -522,6 +528,31 @@ Kota kullanıcının birincil ekibine uygulanır; politika tarafından engellene
 düşmez. Aylık bütçe istekten önce kontrol edilir, kullanım cevaptan sonra eklenir (bütçeyi aşan
 istek tamamlanır, sonrakiler 429 alır).
 
+**Maskeleme biçimi.** Varsayılan yer tutucudur (`[TCKN_1]`). Model yer tutucuyu çoğu zaman anlamaz
+("TC numarası eksik görünüyor", tabloyu bozma, IBAN'ı doğrulamaya çalışma); `synthetic` ile yer tutucu
+yerine geçerli görünen sahte bir değer gider:
+
+```yaml
+masking:
+  style: synthetic     # placeholder (varsayılan) | synthetic
+```
+
+```
+kullanıcı : TC 10000000146, IBAN TR33 0006 1005 1978 6457 8413 26, tel 0532 123 45 67
+modele    : TC 78414136622, IBAN TR23 9586 4019 2932 1918 1590 91, tel 0530 246 16 60
+```
+
+- TCKN, VKN, IBAN ve kart sağlama toplamından geçer; yazım (boşluk, tire) korunur. Kartın ilk rakamı
+  (ağ), telefonun öneki ve operatörün "5"i kalır; e-posta `kisi.xxxxxx@example.com` olur, plaka sahte il kodu alır.
+- Cevapta sahte değer gerçeğine çevrilir; model biçimini değiştirse de (`784 141 366 22`). Modelin
+  tekrarladığı sahte değer sızıntı sayılmaz; modelin ürettiği yeni bir değer yine sızıntıdır.
+- Sahte değer anahtarlı HMAC'ten türer: aynı değer her turda aynı sahteyi alır (sağlayıcının prompt
+  önbelleği bozulmaz), anahtar bilinmeden gerçeğe gidilemez. `TELVEGUARD_SYNTHETIC_KEY` (Helm Secret:
+  `synthetic-key`) tüm pod'larda aynı olmalı; boşsa süreç başına rastgele.
+- Sırlar, kurumsal sözlük terimleri ve NER bulguları (kişi / kurum adı) yer tutucuyla maskelenir.
+  Tamponlu yol, artımlı akış, guardrail ve politika deneme ekranı sahte değeri kullanır; `telve` hook'ları,
+  tarayıcı eklentisi ve ContextForge yer tutucuda kalır (cevabı geri açan bir adım yok: sahte değer gerçek sanılırdı).
+
 Bir isteğin politikadan nasıl geçeceğini görmek için (upstream'e gitmez):
 
 ```bash
@@ -713,6 +744,7 @@ ile modelleri indirip bir PVC'ye koyun, `models.*` değerlerini açın.
 | `LOG_LEVEL` | Uygulama logları (`telveguard.*`, stdout); varsayılan `INFO` (yönetici erişimi, KVKK başvuru araması, politika sürümleri bu seviyede) |
 | `SLACK_SECURITY_WEBHOOK_URL`, `TEAMS_SECURITY_WEBHOOK_URL`, `*_WEBHOOK_URL` | Bildirim kanallarının adresleri (politikadaki `notify.channels[].url_env`) |
 | `TELVEGUARD_SUBJECT_HASH_KEY`, `TELVEGUARD_SUBJECT_HASH_KEY_OLD` | İlgili kişi araması için özet anahtarı (en az 32 karakter); boşsa kapalı |
+| `TELVEGUARD_SYNTHETIC_KEY` | Sahte değerle maskeleme anahtarı (`masking.style: synthetic`; en az 32 karakter, tüm pod'larda aynı); boşsa süreç başına rastgele |
 | `TELVEGUARD_PUBLIC_URL` | Bildirimlerdeki "Konsolda aç" bağlantısının tabanı (politikada `notify.console_url` yoksa) |
 | `TELVEGUARD_ADMIN_TOKEN` | Yönetim uçları (Röntgen, simülatör, rapor); **boşsa bu uçlar kapalıdır** |
 | `POLICY_STORE=clickhouse` | Konsoldan politika yönetimi; `POLICY_STORE_CLICKHOUSE_USER` / `_PASSWORD` (yazma), `POLICY_STORE_POLL_SECONDS` (5), `POLICY_FOUR_EYES` (1), `POLICY_EMERGENCY` (1; 0 ise yazan kendi sürümünü acil yayına da alamaz), `POLICY_STORE_INSERT_QUORUM`. `OIDC_ADMIN_GROUP` tanımlıyken politika değişikliği yalnızca kurum hesabıyla yapılır; statik token okuma içindir (`POLICY_STATIC_TOKEN_WRITES=1` ile bilinçli istisna) |
@@ -744,6 +776,7 @@ model ve ekip adı istemci kontrolünde olduğu için etiket yapılmaz, bu kır�
 | `telveguard_quota_exceeded_total{kind}`, `telveguard_quota_backend_errors_total` | Kota aşımları ve sayaç (Redis) hataları |
 | `telveguard_shadow_ai_events_total{action}` | Tarayıcı eklentisi olayları |
 | `telveguard_attachments_total{kind,result}`, `telveguard_attachment_scan_seconds` | Ekler (`image`, `pdf`, `text`): taranan, önbellekten, taranamayan, karartılan; OCR / PDF süresi |
+| `telveguard_anomalies_total{signal}` | Eşiğe ulaşan kullanıcı anomalileri (kullanıcı + pencere başına bir kez) |
 | `telveguard_notifications_total{channel_type,result}` | Bildirimler: `sent`, `failed`, `suppressed` (tekrar bastırma), `dropped` (kuyruk dolu) |
 | `telveguard_upstream_errors_total`, `telveguard_audit_failures_total`, `telveguard_auth_failures_total{reason}` | Hatalar |
 
@@ -828,6 +861,59 @@ notify:
 
 Yerel test ortamında bildirimler sahte LLM'in kaydedicisine gider:
 `curl localhost:9000/webhook/received`.
+
+## Kullanıcı riski: skor ve anlık anomali
+
+**Risk skoru** (konsolda **Risk** sekmesi, `GET /v1/reports/risk`): denetim kayıtlarından kullanıcı başına
+sinyaller ağırlıklı toplanır ve 0-100 skora çevrilir. Her kullanıcı için hangi sinyalin kaç puan getirdiği
+ayrı döner; satıra tıklayınca kullanıcının olayları açılır.
+
+| Sinyal | Ağırlık |
+|---|---|
+| Injection denemesi (skor ≥ 0,5) | 5 |
+| Sır içeren istek | 4 |
+| Cevapta sızıntı, uyarıya rağmen gönderim (eklenti) | 3 |
+| Engellenen istek | 2 |
+| Yurt dışına maskesiz kişisel veri | 1 |
+| Mesai dışı (08-19 dışı, hafta sonu) riskli istek | 0,2 |
+| Yurt dışı modele giden farklı kişi (`TELVEGUARD_SUBJECT_HASH_KEY` gerekir) | 0,1 |
+
+Skor = 100 × (1 − e^(−toplam / 20)). Son 24 saatteki riskli istek en az 5 ve kullanıcının günlük
+ortalamasının en az 3 katıysa **ani artış** işaretlenir (+10). Kimliği bilinmeyen istekler (`anonymous`,
+`unknown`) listelenmez. Skor bir inceleme önceliğidir, kanıt değil.
+
+**Anlık anomali**: her istek kullanıcı başına sabit pencerede sayılır; bir sinyal eşiğe ulaşınca pencerede
+**bir kez** `anomali:<sinyal>` kurallı bildirim olayı üretilir. Olay denetim kaydına yazılmaz (Röntgen istek
+sayıları değişmez), bildirim kanallarına gider:
+
+```yaml
+anomaly:
+  window_minutes: 60
+  thresholds:             # kullanıcı başına, pencere içinde (yalnızca yazılanlar sayılır)
+    subjects: 100         # yurt dışı modele giden farklı kişi tanımlayıcısı
+    blocked: 10           # engellenen istek
+    overrides: 5          # tarayıcı eklentisinde uyarıya rağmen gönderim
+    secrets: 3            # sır içeren istek
+    injection: 3          # injection denemesi
+
+notify:
+  channels:
+    - name: anomali
+      type: slack
+      url_env: SLACK_SECURITY_WEBHOOK_URL
+      when: { rules: ["anomali:*"] }
+      cooldown_seconds: 0   # tekrar bastırma ekip + kural başınadır; anomali zaten pencerede bir kez
+```
+
+- `subjects` farklı **değer** sayar: Claude Code her turda tüm konuşmayı yeniden gönderir, aynı TCKN bir
+  kez sayılır. İlgili kişi özetlerini kullanır; `TELVEGUARD_SUBJECT_HASH_KEY` yoksa bu sinyal çalışmaz.
+- Sayaç kota ile aynı yerdedir: `REDIS_URL` varsa tüm pod'lar ortak sayar (farklı değer HyperLogLog ile,
+  ~%1 hata); yoksa worker başına bellek (eşik worker başına uygulanır, yalnızca geliştirme). Sayaç
+  hatası isteği bozmaz (`telveguard_quota_backend_errors_total`).
+- Bildirimdeki "Konsolda aç" bağlantısı Risk sekmesine gider.
+
+KVKK: bu bir çalışan izleme özelliğidir. Ham metin kullanılmaz (türler, kararlar, özetler), ama skor
+kullanıcı adıyla döner: aydınlatma metninde yer almalı; erişim yönetici loguna yazılır.
 
 ## İlgili kişi başvurusu (KVKK md. 11)
 
@@ -1094,6 +1180,7 @@ baktığı izlenebilir.
 | `GET /v1/reports/kvkk-transfer?month=2026-09` | KVKK yurt dışı aktarım raporu (CSV; `&format=json` da olur) |
 | `GET /v1/inventory?days=90` | AI envanteri: beyan edilen sistemler, risk sınıfı, yükümlülükler, beyan edilmemiş kullanımlar |
 | `GET /v1/reports/verbis?format=csv\|json` | VERBİS başlıklarına eşlenmiş taslak |
+| `GET /v1/reports/risk?days=30&team=&limit=50` | Kullanıcı başına risk skoru, sinyallerin katkısı, son 24 saatte ani artış ([Kullanıcı riski](#kullanıcı-riski-skor-ve-anlık-anomali)) |
 | `GET /v1/reports/poc?days=14` | POC raporu: riskli isteklerin akıbeti, KVKK md. 9, gölge AI, örnek olaylar, öneriler |
 | `POST /v1/policy/simulate?format=chat\|responses\|messages\|embeddings` | Bir isteğe verilecek karar, işaretli metin bölümleri ve modele gidecek maskeli gövde |
 
@@ -1224,6 +1311,11 @@ Upstream projeler değiştirilmez; eklenti / adaptör olarak sarılır (ayrınt�
 - Tarayıcı eklentisinde onaylı araca yönlendirme metni panoya kopyalar: pano okuma izni olan bir AI sitesi
   metni okuyabilir. Eklentinin önizleme çerçevesi sitenin CSP'si yüzünden açılamazsa pencere yalnızca tür ve
   adet gösterir (popup'ta ve `golge-ai:onizleme-acilamadi` kuralında görünür).
+- Sahte değerle maskelemede (`masking.style: synthetic`) model sahte değeri parçalayarak yazarsa
+  ("son dört hanesi 6622") o parça geri çevrilmez: kullanıcı sahte rakamları görür. Yer tutucuda bu
+  durum gözle görülür (`[TCKN_1]`), sahte değerde görülmez. Hesaplama yapan (son haneler, tutar
+  karşılaştırması) iş akışlarında yer tutucuda kalın. Maskeli prompt saklanıyorsa (`AUDIT_STORE_MASKED`)
+  kayıtta sahte değerler görünür.
 - ContextForge'da yer tutucular (`[TCKN_1]`) araç çağrıları arasında yalnızca Redis vault'u
   tanımlıysa ve çağıran kimliği biliniyorsa tutarlıdır; yoksa tek araç çağrısı içinde.
 

@@ -38,6 +38,7 @@ NOTIFICATIONS = Counter("telveguard_notifications", "Slack / Teams / webhook bil
                         ["channel_type", "result"])  # result: sent | failed | suppressed | dropped
 ATTACHMENTS = Counter("telveguard_attachments", "Taranan ekler (görsel, PDF, dosya)",
                       ["kind", "result"])  # kind: image | pdf | text | other ; result: scanned | cached | unscannable | redacted
+ANOMALIES = Counter("telveguard_anomalies", "Eşiğe ulaşan kullanıcı anomalileri (pencerede bir kez)", ["signal"])
 QUOTA_BACKEND_ERRORS = Counter("telveguard_quota_backend_errors", "Kota sayacına (Redis) ulaşılamayan işlemler")
 
 _BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120)

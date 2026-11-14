@@ -274,3 +274,9 @@ def test_okd_example_values_render():
     assert {"name": "kurum-ca", "mountPath": "/etc/kurum-ca", "readOnly": True} in c["volumeMounts"]
     pod = docs[("Deployment", "tg-telveguard-gateway")]["spec"]["template"]["spec"]
     assert {"name": "kurum-ca", "configMap": {"name": "kurum-ca"}} in pod["volumes"]
+
+
+def test_synthetic_key_secret_ref():
+    e = env(render("--set", "secrets.syntheticKey=" + "s" * 32))
+    ref = e["TELVEGUARD_SYNTHETIC_KEY"]["valueFrom"]["secretKeyRef"]
+    assert ref["key"] == "synthetic-key" and ref.get("optional") is True

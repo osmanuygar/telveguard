@@ -227,6 +227,7 @@ spec:
             {{- include "tg.secretEnv" (dict "env" "GUARDRAIL_TOKEN" "secret" $secret "key" "guardrail-token") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "CONTEXTFORGE_TOKEN" "secret" $secret "key" "contextforge-token") | nindent 12 }}
             {{- include "tg.secretEnv" (dict "env" "TELVEGUARD_SUBJECT_HASH_KEY" "secret" $secret "key" "subject-hash-key") | nindent 12 }}
+            {{- include "tg.secretEnv" (dict "env" "TELVEGUARD_SYNTHETIC_KEY" "secret" $secret "key" "synthetic-key") | nindent 12 }}
             {{- if .Values.metrics.requireToken }}
             # Secret'ta metrics-token yoksa /metrics açık kalmaz, 503 döner
             - name: METRICS_REQUIRE_TOKEN

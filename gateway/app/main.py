@@ -46,13 +46,14 @@ from . import policy_git as policy_git_mod
 from . import policy_store as policy_store_mod
 from . import poc_report as poc_report_mod
 from . import providers as providers_mod
+from . import risk as risk_mod
 from . import xray as xray_mod
 from .audit import AuditSink
 from .auth import AuthError, Authenticator, Identity
 from .quota import QuotaBackendError, QuotaManager
 from .formats import CHAT, EMBEDDINGS, FORMATS, MESSAGES, RESPONSES, UPSTREAM_KEYS, UPSTREAMS, ApiFormat, Part  # noqa: F401
 from telveguard_core.detectors.injection import InjectionDetector, InjectionResult
-from telveguard_core.pii.engine import TrPiiEngine
+from telveguard_core.pii.engine import KnownValues, TrPiiEngine, is_placeholder
 from telveguard_core.policy import Context, Decision, PolicyEngine
 
 
@@ -82,6 +83,8 @@ async def lifespan(app: FastAPI):
     app.state.subjects = subjects_mod.SubjectIndex.from_env()
     app.state.shadow_limiter = shadow_ai.RateLimiter.from_env()
     app.state.quota = QuotaManager.from_env(app.state.policy.quotas)
+    # Anlık anomali (politikadaki `anomaly`): sayaç kota ile aynı yerde (REDIS_URL; yoksa worker belleği)
+    app.state.anomaly = risk_mod.AnomalyDetector(app.state.quota.backend)
     # Guardrail servisi (LiteLLM, agentgateway): istek ile cevap arasında maske eşleşmesi
     app.state.guardrail_sessions = guardrail_mod.Sessions.from_env()
     # AI sistem beyanları (EU AI Act envanteri); yoksa tüm kullanımlar "beyan edilmemiş"
@@ -415,6 +418,9 @@ async def _emit(st, ev: dict):
     """Denetim kaydı + (eşleşen kanal varsa) arka planda Slack / Teams / webhook bildirimi."""
     await st.audit.emit(ev)
     st.notifier.submit(ev)
+    if st.policy.anomaly:
+        for alert in await st.anomaly.observe(st.policy.anomaly, ev):
+            st.notifier.submit(alert)      # denetim kaydına yazılmaz (istek sayıları şişmesin)
 
 
 def _auth_error(e: AuthError, fmt: ApiFormat = CHAT) -> JSONResponse:
@@ -429,7 +435,7 @@ def _find_output_leaks(st, text: str, known: str, vault: Dict[str, str]):
     """Cevaptaki PII / sırlardan GİRDİDE OLMAYANLAR. Kullanıcının kendi verisinin cevapta
     geri gelmesi (iç model, maskesiz) sızıntı değildir; modelin ürettiği yeni değer sızıntıdır."""
     findings = st.pii.analyze(text)
-    known_values = set(vault.values())
+    known_values = KnownValues(vault)   # gerçek değerler ve sahte değerler (masking.style: synthetic)
     leaks = [f for f in findings
              if text[f.start:f.end] not in known and text[f.start:f.end] not in known_values]
     return findings, leaks
@@ -460,8 +466,9 @@ def _mask_parts(st, parts: List[Part], decision: Decision, vault: Dict[str, str]
     if part_findings is None or len(part_findings) != len(parts):
         part_findings = [None] * len(parts)
     for p, found in zip(parts, part_findings):
-        p.set(st.pii.mask(p.text, list(decision.mask_entities), vault, findings=found).text)
-    notes = st.attachments.mask(st.pii, list(scans), decision.mask_entities, vault)
+        p.set(st.pii.mask(p.text, list(decision.mask_entities), vault, findings=found,
+                          style=st.policy.mask_style).text)
+    notes = st.attachments.mask(st.pii, list(scans), decision.mask_entities, vault, st.policy.mask_style)
     return "\n".join([p.text for p in parts] + notes)
 
 
@@ -1137,6 +1144,27 @@ async def poc_report(request: Request, days: int = 14):
         return _openai_error(502, str(e), "clickhouse_error", "admin_error")
 
 
+@app.get("/v1/reports/risk")
+async def risk_report(request: Request, days: int = 30, team: str = "", limit: int = risk_mod.RISK_LIMIT):
+    """Kullanıcı başına risk skoru (0-100), sinyallerin katkısı ve son 24 saatteki ani artış.
+    Kullanıcı adı içerir: yönetici ucu, erişim loglanır."""
+    if err := await _require_admin(request):
+        return err
+    if not 2 <= days <= 366:
+        return _openai_error(400, "days 2 ile 366 arasında olmalı.", "invalid_request", "invalid_request_error")
+    if not 1 <= limit <= 500:
+        return _openai_error(400, "limit 1 ile 500 arasında olmalı.", "invalid_request", "invalid_request_error")
+    ch, err = _require_clickhouse(request)
+    if err:
+        return err
+    try:
+        result = await risk_mod.report(ch, days, team.strip(), limit)
+    except xray_mod.ClickHouseError as e:
+        return _openai_error(502, str(e), "clickhouse_error", "admin_error")
+    result["anomaly"] = request.app.state.policy.anomaly or None
+    return result
+
+
 # ---------------- AI envanteri (EU AI Act) + VERBİS taslağı ----------------
 
 @app.get("/v1/inventory")
@@ -1716,12 +1744,13 @@ async def guardrail_output(st, call: guardrail_mod.Call) -> guardrail_mod.Verdic
     teams = list(c.get("teams") or []) or ["default"]
     ctx = Context(teams[0], c.get("model") or "", c.get("destination") or "external", set(), 0.0,
                   frozenset(teams), c.get("declared"))
-    known = set(session.known) | set(session.vault.values())
+    known, known_values = set(session.known), KnownValues(session.vault)
     scanned, output_entities = [], set()
     for text in call.texts:
         findings = st.pii.analyze(text)
         output_entities |= {f.entity for f in findings}
-        scanned.append((text, [f for f in findings if text[f.start:f.end] not in known]))
+        scanned.append((text, [f for f in findings
+                               if text[f.start:f.end] not in known and text[f.start:f.end] not in known_values]))
     leaked = {f.entity for _, leaks in scanned for f in leaks}
     out = st.policy.evaluate_output(ctx, leaked)
 
@@ -1750,8 +1779,11 @@ async def guardrail_output(st, call: guardrail_mod.Call) -> guardrail_mod.Verdic
     texts = [st.pii.unmask(_redact(text, leaks, out.mask_entities) if out.action == "mask" else text,
                            session.vault) for text, leaks in scanned]
     changed = texts != call.texts
-    # Stream: yarım yer tutucu ve (çıktı kuralı varsa) yarım değer sonraki tura beklesin
-    hold = [guardrail_mod.holdback(t, placeholders=bool(session.vault), tokens=bool(st.policy.output_rules))
+    # Stream: yarım yer tutucu ve (çıktı kuralı ya da sahte değer varsa) yarım değer sonraki tura beklesin:
+    # yarısı gönderilmiş sahte numara geri açılamaz
+    synthetic = any(not is_placeholder(k) for k in session.vault)
+    hold = [guardrail_mod.holdback(t, placeholders=bool(session.vault),
+                                   tokens=bool(st.policy.output_rules) or synthetic)
             for t in texts]
     action = "mask" if changed else "pass"
     metrics.GUARDRAIL_CHECKS.labels(call.source, "response", action).inc()

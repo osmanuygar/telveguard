@@ -116,7 +116,8 @@ policy:
 # redis-password, shadow-ai-token (tarayıcı eklentisi olayları), policy-store-password, policy-git-token,
 # guardrail-token (LiteLLM / agentgateway guardrail servisi; deploy/guardrail/),
 # contextforge-token (ContextForge eklentisi kurumsal sözlüğü çeker; terimler düz metin),
-# subject-hash-key (KVKK ilgili kişi araması; en az 32 karakter, değişirse eski kayıtlar bulunamaz)
+# subject-hash-key (KVKK ilgili kişi araması; en az 32 karakter, değişirse eski kayıtlar bulunamaz),
+# synthetic-key (politikada masking.style: synthetic; en az 32 karakter, tüm pod'larda aynı sahte değer)
 existingSecret: ""
 # existingSecret boşsa chart bu değerlerden Secret üretir (geliştirme / test için).
 # adminToken boşsa yönetim uçları (Röntgen, simülatör, raporlar) KAPALIDIR.
@@ -127,6 +128,7 @@ secrets:
   upstreamAnthropicKey: ""
   clickhousePassword: ""
   subjectHashKey: ""        # boşsa ilgili kişi araması kapalı
+  syntheticKey: ""          # boşsa pod başına rastgele (sahte değerler pod'a göre değişir)
   metricsToken: ""          # metrics.requireToken için
   kafkaSaslPassword: ""     # audit.kafka.securityProtocol SASL_* için
 

@@ -10,6 +10,7 @@ genişlikli boşluk, yumuşak tire, yön işaretleri, etiket karakterleri) atıl
 TCKN'dir; regex'e değildi. Bulguların ofsetleri ORİJİNAL metne geri eşlenir: maskeleme araya
 sıkıştırılmış karakterler dahil tüm değeri kapatır.
 """
+import functools
 import hashlib
 import os
 import re
@@ -17,11 +18,14 @@ import threading
 import unicodedata
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, FrozenSet, List, Optional, Tuple
 
 from ..entities import entity_matches
 from .secret_recognizers import SECRET_RECOGNIZERS
+from .synthetic import SYNTHETIC_ENTITIES, make_surrogate, synthetic_key
 from .tr_recognizers import TR_RECOGNIZERS
+
+MASK_STYLES = ("placeholder", "synthetic")
 
 # Unicode Cf (biçim) kategorisi; tarayıcı eklentisinde (extension/src/detectors.js) aynı liste
 INVISIBLE_RANGES = [
@@ -68,6 +72,38 @@ def placeholder_entity(placeholder: str) -> str:
     return placeholder.strip("[]").rsplit("_", 1)[0]
 
 
+def is_placeholder(key: str) -> bool:
+    """Vault anahtarı yer tutucu mu ([TCKN_1]), sahte değer mi (synthetic.py)."""
+    return key.startswith("[") and key.endswith("]")
+
+
+def _alnum(value: str) -> str:
+    return re.sub(r"[^0-9A-Za-z]", "", value).upper()
+
+
+@functools.lru_cache(maxsize=256)
+def _surrogate_pattern(keys: FrozenSet[str]) -> "re.Pattern[str]":
+    """Sahte numaralar (TCKN, IBAN, telefon, plaka) model yeniden biçimlendirse de bulunsun:
+    "10000000146" -> "100 000 001 46", "34 ABC 123" -> "34ABC123". Rakam / harf sırası aynı,
+    aralarında tek ayraç olabilir."""
+    alts = ["[ .\\-]?".join(map(re.escape, _alnum(k))) for k in sorted(keys, key=len, reverse=True)]
+    return re.compile(r"(?<![0-9A-Za-z])(?:" + "|".join(alts) + r")(?![0-9A-Za-z])", re.IGNORECASE)
+
+
+class KnownValues:
+    """Sızıntı karşılaştırması için vault'taki değerler: gerçek değerler, sahte değerler ve sahte
+    numaraların başka yazımı. Model sahte değeri cevapta tekrarlarsa bu yeni bir değer değildir."""
+
+    def __init__(self, vault: Dict[str, str]):
+        self._values = set(vault.values())
+        synthetic = [k for k in vault if not is_placeholder(k)]
+        self._values.update(synthetic)
+        self._canon = {_alnum(k) for k in synthetic if "@" not in k}
+
+    def __contains__(self, value: str) -> bool:
+        return value in self._values or (bool(self._canon) and _alnum(value) in self._canon)
+
+
 def normalize_text(text: str) -> str:
     """Değer karşılaştırması için (ilgili kişi araması, istisnalar): taramayla aynı normalleştirme."""
     return normalize_for_scan(text)[0]
@@ -102,6 +138,7 @@ _EDGE = 8   # kesilmiş pencere kenarında lookbehind / lookahead bağlamı eksi
 class TrPiiEngine:
     def __init__(self, enable_ner: bool = False, min_score: float = 0.5):
         self._recognizers = TR_RECOGNIZERS + SECRET_RECOGNIZERS
+        self._synthetic_key: Optional[bytes] = None
         self._exempt: Optional[Callable[[str, str], bool]] = None
         self._gen = 0
         self._cache: "OrderedDict[Tuple[int, bytes], Tuple]" = OrderedDict()
@@ -233,14 +270,21 @@ class TrPiiEngine:
         return sorted(kept, key=lambda r: r.start)
 
     def mask(self, text: str, entities_to_mask: Optional[List[str]] = None,
-             vault: Optional[Dict[str, str]] = None, findings: Optional[List[Finding]] = None) -> MaskResult:
+             vault: Optional[Dict[str, str]] = None, findings: Optional[List[Finding]] = None,
+             style: str = "placeholder") -> MaskResult:
         """Aynı vault birden fazla mesajda paylaşılır: aynı TCKN hep [TCKN_1] olur (farklı yazımı da:
-        "391 417 776 94" ve "39141777694"; geri açılınca ilk görülen yazım döner)."""
+        "391 417 776 94" ve "39141777694"; geri açılınca ilk görülen yazım döner).
+        style="synthetic": biçimi belli türler yer tutucu yerine geçerli görünen sahte değer alır
+        (synthetic.py); vault'ta anahtar sahte değerdir."""
+        if style not in MASK_STYLES:
+            raise ValueError(f"Geçersiz maskeleme biçimi '{style}' ({', '.join(MASK_STYLES)})")
         findings = self.analyze(text) if findings is None else findings   # hazır bulgu: yeniden taranmaz
         vault = vault if vault is not None else {}
         reverse: Dict[Tuple[str, str], str] = {}
         counters: Dict[str, int] = {}
         for k, v in vault.items():
+            if not is_placeholder(k):
+                continue        # sahte değer: aynı değer yeniden aynı sahteyi alır (belirlenimci)
             ent = placeholder_entity(k)
             reverse.setdefault((ent, canonical_value(ent, v)), k)
             counters[ent] = counters.get(ent, 0) + 1
@@ -250,8 +294,14 @@ class TrPiiEngine:
             if entities_to_mask is not None and not entity_matches(f.entity, entities_to_mask):
                 continue
             original = text[f.start:f.end]
-            key = (f.entity, canonical_value(f.entity, original))
+            canon = canonical_value(f.entity, original)
+            key = (f.entity, canon)
             placeholder = reverse.get(key)
+            if placeholder is None and style == "synthetic" and f.entity in SYNTHETIC_ENTITIES:
+                placeholder = self._surrogate(f.entity, original, canon, vault)
+                if placeholder is not None:
+                    vault[placeholder] = original
+                    reverse[key] = placeholder
             if placeholder is None:
                 counters[f.entity] = counters.get(f.entity, 0) + 1
                 placeholder = f"[{f.entity}_{counters[f.entity]}]"
@@ -263,9 +313,33 @@ class TrPiiEngine:
         out.append(text[cursor:])
         return MaskResult("".join(out), findings, vault)
 
+    def _surrogate(self, entity: str, original: str, canon: str, vault: Dict[str, str]) -> Optional[str]:
+        if self._synthetic_key is None:
+            self._synthetic_key = synthetic_key()
+        for attempt in range(8):
+            s = make_surrogate(entity, original, canon, self._synthetic_key, attempt)
+            if s is None:
+                return None
+            # Orijinalin kendisi, başka bir değerin sahtesi ya da vault'taki gerçek bir değer olamaz
+            if _alnum(s) != _alnum(original) and vault.get(s, original) == original and s not in vault.values():
+                return s
+        return None
+
     @staticmethod
     def unmask(text: str, vault: Dict[str, str]) -> str:
         # Uzun anahtar önce: [TCKN_10] işlenmeden [TCKN_1] değiştirilmesin
+        synthetic = []
         for placeholder in sorted(vault, key=len, reverse=True):
-            text = text.replace(placeholder, vault[placeholder])
+            if not is_placeholder(placeholder):
+                synthetic.append(placeholder)
+            elif placeholder in text:
+                text = text.replace(placeholder, vault[placeholder])
+        if not synthetic:
+            return text
+        for email in (k for k in synthetic if "@" in k):
+            text = text.replace(email, vault[email])
+        numbers = {_alnum(k): vault[k] for k in synthetic if "@" not in k}
+        if numbers:
+            text = _surrogate_pattern(frozenset(k for k in synthetic if "@" not in k)).sub(
+                lambda m: numbers.get(_alnum(m.group(0)), m.group(0)), text)
         return text
