@@ -1000,6 +1000,10 @@ için Chrome / Edge eklentisi: `extension/` (Manifest V3).
   "Maskele ve gönder" / "Düzenle" / "Yine de gönder". Değerler `[TCKN_1]` gibi yer tutucu olur;
   kutuda önceden maskelenmiş `[TCKN_1]` varsa yeni değer `[TCKN_2]` olur. "Yine de" denen değer aynı
   sayfada ikinci kez sorulmaz.
+- **Yazarken uyarı:** kutuya yazılan ya da yapıştırılan metin gönderilmeden taranır; hassas veri varsa kutunun
+  köşesinde türleri ve adedi gösteren küçük bir uyarı (değer yok) ve "Maskele" düğmesi çıkar. Kullanıcı gönderim
+  penceresine takılmadan düzeltir. Olay yalnızca maskelenince gider (`trigger: live`). `liveWarnings: false` ile
+  kapatılır; gönderim koruması her durumda çalışır.
 - **Maskeli önizleme:** pencere veri türlerini gösterir; "Değerleri göster" ile yakalanan değerler ve
   yerlerine gidecek yer tutucular açılır (sırların yalnızca ilk karakterleri). Uyar modunda yapıştırma ve
   gönderimde hassas olmayan değerin işareti kaldırılabilir: o değer maskelenmez, aynı sayfada yeniden sorulmaz ve "yanlış alarm" gerekçesiyle

@@ -48,6 +48,11 @@
       "description": "Yer tutucu içeren seçili metin gerçek değerleriyle panoya alınır. Pano AI sitesinin erişimine açık olabilir ve seçimi site belirleyebilir; bu yüzden varsayılan: kapalı.",
       "type": "boolean"
     },
+    "liveWarnings": {
+      "title": "Yazarken uyarı",
+      "description": "Sohbet kutusuna yazılan ya da yapıştırılan metin gönderilmeden önce taranır; hassas veri varsa kutunun köşesinde türleri ve adedi (değer yok) gösteren küçük bir uyarı ve 'Maskele' düğmesi çıkar. Gönderimdeki koruma bundan bağımsız çalışır. Varsayılan: açık.",
+      "type": "boolean"
+    },
     "requireJustification": {
       "title": "'Yine de' için gerekçe iste",
       "description": "Kullanıcı uyarıya rağmen devam ederse gerekçe seçer (müşteri onayı, test verisi, yanlış alarm, diğer). Seçim denetim kaydına yazılır, metin yazılmaz. Varsayılan: açık.",
