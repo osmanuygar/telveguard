@@ -6,6 +6,14 @@
 
 - Yeni politika bölümleri `masking` ve `anomaly` opsiyonel; yoksa davranış değişmez. Konsoldan düzenlenmez,
   ConfigMap'teki politika dosyasındadır. Risk sorgusu mevcut `audit` tablosunu kullanır: migration gerekmez.
+- Bağımlılık alt sınırları yükseldi: `pillow>=13.0`, `ner` eki `transformers>=5.10` + `torch>=2.10`.
+  llm-guard 0.3.16 `transformers==4.51.3` sabitlediği için `ner` ve `llmguard` ekleri artık aynı ortama kurulamaz.
+
+### Güvenlik
+
+- Pillow 13.0 (görsel/PDF ek taramasındaki heap overflow, decompression bomb ve DoS CVE'leri), transformers 5.10
+  ve torch 2.10 (model/checkpoint yüklemede RCE CVE'leri), eklenti testlerinde Playwright 1.65.1
+  (CVE-2025-59288). llm-guard sabitlerinden gelen transformers, json-repair ve cryptography bulguları açık kalıyor.
 
 ### Koruma
 

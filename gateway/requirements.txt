@@ -5,10 +5,10 @@ pyyaml>=6.0
 aiokafka>=0.11
 pyjwt[crypto]>=2.8        # AUTH_MODE=jwt (OIDC)
 prometheus-client>=0.20   # /metrics
-pillow>=10.1              # ek tarama: görsel açma / karartma
+pillow>=13.0              # ek tarama: görsel açma / karartma (13.0 öncesi çok sayıda CVE)
 pypdfium2>=4.30           # ek tarama: PDF metin katmanı ve sayfa görüntüsü
 # Opsiyonel (ENABLE_TR_NER=1 / ENABLE_LLM_GUARD=1):
-# transformers>=4.44
-# torch  (CPU wheel yeterli)
-# llm-guard>=0.3.16
+# transformers>=5.10   (5.10 öncesi RCE/path traversal CVE)
+# torch>=2.10  (CPU wheel yeterli; 2.10 öncesi torch.load RCE CVE-2026-24747)
+# llm-guard>=0.3.16  (DİKKAT: transformers==4.51.3 sabitler; NER ile aynı ortama kurulamaz)
 redis>=5                  # kota sayacı (REDIS_URL)
