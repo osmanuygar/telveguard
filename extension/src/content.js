@@ -25,6 +25,8 @@
  * Yerel geri açma (MDM: revealPlaceholders): sayfadaki [TCKN_1] üzerine gelince değer çerçevedeki ipucunda
  * görünür. "Aslıyla kopyala" varsayılan kapalı (MDM: revealCopy): pano siteye açık olabilir. Eşleme yalnızca
  * bu betiğin belleğinde durur; sitenin DOM'una yazılmaz, saklanmaz, gönderilmez. Numaralar sayfa boyunca ortaktır.
+ * Yazarken uyarı (MDM: liveWarnings): kutu yazılırken sessizce taranır; hassas veri varsa kutunun köşesinde
+ * türleri ve adedi (değer yok) gösteren küçük bir uyarı ve "Maskele" düğmesi çıkar. Olay yalnızca maskelenince gider.
  */
 (function () {
   "use strict";
@@ -36,7 +38,7 @@
   // Yapılandırma gelene kadar en sıkı hali: servis çalışanı saniyeler içinde uyanabilir, block kurumunda
   // o arada "Yine de" çıkmasın. Normalde saklanan yapılandırma ilk milisaniyelerde bunun yerine geçer.
   let config = { mode: "block", reportVisits: false, unscannableFiles: "block", requireJustification: true,
-                 sanctionedAiUrl: "", sanctionedAiName: "", showBanner: true, revealPlaceholders: true, revealCopy: false };
+                 sanctionedAiUrl: "", sanctionedAiName: "", showBanner: true, revealPlaceholders: true, revealCopy: false, liveWarnings: true };
   const hasRuntime = typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage;
 
   let liveConfig = false;   // servis çalışanının cevabı geldiyse saklanan kayıt onu ezmesin
@@ -743,6 +745,7 @@
     const base = { entities: c, chars: text.length, trigger: "send" };
     const done = () => { dialogOpen = false; };
     dialogOpen = true;
+    liveHide();
 
     if (config.mode === "block") {
       const preview = previewPanel(text, findings);
@@ -792,4 +795,137 @@
     if (!button) return;
     guardSend(ev, composerNear(button), button);
   }, true);
+
+  // ---------- yazarken uyarı ----------
+  // Kutu yazılırken (ya da yapıştırılınca) sessizce taranır; hassas veri varsa kutunun köşesinde küçük bir
+  // uyarı: türler ve adet (değer YOK; closed Shadow DOM'da da yalnızca tür durur) ve "Maskele". Gönderimdeki
+  // pencereden önce haber verir, kullanıcı akışı bölünmeden düzeltir. Olay yalnızca "Maskele" seçilince gider.
+  // Site kutuyu input olayı vermeden boşaltabilir (gönderim sonrası): uyarı görünürken kutu kısa aralıkla yoklanır.
+  const LIVE_DELAY_MS = 400, LIVE_POLL_MS = 800, LIVE_MAX_CHARS = 100000;
+  const liveOn = () => config.liveWarnings !== false;
+  const LIVE_STYLE = `
+    :host { all: initial; }
+    .chip { position: fixed; z-index: 2147483646; display: flex; align-items: center; gap: 8px; max-width: min(440px, calc(100vw - 16px));
+            box-sizing: border-box; padding: 4px 4px 4px 10px; border-radius: 999px; background: #fcfcfb; color: #0b0b0b;
+            border: 1px solid rgba(138,75,31,.5); box-shadow: 0 4px 16px rgba(0,0,0,.18);
+            font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .chip[hidden] { display: none; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #8a4b1f; flex: none; }
+    .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    button { font: inherit; border-radius: 999px; padding: 3px 10px; border: 0; background: #0b0b0b; color: #fff; cursor: pointer; flex: none; }
+    button.x { background: transparent; color: #52514e; padding: 3px 7px; }
+    button:focus-visible { outline: 2px solid #2a78d6; outline-offset: 2px; }
+    @media (prefers-color-scheme: dark) {
+      .chip { background: #1a1a19; color: #fff; border-color: rgba(214,150,96,.55); }
+      .dot { background: #d69660; }
+      button { background: #fff; color: #0b0b0b; } button.x { background: transparent; color: #c3c2b7; }
+    }`;
+
+  let live = null;   // { host, chip, label, mask, close }
+  let liveComposer = null, liveText = null, liveCount = 0, liveDismissed = 0, liveTimer = 0, livePoll = 0;
+
+  function liveChip() {
+    if (live) {
+      if (!document.contains(live.host)) (document.body || document.documentElement).append(live.host);   // site gövdeyi yeniden kurduysa
+      return live;
+    }
+    const host = document.createElement("div");
+    host.setAttribute("data-telveguard", "");
+    const root = host.attachShadow({ mode: "closed" });
+    const style = document.createElement("style");
+    style.textContent = LIVE_STYLE;
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.setAttribute("role", "status");
+    chip.hidden = true;
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    const label = document.createElement("span");
+    label.className = "label";
+    const mask = document.createElement("button");
+    mask.type = "button";
+    mask.textContent = "Maskele";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "x";
+    close.textContent = "×";
+    close.setAttribute("aria-label", "Uyarıyı kapat");
+    // Kutudaki imleç ve seçim kaybolmasın: düğmeler odağı almaz
+    [mask, close].forEach((b) => b.addEventListener("mousedown", (ev) => ev.preventDefault()));
+    mask.addEventListener("click", liveMask);
+    close.addEventListener("click", () => { liveDismissed = liveCount; liveHide(); });
+    chip.append(dot, label, mask, close);
+    root.append(style, chip);
+    (document.body || document.documentElement).append(host);
+    live = { host, chip, label, mask, close };
+    window.__telveguardLive = live;   // testler için
+    return live;
+  }
+
+  /** Gönderimde sorulacak bulgular: "yine de" denen değerler uyar modunda sayılmaz. */
+  function liveFindingsOf(text) {
+    if (!text || !text.trim() || text.length > LIVE_MAX_CHARS) return [];   // çok uzunsa gönderimde taranır
+    return D.analyze(text).filter((f) => config.mode === "block" || !allowedValues.has(text.slice(f.start, f.end)));
+  }
+
+  function liveHide() {
+    if (live) live.chip.hidden = true;
+    clearInterval(livePoll);
+    livePoll = 0;
+  }
+
+  /** Kutunun sağ üst köşesinin hemen üstü; yer yoksa altı. */
+  function livePlace() {
+    if (!live || live.chip.hidden || !liveComposer) return;
+    const r = liveComposer.getBoundingClientRect();
+    if (!r.width && !r.height) { live.chip.hidden = true; return; }   // kutu gizlendi
+    const b = live.chip.getBoundingClientRect();
+    const above = r.top - b.height - 6;
+    live.chip.style.top = `${above >= 4 ? above : Math.min(r.bottom + 6, innerHeight - b.height - 4)}px`;
+    live.chip.style.left = `${Math.max(8, Math.min(r.right - b.width, innerWidth - b.width - 8))}px`;
+  }
+
+  function liveScan() {
+    liveTimer = 0;
+    const composer = liveComposer;
+    if (!liveOn() || !composer || !document.contains(composer)) { liveHide(); return; }
+    const text = composerText(composer);
+    if (text === liveText && live && !live.chip.hidden) { livePlace(); return; }   // yoklama: değişiklik yok
+    liveText = text;
+    const findings = liveFindingsOf(text);
+    liveCount = findings.length;
+    if (!liveCount) liveDismissed = 0;   // kutu temizlendi: kapatma sıfırlanır
+    if (!liveCount || liveCount <= liveDismissed || dialogOpen) { liveHide(); return; }
+    const ui = liveChip();
+    ui.label.textContent = `Hassas veri: ${describe(counts(findings)).join(", ")}`;
+    ui.mask.title = "Değerlerin yerine [TCKN_1] gibi yer tutucular konur";
+    ui.chip.hidden = false;
+    livePlace();
+    if (!livePoll) livePoll = setInterval(liveScan, LIVE_POLL_MS);
+  }
+
+  function liveSchedule(composer) {
+    if (!liveOn()) { liveHide(); return; }
+    if (composer !== liveComposer) { liveComposer = composer; liveText = null; liveDismissed = 0; }
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(liveScan, LIVE_DELAY_MS);
+  }
+
+  /** "Maskele": kutudaki metnin o anki hali yeniden taranır ve maskelenir (önizlemesiz; numaralar sayfa boyunca ortak). */
+  function liveMask() {
+    const composer = liveComposer;
+    liveHide();
+    if (!composer || !document.contains(composer)) return;
+    const text = composerText(composer);
+    const findings = liveFindingsOf(text);
+    if (!findings.length) return;
+    const m = D.mask(text, { continueNumbering: true, findings, state: pageVault });
+    remember(m.state);
+    replaceComposer(composer, m.text);
+    send({ entities: counts(findings), chars: text.length, trigger: "live", action: "masked" });
+  }
+
+  window.addEventListener("input", (ev) => { const c = composerOf(ev.target); if (c) liveSchedule(c); }, true);
+  window.addEventListener("scroll", livePlace, { passive: true, capture: true });
+  window.addEventListener("resize", livePlace, { passive: true });
 })();

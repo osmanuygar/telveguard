@@ -28,6 +28,12 @@
 
 ### Tarayıcı eklentisi
 
+- Yazarken uyarı (`liveWarnings`, varsayılan açık): sohbet kutusuna yazılan ya da yapıştırılan metin gönderilmeden
+  taranır; hassas veri varsa kutunun köşesinde türleri ve adedi gösteren küçük bir uyarı (değer yok) ve tek tıkla
+  "Maskele" çıkar. Kullanıcı gönderim penceresiyle karşılaşmadan düzeltir. Uyarı görünmesi olay değildir; maskelenince
+  `trigger: "live"` olayı gider (denetimde "Tarayıcı: yazarken (canlı uyarı)"). "Yine de" denen değerler uyarı
+  çıkarmaz; kapatılan uyarı yeni değer gelince döner. Gönderim koruması bundan bağımsız çalışır. Popup'ta durumu görünür.
+
 - Firefox test paketi: `BROWSER=firefox scripts/dev_extension.sh <gateway> <token> [mod] [onaylı araç] [kullanıcı]`
   -> `dist/extension-dev-firefox/`, `about:debugging` > "Geçici Eklenti Yükle" ile kurulur (imza gerekmez,
   Firefox kapanınca kalkar). Manifest `package_extension_firefox.sh` ile aynı uyarlanır. Firefox profil

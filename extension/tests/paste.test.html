@@ -29,7 +29,7 @@
            requireJustification: params.get("justify") !== "0", sanctionedAiUrl: params.get("sanctioned") || "",
            sanctionedAiName: params.get("sanctioned") ? "Kurum Asistanı" : "", showBanner: true,
            revealPlaceholders: params.get("reveal") !== "0", revealCopy: params.get("copy") === "1",
-           ...window.__configOverride });
+           liveWarnings: params.get("live") !== "0", ...window.__configOverride });
     }
   } } };
 </script>
@@ -108,6 +108,8 @@
 
   // Elle yazma taklidi (yapıştırma olayı yok) ve Enter
   window.typeInto = (el, text) => { el.focus(); if ("value" in el) el.value = text; else el.textContent = text; };
+  // Tuş tuş yazma taklidi: her değişiklikte input olayı (sitelerin editörleri gibi)
+  window.typeLive = (el, text) => { window.typeInto(el, text); el.dispatchEvent(new Event("input", { bubbles: true })); };
   window.pressEnter = (el, init = {}) => {
     const ev = new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true, ...init });
     el.dispatchEvent(ev);

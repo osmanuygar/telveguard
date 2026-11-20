@@ -2,6 +2,7 @@
 document.getElementById("version").textContent = chrome.runtime.getManifest().version;
 const showConfig = (c) => {
   document.getElementById("mode").textContent = c && c.mode === "block" ? "Engelle" : "Uyar ve maskele";
+  document.getElementById("live").textContent = c && c.liveWarnings === false ? "Kapalı" : "Açık";
   document.getElementById("reporting").textContent = c && c.reporting ? "Açık" : "Kapalı (yalnızca yerel koruma)";
   document.getElementById("sanctioned").textContent = c && c.sanctionedAiUrl ? (c.sanctionedAiName || "Tanımlı") : "Tanımlı değil";
 };

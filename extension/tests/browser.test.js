@@ -74,6 +74,11 @@ const maskAndSend = async (p, text) => {
   await p.waitForTimeout(1600);   // yeniden gönderim penceresi kapansın
 };
 
+// Yazarken uyarı: kutuya yaz (input olayıyla), uyarının görünür hali
+const typeLive = (p, text, id = "chat-ta") => p.evaluate(([t, i]) => window.typeLive(document.getElementById(i), t), [text, id]);
+const chip = (p) => p.evaluate(() => { const l = window.__telveguardLive; return l && !l.chip.hidden && document.contains(l.host) ? l.label.textContent : null; });
+const waitChip = (p) => p.waitForFunction(() => { const l = window.__telveguardLive; return l && !l.chip.hidden; }, null, { timeout: 3000 });
+
 const TESTS = {
   "yapıştırma: değerler varsayılan kapalı, özet görünür": async (p) => {
     await paste(p, `Mail a@ornek.com ve b@ornek.com, anahtar ${SECRET} son`);
@@ -335,6 +340,75 @@ const TESTS = {
     await hover(p, "[EMAIL_ADDRESS_1]");
     assert.equal(await tip(p), null);
   },
+  "yazarken: tür ve adet görünür, değer görünmez; Maskele kutuyu maskeler": async (p) => {
+    await typeLive(p, "Mail a@ornek.com ve b@ornek.com");
+    await waitChip(p);
+    const label = await chip(p);
+    assert.equal(label, "Hassas veri: E-posta (2)");
+    // Kutunun hemen üstünde, ekranda
+    const pos = await p.evaluate(() => {
+      const c = window.__telveguardLive.chip.getBoundingClientRect(), t = document.getElementById("chat-ta").getBoundingClientRect();
+      return { above: c.bottom <= t.top + 1, inside: c.left >= 0 && c.right <= innerWidth };
+    });
+    assert.deepEqual(pos, { above: true, inside: true });
+    await p.evaluate(() => window.__telveguardLive.mask.click());
+    assert.equal(await p.inputValue("#chat-ta"), "Mail [EMAIL_ADDRESS_1] ve [EMAIL_ADDRESS_2]");
+    assert.equal(await chip(p), null);
+    const ev = await events(p);
+    assert.deepEqual(ev.map((e) => [e.action, e.trigger, e.entities.EMAIL_ADDRESS]), [["masked", "live", 2]]);
+    assert.ok(!JSON.stringify(ev).includes("ornek.com"), "olayda değer var");
+    // Maskelenen metin gönderimde yeniden sorulmaz; yer tutucu yerelde geri açılır
+    await p.evaluate(() => window.pressEnter(document.getElementById("chat-ta")));
+    assert.equal(await p.evaluate(() => window.dialogOpen()), false);
+    assert.equal(await p.evaluate(() => window.__messages[0]), "Mail [EMAIL_ADDRESS_1] ve [EMAIL_ADDRESS_2]");
+  },
+  "yazarken: contenteditable kutuda da çalışır, numara devam eder": async (p) => {
+    await maskAndSend(p, "a@ornek.com");
+    await typeLive(p, "Yeni b@ornek.com", "chat-ce");
+    await waitChip(p);
+    await p.evaluate(() => window.__telveguardLive.mask.click());
+    assert.equal(await p.evaluate(() => document.getElementById("chat-ce").innerText), "Yeni [EMAIL_ADDRESS_2]");
+  },
+  "yazarken: site kutuyu olaysız boşaltınca uyarı kalkar": async (p) => {
+    await typeLive(p, "Mail a@ornek.com");
+    await waitChip(p);
+    await p.evaluate(() => { document.getElementById("chat-ta").value = ""; });   // React'in gönderim sonrası temizliği gibi
+    await p.waitForTimeout(1000);
+    assert.equal(await chip(p), null);
+  },
+  "yazarken: kapatılan uyarı yeni değer gelince döner": async (p) => {
+    await typeLive(p, "Mail a@ornek.com");
+    await waitChip(p);
+    await p.evaluate(() => window.__telveguardLive.close.click());
+    await typeLive(p, "Mail a@ornek.com ve devam");
+    await p.waitForTimeout(600);
+    assert.equal(await chip(p), null, "aynı değer için yeniden açıldı");
+    await typeLive(p, "Mail a@ornek.com ve b@ornek.com");
+    await waitChip(p);
+    assert.equal(await chip(p), "Hassas veri: E-posta (2)");
+    assert.deepEqual(await events(p), []);   // uyarı görünmesi olay değildir
+  },
+  "yazarken: 'yine de' denen değer uyarı çıkarmaz": async (p) => {
+    await sendText(p, "a@ornek.com");
+    await press(p, "Yine de gönder");
+    await p.waitForFunction(() => window.__messages.length === 1);
+    await p.waitForTimeout(1600);
+    await typeLive(p, "tekrar a@ornek.com");
+    await p.waitForTimeout(600);
+    assert.equal(await chip(p), null);
+  },
+  "yazarken: gönderim penceresi açılınca uyarı gizlenir": async (p) => {
+    await typeLive(p, "Mail a@ornek.com");
+    await waitChip(p);
+    await p.evaluate(() => window.pressEnter(document.getElementById("chat-ta")));
+    assert.equal(await p.evaluate(() => window.dialogOpen()), true);
+    assert.equal(await chip(p), null);
+  },
+  "yazarken: liveWarnings kapalıysa görünmez": async (p) => {
+    await typeLive(p, "Mail a@ornek.com");
+    await p.waitForTimeout(700);
+    assert.equal(await chip(p), null);
+  },
   "geri açma: reddedilen maskelemede eşleme tutulmaz": async (p) => {
     await sendText(p, "a@ornek.com");
     await press(p, "Düzenle");
@@ -352,7 +426,9 @@ const QUERY = { "engelle: salt okunur önizleme, Esc hata vermez": "?mode=block"
                 "geri açma: seçili metin aslıyla kopyalanır": "?copy=1",
                 "güvenlik: çerçeve açılmazsa tür ve adetle çalışır, hepsi maskelenir": "?noframe=1",
                 "güvenlik: depoya yazılan mod uygulanmaz, servis çalışanı sorulur": "?mode=block",
-                "güvenlik: engelle modunda 'yine de' listesi geçmez": "?mode=block" };
+                "güvenlik: engelle modunda 'yine de' listesi geçmez": "?mode=block",
+                "yazarken: 'yine de' denen değer uyarı çıkarmaz": "?justify=0",
+                "yazarken: liveWarnings kapalıysa görünmez": "?live=0" };
 
 (async () => {
   await new Promise((ok) => server.listen(0, "127.0.0.1", ok));

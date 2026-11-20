@@ -9,7 +9,7 @@
 
 const DEFAULTS = { telveguardUrl: "", reportToken: "", mode: "warn", user: "", team: "default", reportVisits: false,
   unscannableFiles: "allow", requireJustification: true, sanctionedAiUrl: "", sanctionedAiName: "", showBanner: true,
-  revealPlaceholders: true, revealCopy: false };
+  revealPlaceholders: true, revealCopy: false, liveWarnings: true };
 // Onaylı AI aracı yalnızca https (yerel geliştirme: http://localhost); başka şema (javascript: vb.) açılmaz
 const safeUrl = (u) => /^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(u || "") ? u : "";
 const QUEUE_KEY = "telveguardQueue";
@@ -27,7 +27,8 @@ function publicConfig(c) {
            unscannableFiles: c.unscannableFiles === "block" ? "block" : "allow",
            requireJustification: c.requireJustification !== false,
            sanctionedAiUrl: safeUrl(c.sanctionedAiUrl), sanctionedAiName: c.sanctionedAiName || "",
-           showBanner: c.showBanner !== false, revealPlaceholders: c.revealPlaceholders !== false, revealCopy: c.revealCopy === true };
+           showBanner: c.showBanner !== false, revealPlaceholders: c.revealPlaceholders !== false, revealCopy: c.revealCopy === true,
+           liveWarnings: c.liveWarnings !== false };
 }
 const saveConfig = (c) => chrome.storage.local.set({ [CONFIG_KEY]: publicConfig(c) });
 

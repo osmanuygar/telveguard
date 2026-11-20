@@ -44,7 +44,8 @@ JUSTIFICATIONS = {"consent": "Müşteri / ilgili kişi onayı", "test_data": "Te
 
 
 TRIGGERS = {"paste": "Tarayıcı: yapıştırma sırasında", "send": "Tarayıcı: gönderim sırasında",
-            "file": "Tarayıcı: dosya eklerken", "banner": "Tarayıcı: bilgilendirme bandından"}
+            "file": "Tarayıcı: dosya eklerken", "banner": "Tarayıcı: bilgilendirme bandından",
+            "live": "Tarayıcı: yazarken (canlı uyarı)"}
 # Kurumsal sözlük türleri (dictionary.py ile aynı biçim): politikaya göre değişir, adla doğrulanır
 _DICT_ENTITY = re.compile(r"^KURUM_[A-Z0-9_]{1,40}$")
 
@@ -53,8 +54,8 @@ class ShadowEvent(BaseModel):
     site: str
     action: Literal["blocked", "masked", "cancelled", "allowed_override", "visit", "redirected"]
     # Nerede yakalandı: yapıştırma, gönderim (Enter / gönder düğmesi) ya da dosya ekleme
-    # (sürükle-bırak / dosya seçme). Eski eklentiler göndermez.
-    trigger: Optional[Literal["paste", "send", "file", "banner"]] = None
+    # (sürükle-bırak / dosya seçme), bilgilendirme bandı ya da yazarken uyarı. Eski eklentiler göndermez.
+    trigger: Optional[Literal["paste", "send", "file", "banner", "live"]] = None
     justification: Optional[Literal["consent", "test_data", "false_positive", "other"]] = None
     preview_unavailable: bool = False   # eklentinin önizleme çerçevesi bu sitede açılamadı (sitenin CSP'si)
     entities: Dict[str, int] = Field(default_factory=dict)   # tür -> adet (değer YOK)
